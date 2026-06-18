@@ -108,9 +108,9 @@ class WebSocketServer:
                 init_proxy_route(server_url=server_url),
             )
 
-        # Mount cache directory first (to ensure audio file access)
-        if not os.path.exists("cache"):
-            os.makedirs("cache")
+        # Ensure runtime directories exist
+        os.makedirs("cache", exist_ok=True)
+        os.makedirs("avatars", exist_ok=True)
         self.app.mount(
             "/cache",
             CORSStaticFiles(directory="cache"),
