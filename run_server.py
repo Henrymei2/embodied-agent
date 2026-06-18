@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 import tomli
 import uvicorn
+from src.open_llm_vtuber.workspace import ensure_workspace
 from loguru import logger
 from upgrade_codes.upgrade_manager import UpgradeManager
 
@@ -120,6 +121,8 @@ def parse_args():
 def run(console_log_level: str):
     init_logger(console_log_level)
     logger.info(f"Open-LLM-VTuber, version v{get_version()}")
+    workspace = ensure_workspace()
+    logger.info(f"Agent workspace ready: {workspace.root}")
 
     # Get selected language
     lang = upgrade_manager.lang
