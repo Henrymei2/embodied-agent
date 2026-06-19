@@ -18,6 +18,8 @@ interface BackgroundFile {
   url: string;
 }
 
+type WebSocketState = 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED';
+
 export interface AudioPayload {
   type: 'audio';
   audio?: string;
@@ -96,6 +98,26 @@ export interface MessageEvent {
   };
 }
 
+interface BrowserWebSocketTestApi {
+  receive: (message: Partial<MessageEvent>, timeoutMs?: number) => Promise<object | null>;
+  send: (message: object) => void;
+  sent: () => object[];
+  clearSent: () => void;
+  state: () => WebSocketState;
+  examples: {
+    moveToCalendar: () => Promise<object | null>;
+    getCalendarPosition: () => Promise<object | null>;
+    listObjects: () => Promise<object | null>;
+    getSceneStatus: () => Promise<object | null>;
+  };
+}
+
+declare global {
+  interface Window {
+    wsTest?: BrowserWebSocketTestApi;
+  }
+}
+
 // Get translation function for error messages
 const getTranslation = () => {
   try {
@@ -114,9 +136,15 @@ class WebSocketService {
 
   private messageSubject = new Subject<MessageEvent>();
 
-  private stateSubject = new Subject<'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED'>();
+  private stateSubject = new Subject<WebSocketState>();
 
-  private currentState: 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED' = 'CLOSED';
+  private outboundSubject = new Subject<object>();
+
+  private sentMessages: object[] = [];
+
+  private currentState: WebSocketState = 'CLOSED';
+
+  private isTestingInjectedMessage = false;
 
   static getInstance() {
     if (!WebSocketService.instance) {
@@ -188,8 +216,14 @@ class WebSocketService {
   }
 
   sendMessage(message: object) {
+    const suppressClosedWarning = this.isTestingInjectedMessage;
+    this.sentMessages.push(message);
+    this.outboundSubject.next(message);
+
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
+    } else if (suppressClosedWarning) {
+      console.log('[wsTest] WebSocket is not open; captured message without sending.');
     } else {
       console.warn('WebSocket is not open. Unable to send message:', message);
       toaster.create({
@@ -200,11 +234,54 @@ class WebSocketService {
     }
   }
 
+  injectMessageForTesting(message: Partial<MessageEvent>, timeoutMs = 1500) {
+    const normalizedMessage = message as MessageEvent;
+    console.log('[wsTest] Injecting inbound WebSocket message:', normalizedMessage);
+
+    return new Promise<object | null>((resolve) => {
+      let settled = false;
+      let timeoutId: number;
+      const subscription = this.outboundSubject.subscribe((outboundMessage) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        subscription.unsubscribe();
+        window.clearTimeout(timeoutId);
+        this.isTestingInjectedMessage = false;
+        console.log('[wsTest] Captured outbound WebSocket message:', outboundMessage);
+        resolve(outboundMessage);
+      });
+
+      timeoutId = window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        subscription.unsubscribe();
+        this.isTestingInjectedMessage = false;
+        console.log('[wsTest] No outbound WebSocket message captured.');
+        resolve(null);
+      }, timeoutMs);
+
+      this.isTestingInjectedMessage = true;
+      this.messageSubject.next(normalizedMessage);
+    });
+  }
+
+  getSentMessages() {
+    return [...this.sentMessages];
+  }
+
+  clearSentMessages() {
+    this.sentMessages = [];
+  }
+
   onMessage(callback: (message: MessageEvent) => void) {
     return this.messageSubject.subscribe(callback);
   }
 
-  onStateChange(callback: (state: 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED') => void) {
+  onStateChange(callback: (state: WebSocketState) => void) {
     return this.stateSubject.subscribe(callback);
   }
 
@@ -219,3 +296,36 @@ class WebSocketService {
 }
 
 export const wsService = WebSocketService.getInstance();
+
+if (typeof window !== 'undefined') {
+  window.wsTest = {
+    receive: (message, timeoutMs) => wsService.injectMessageForTesting(message, timeoutMs),
+    send: (message) => wsService.sendMessage(message),
+    sent: () => wsService.getSentMessages(),
+    clearSent: () => wsService.clearSentMessages(),
+    state: () => wsService.getCurrentState(),
+    examples: {
+      moveToCalendar: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        action: 'move_to',
+        args: { target: 'calendar' },
+      }, 2000),
+      getCalendarPosition: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        action: 'get_object_position',
+        args: { name: 'calendar' },
+      }),
+      listObjects: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        action: 'list_objects',
+        args: {},
+      }),
+      getSceneStatus: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        action: 'get_scene_status',
+        args: {},
+      }),
+    },
+  };
+  console.log('[wsTest] Browser console WebSocket test helper is available at window.wsTest');
+}
