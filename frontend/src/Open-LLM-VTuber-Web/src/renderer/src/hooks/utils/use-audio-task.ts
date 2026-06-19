@@ -102,19 +102,48 @@ export const useAudioTask = () => {
       // Process audio if available
       if (audioBase64) {
         const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
+        const playAudioWithoutLipSync = () => {
+          const audio = new Audio(audioDataUrl);
+          let isFinished = false;
+
+          const cleanup = () => {
+            audioManager.clearCurrentAudio(audio);
+            if (!isFinished) {
+              isFinished = true;
+              resolve();
+            }
+          };
+
+          audioManager.setCurrentAudio(audio);
+          audio.addEventListener('canplaythrough', () => {
+            if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
+              console.warn('Audio playback cancelled due to interruption or audio was stopped');
+              cleanup();
+              return;
+            }
+
+            audio.play().catch((err) => {
+              console.error("Audio play error:", err);
+              cleanup();
+            });
+          });
+          audio.addEventListener('ended', cleanup);
+          audio.addEventListener('error', cleanup);
+          audio.load();
+        };
 
         // Get Live2D manager and model
         const live2dManager = (window as any).getLive2DManager?.();
         if (!live2dManager) {
-          console.error('Live2D manager not found');
-          resolve();
+          console.warn('Live2D manager not found, playing audio without lip sync');
+          playAudioWithoutLipSync();
           return;
         }
 
         const model = live2dManager.getModel(0);
         if (!model) {
-          console.error('Live2D model not found at index 0');
-          resolve();
+          console.warn('Live2D model not found at index 0, playing audio without lip sync');
+          playAudioWithoutLipSync();
           return;
         }
         console.log('Found model for audio playback');

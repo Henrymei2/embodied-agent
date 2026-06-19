@@ -1,7 +1,7 @@
 /* eslint-disable no-shadow */
 // import { StrictMode } from 'react';
 import { Box, Flex, ChakraProvider, defaultSystem } from "@chakra-ui/react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 // import Canvas from './components/canvas/canvas'; // Likely unused now
 import Sidebar from "./components/sidebar/sidebar";
 import Footer from "./components/footer/footer";
@@ -16,7 +16,6 @@ import { ChatHistoryProvider } from "./context/chat-history-context";
 import { CharacterConfigProvider } from "./context/character-config-context";
 import { Toaster } from "./components/ui/toaster";
 import { VADProvider } from "./context/vad-context";
-import { Live2D } from "./components/canvas/live2d";
 import TitleBar from "./components/electron/title-bar";
 import { InputSubtitle } from "./components/electron/input-subtitle";
 import { ProactiveSpeakProvider } from "./context/proactive-speak-context";
@@ -29,13 +28,14 @@ import Background from "./components/canvas/background";
 import WebSocketStatus from "./components/canvas/ws-status";
 import Subtitle from "./components/canvas/subtitle";
 import { ModeProvider, useMode } from "./context/mode-context";
+import RoomScene from "./components/canvas/room-scene";
+import { RoomSceneProvider } from "./context/room-scene-context";
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(true);
   const [isFooterCollapsed, setIsFooterCollapsed] = useState(false);
   const { mode } = useMode();
   const isElectron = window.api !== undefined;
-  const live2dContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -57,51 +57,45 @@ function AppContent(): JSX.Element {
   document.documentElement.style.width = '100%';
   document.body.style.width = '100%';
 
-  // Define base style properties shared across modes/breakpoints
-  const live2dBaseStyle = {
+  const sceneBaseStyle = {
     position: "absolute" as const,
     overflow: "hidden",
-    transition: "all 0.3s ease-in-out", // Optional transition
+    transition: "all 0.3s ease-in-out",
     pointerEvents: "auto" as const,
   };
 
-  // Define styles specifically for the "window" mode, using responsive syntax
-  const getResponsiveLive2DWindowStyle = (sidebarVisible: boolean) => ({
-    ...live2dBaseStyle,
+  const getResponsiveSceneWindowStyle = (sidebarVisible: boolean) => ({
+    ...sceneBaseStyle,
     top: isElectron ? "30px" : "0px",
     height: `calc(100% - ${isElectron ? "30px" : "0px"})`,
-    zIndex: 5, // Ensure it's layered correctly below UI but above background
+    zIndex: 5,
     left: {
-      base: "0px", // Column layout (base): Start from left edge
-      md: sidebarVisible ? "440px" : "24px", // Row layout (md+): Offset by sidebar width
+      base: "0px",
+      md: sidebarVisible ? "440px" : "24px",
     },
     width: {
-      base: "100%", // Column layout (base): Full width
-      md: `calc(100% - ${sidebarVisible ? "440px" : "24px"})`, // Row layout (md+): Adjust width based on sidebar
+      base: "100%",
+      md: `calc(100% - ${sidebarVisible ? "440px" : "24px"})`,
     },
   });
 
-  // Define styles specifically for the "pet" mode
-  const live2dPetStyle = {
-    ...live2dBaseStyle,
-    top: 0, // Override position for pet mode
+  const scenePetStyle = {
+    ...sceneBaseStyle,
+    top: 0,
     left: 0,
-    width: "100vw", // Full viewport
+    width: "100vw",
     height: "100vh",
-    zIndex: 15, // Higher zIndex for pet mode overlay
+    zIndex: 15,
   };
 
   return (
     <>
       <Box
-        ref={live2dContainerRef}
-        // Apply styles conditionally based on mode
-        // Use the function to get dynamic responsive styles for window mode
         {...(mode === "window"
-          ? getResponsiveLive2DWindowStyle(showSidebar)
-          : live2dPetStyle)}
+          ? getResponsiveSceneWindowStyle(showSidebar)
+          : scenePetStyle)}
       >
-        <Live2D />
+        <RoomScene />
       </Box>
 
       {/* Conditional Rendering of Window UI */}
@@ -182,10 +176,12 @@ function AppWithGlobalStyles(): JSX.Element {
                         <BgUrlProvider>
                           <GroupProvider>
                             <BrowserProvider>
-                              <WebSocketHandler>
-                                <Toaster />
-                                <AppContent />
-                              </WebSocketHandler>
+                              <RoomSceneProvider>
+                                <WebSocketHandler>
+                                  <Toaster />
+                                  <AppContent />
+                                </WebSocketHandler>
+                              </RoomSceneProvider>
                             </BrowserProvider>
                           </GroupProvider>
                         </BgUrlProvider>
