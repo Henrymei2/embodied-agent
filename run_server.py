@@ -4,6 +4,7 @@ import atexit
 import asyncio
 import argparse
 import subprocess
+import shutil
 from pathlib import Path
 import tomli
 import uvicorn
@@ -18,6 +19,10 @@ os.environ["HF_HOME"] = str(Path(__file__).parent / "models")
 os.environ["MODELSCOPE_CACHE"] = str(Path(__file__).parent / "models")
 
 upgrade_manager = UpgradeManager()
+PROJECT_ROOT = Path(__file__).parent
+FRONTEND_SOURCE_DIR = PROJECT_ROOT / "frontend" / "src" / "Open-LLM-VTuber-Web"
+FRONTEND_DIST_DIR = FRONTEND_SOURCE_DIR / "dist" / "web"
+FRONTEND_SERVE_DIR = PROJECT_ROOT / "frontend"
 
 
 def get_version() -> str:
@@ -108,17 +113,78 @@ def check_frontend_submodule(lang=None):
         #         )
 
 
+def build_frontend() -> None:
+    """
+    Build the React frontend source and copy generated files into the served
+    frontend directory without deleting docs or source files.
+    """
+    if not FRONTEND_SOURCE_DIR.exists():
+        logger.critical(f"Frontend source directory not found: {FRONTEND_SOURCE_DIR}")
+        sys.exit(1)
+
+    node_modules_path = FRONTEND_SOURCE_DIR / "node_modules"
+    if not node_modules_path.exists():
+        logger.critical(
+            "Frontend dependencies are missing. Run `npm install` in "
+            f"`{FRONTEND_SOURCE_DIR}` before starting the server."
+        )
+        sys.exit(1)
+
+    logger.info("Building frontend from frontend/src...")
+    try:
+        subprocess.run(
+            ["npm", "run", "build:web"],
+            cwd=FRONTEND_SOURCE_DIR,
+            check=True,
+        )
+    except FileNotFoundError:
+        logger.critical("`npm` was not found. Install Node.js/npm before starting the server.")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        logger.critical(f"Frontend build failed with exit code {e.returncode}.")
+        sys.exit(e.returncode)
+
+    if not (FRONTEND_DIST_DIR / "index.html").exists():
+        logger.critical(f"Frontend build did not produce {FRONTEND_DIST_DIR / 'index.html'}.")
+        sys.exit(1)
+
+    FRONTEND_SERVE_DIR.mkdir(parents=True, exist_ok=True)
+    for item in FRONTEND_DIST_DIR.iterdir():
+        if item.name in {"src", "frontend_api_doc.md"}:
+            logger.warning(f"Skipping preserved frontend path from build output: {item.name}")
+            continue
+
+        destination = FRONTEND_SERVE_DIR / item.name
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+
+        if item.is_dir():
+            shutil.copytree(item, destination)
+        else:
+            shutil.copy2(item, destination)
+
+    logger.info("Frontend build copied to served frontend directory.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Open-LLM-VTuber Server")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument(
         "--hf_mirror", action="store_true", help="Use Hugging Face mirror"
     )
+    parser.add_argument(
+        "--skip-frontend-build",
+        action="store_true",
+        help="Skip rebuilding frontend/src before starting the server",
+    )
     return parser.parse_args()
 
 
 @logger.catch
-def run(console_log_level: str):
+def run(console_log_level: str, skip_frontend_build: bool = False):
     init_logger(console_log_level)
     logger.info(f"Open-LLM-VTuber, version v{get_version()}")
     workspace = ensure_workspace()
@@ -126,6 +192,11 @@ def run(console_log_level: str):
 
     # Get selected language
     lang = upgrade_manager.lang
+
+    if skip_frontend_build:
+        logger.info("Skipping frontend build because --skip-frontend-build was provided.")
+    else:
+        build_frontend()
 
     # Check if the frontend submodule is initialized
     check_frontend_submodule(lang)
@@ -178,4 +249,7 @@ if __name__ == "__main__":
         )
     if args.hf_mirror:
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    run(console_log_level=console_log_level)
+    run(
+        console_log_level=console_log_level,
+        skip_frontend_build=args.skip_frontend_build,
+    )

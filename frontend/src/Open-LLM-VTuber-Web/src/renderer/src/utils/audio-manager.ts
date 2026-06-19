@@ -9,7 +9,7 @@ class AudioManager {
   /**
    * Set the current playing audio
    */
-  setCurrentAudio(audio: HTMLAudioElement, model: any) {
+  setCurrentAudio(audio: HTMLAudioElement, model: any = null) {
     this.currentAudio = audio;
     this.currentModel = model;
   }

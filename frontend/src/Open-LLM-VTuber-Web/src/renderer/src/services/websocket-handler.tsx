@@ -21,6 +21,7 @@ import { useLocalStorage } from '@/hooks/utils/use-local-storage';
 import { useGroup } from '@/context/group-context';
 import { useInterrupt } from '@/hooks/utils/use-interrupt';
 import { useBrowser } from '@/context/browser-context';
+import { useRoomScene } from '@/context/room-scene-context';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -40,6 +41,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
   const { interrupt } = useInterrupt();
   const { setBrowserViewData } = useBrowser();
+  const { handleFrontendAction } = useRoomScene();
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -98,6 +100,25 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         if (message.text) {
           handleControlMessage(message.text);
         }
+        break;
+      case 'frontend_action_request':
+        handleFrontendAction({
+          action: message.action,
+          args: message.args,
+        }).then((result) => {
+          wsService.sendMessage({
+            type: 'frontend_action_result',
+            result,
+          });
+        }).catch((error) => {
+          wsService.sendMessage({
+            type: 'frontend_action_result',
+            result: {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        });
         break;
       case 'set-model-and-conf':
         setAiState('loading');
@@ -289,7 +310,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

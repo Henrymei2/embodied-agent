@@ -56,6 +56,8 @@ export interface MessageEvent {
   content: string;
   timestamp: string;
   type: string;
+  action?: string;
+  args?: Record<string, unknown>;
   audio?: string;
   volumes?: number[];
   slice_length?: number;
