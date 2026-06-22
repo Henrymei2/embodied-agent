@@ -5,6 +5,7 @@ import { Subject } from 'rxjs';
 import { ModelInfo } from '@/context/live2d-config-context';
 import { HistoryInfo } from '@/context/websocket-context';
 import { ConfigFile } from '@/context/character-config-context';
+import { DynamicStageDocument } from '@/context/dynamic-stage-context';
 import { toaster } from '@/components/ui/toaster';
 
 export interface DisplayText {
@@ -51,6 +52,7 @@ export interface Actions {
 }
 
 export interface MessageEvent {
+  request_id?: string;
   tool_id: any;
   tool_name: any;
   name: any;
@@ -82,6 +84,9 @@ export interface MessageEvent {
   forwarded?: boolean;
   display_text?: DisplayText;
   live2d_model?: string;
+  stage?: DynamicStageDocument;
+  state?: DynamicStageDocument;
+  result?: Record<string, unknown>;
   browser_view?: {
     debuggerFullscreenUrl: string;
     debuggerUrl: string;
@@ -106,6 +111,9 @@ interface BrowserWebSocketTestApi {
   state: () => WebSocketState;
   examples: {
     moveToCalendar: () => Promise<object | null>;
+    changeStageBackground: () => Promise<object | null>;
+    addStageText: () => Promise<object | null>;
+    resetStage: () => Promise<object | null>;
     getCalendarPosition: () => Promise<object | null>;
     listObjects: () => Promise<object | null>;
     getSceneStatus: () => Promise<object | null>;
@@ -307,21 +315,68 @@ if (typeof window !== 'undefined') {
     examples: {
       moveToCalendar: () => wsService.injectMessageForTesting({
         type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
         action: 'move_to',
         args: { target: 'calendar' },
       }, 2000),
+      changeStageBackground: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
+        action: 'stage_patch_state',
+        args: {
+          patch: {
+            canvas: {
+              background: 'linear-gradient(180deg, #f8fafc 0%, #dbeafe 48%, #d1d5db 48%, #9ca3af 100%)',
+            },
+          },
+        },
+      }, 2000),
+      addStageText: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
+        action: 'stage_patch_state',
+        args: {
+          patch: {
+            nodes: [{
+              id: `note-${Date.now()}`,
+              type: 'text',
+              label: 'note',
+              text: 'agent note',
+              x: 480,
+              y: 120,
+              width: 220,
+              height: 48,
+              zIndex: 6,
+              style: {
+                color: '#111827',
+                fontSize: 24,
+                fontWeight: '800',
+              },
+            }],
+          },
+        },
+      }, 2000),
+      resetStage: () => wsService.injectMessageForTesting({
+        type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
+        action: 'stage_reset_state',
+        args: {},
+      }, 2000),
       getCalendarPosition: () => wsService.injectMessageForTesting({
         type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
         action: 'get_object_position',
         args: { name: 'calendar' },
       }),
       listObjects: () => wsService.injectMessageForTesting({
         type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
         action: 'list_objects',
         args: {},
       }),
       getSceneStatus: () => wsService.injectMessageForTesting({
         type: 'frontend_action_request',
+        request_id: `test-${Date.now()}`,
         action: 'get_scene_status',
         args: {},
       }),
