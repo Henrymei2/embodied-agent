@@ -28,8 +28,8 @@ import Background from "./components/canvas/background";
 import WebSocketStatus from "./components/canvas/ws-status";
 import Subtitle from "./components/canvas/subtitle";
 import { ModeProvider, useMode } from "./context/mode-context";
-import RoomScene from "./components/canvas/room-scene";
-import { RoomSceneProvider } from "./context/room-scene-context";
+import DynamicStage from "./components/canvas/dynamic-stage";
+import { DynamicStageProvider } from "./context/dynamic-stage-context";
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(true);
@@ -95,7 +95,7 @@ function AppContent(): JSX.Element {
           ? getResponsiveSceneWindowStyle(showSidebar)
           : scenePetStyle)}
       >
-        <RoomScene />
+        <DynamicStage />
       </Box>
 
       {/* Conditional Rendering of Window UI */}
@@ -176,12 +176,12 @@ function AppWithGlobalStyles(): JSX.Element {
                         <BgUrlProvider>
                           <GroupProvider>
                             <BrowserProvider>
-                              <RoomSceneProvider>
+                              <DynamicStageProvider>
                                 <WebSocketHandler>
                                   <Toaster />
                                   <AppContent />
                                 </WebSocketHandler>
-                              </RoomSceneProvider>
+                              </DynamicStageProvider>
                             </BrowserProvider>
                           </GroupProvider>
                         </BgUrlProvider>

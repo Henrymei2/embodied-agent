@@ -21,7 +21,7 @@ import { useLocalStorage } from '@/hooks/utils/use-local-storage';
 import { useGroup } from '@/context/group-context';
 import { useInterrupt } from '@/hooks/utils/use-interrupt';
 import { useBrowser } from '@/context/browser-context';
-import { useRoomScene } from '@/context/room-scene-context';
+import { useDynamicStage } from '@/context/dynamic-stage-context';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -41,7 +41,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
   const { interrupt } = useInterrupt();
   const { setBrowserViewData } = useBrowser();
-  const { handleFrontendAction } = useRoomScene();
+  const { handleFrontendAction, setStageFromServer } = useDynamicStage();
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -103,22 +103,39 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         break;
       case 'frontend_action_request':
         handleFrontendAction({
+          request_id: message.request_id,
           action: message.action,
           args: message.args,
         }).then((result) => {
           wsService.sendMessage({
             type: 'frontend_action_result',
+            request_id: message.request_id,
             result,
           });
         }).catch((error) => {
           wsService.sendMessage({
             type: 'frontend_action_result',
+            request_id: message.request_id,
             result: {
+              request_id: message.request_id,
+              action: message.action,
               ok: false,
               error: error instanceof Error ? error.message : String(error),
             },
           });
         });
+        break;
+      case 'stage-state':
+        if (message.stage) {
+          const result = setStageFromServer(message.stage);
+          if (!result.ok) {
+            toaster.create({
+              title: result.error || 'Failed to load stage state',
+              type: 'error',
+              duration: 3000,
+            });
+          }
+        }
         break;
       case 'set-model-and-conf':
         setAiState('loading');
@@ -310,7 +327,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);
