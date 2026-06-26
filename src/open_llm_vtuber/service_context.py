@@ -396,6 +396,10 @@ class ServiceContext:
             logger.debug(f"Agent choice: {agent_config.conversation_agent_choice}")
             logger.debug(f"System prompt: {system_prompt}")
 
+            # Drive the Daily -> Long-term memory compaction once at startup.
+            if hasattr(self.agent_engine, "run_memory_startup"):
+                await self.agent_engine.run_memory_startup()
+
             # Save the current configuration
             self.character_config.agent_config = agent_config
             self.system_prompt = system_prompt

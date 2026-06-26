@@ -33,6 +33,7 @@ class BasicMemoryAgentConfig(I18nMixin, BaseModel):
     segment_method: Literal["regex", "pysbd"] = Field("pysbd", alias="segment_method")
     use_mcpp: Optional[bool] = Field(False, alias="use_mcpp")
     mcp_enabled_servers: Optional[List[str]] = Field([], alias="mcp_enabled_servers")
+    use_memory: Optional[bool] = Field(True, alias="use_memory")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "llm_provider": Description(
@@ -54,6 +55,11 @@ class BasicMemoryAgentConfig(I18nMixin, BaseModel):
         "mcp_enabled_servers": Description(
             en="List of MCP servers to enable for the agent",
             zh="为智能体启用 MCP 服务器列表",
+        ),
+        "use_memory": Description(
+            en="Whether to enable the three-layer persistent memory system "
+            "(contextual/daily/long-term) for the agent (default: True)",
+            zh="是否为智能体启用三层持久记忆系统（上下文/每日/长期）（默认：True）",
         ),
     }
 

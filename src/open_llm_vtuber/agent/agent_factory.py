@@ -9,6 +9,7 @@ from .agents.letta_agent import LettaAgent
 
 from ..mcpp.tool_manager import ToolManager
 from ..mcpp.tool_executor import ToolExecutor
+from ..memory import MemoryManager, make_llm_complete
 from typing import Optional
 
 
@@ -67,6 +68,18 @@ class AgentFactory:
             tool_executor: Optional[ToolExecutor] = kwargs.get("tool_executor")
             mcp_prompt_string: str = kwargs.get("mcp_prompt_string", "")
 
+            # Build the three-layer persistent memory system, driven by the same
+            # LLM the agent uses for compaction/summarization.
+            memory_manager: Optional[MemoryManager] = None
+            if basic_memory_settings.get("use_memory", True):
+                try:
+                    memory_manager = MemoryManager(
+                        llm_complete=make_llm_complete(llm)
+                    )
+                    logger.info("Three-layer memory system enabled for agent.")
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(f"Failed to initialize MemoryManager: {exc}")
+
             # Create the agent with the LLM and live2d_model
             return BasicMemoryAgent(
                 llm=llm,
@@ -83,6 +96,7 @@ class AgentFactory:
                 tool_manager=tool_manager,
                 tool_executor=tool_executor,
                 mcp_prompt_string=mcp_prompt_string,
+                memory_manager=memory_manager,
             )
 
         elif conversation_agent_choice == "mem0_agent":

@@ -28,6 +28,7 @@ from ...mcpp.tool_manager import ToolManager
 from ...mcpp.json_detector import StreamJSONDetector
 from ...mcpp.types import ToolCallObject
 from ...mcpp.tool_executor import ToolExecutor
+from ...memory import MemoryManager
 
 
 class BasicMemoryAgent(AgentInterface):
@@ -49,10 +50,18 @@ class BasicMemoryAgent(AgentInterface):
         tool_manager: Optional[ToolManager] = None,
         tool_executor: Optional[ToolExecutor] = None,
         mcp_prompt_string: str = "",
+        memory_manager: Optional[MemoryManager] = None,
     ):
         """Initialize agent with LLM and configuration."""
         super().__init__()
         self._memory = []
+        # Persistent three-layer memory (contextual/daily/long-term). Optional:
+        # when present the agent records turns, triggers compaction, and injects
+        # remembered context into the system prompt.
+        self._memory_manager = memory_manager
+        # System prompt actually used for the current turn (base prompt plus the
+        # memory block). Set per-turn in the chat pipeline; falls back to base.
+        self._active_system: Optional[str] = None
         self._live2d_model = live2d_model
         self._tts_preprocessor_config = tts_preprocessor_config
         self._faster_first_response = faster_first_response
@@ -124,6 +133,20 @@ class BasicMemoryAgent(AgentInterface):
             system = f"{system}\n\nIf you received `[interrupted by user]` signal, you were interrupted."
 
         self._system = system
+
+    @property
+    def _current_system(self) -> str:
+        """System prompt for the active turn (base prompt + injected memory)."""
+        return self._active_system or self._system
+
+    def _build_active_system(self) -> str:
+        """Compose the base system prompt with the current memory block."""
+        if not self._memory_manager:
+            return self._system
+        memory_block = self._memory_manager.build_memory_context()
+        if not memory_block:
+            return self._system
+        return f"{self._system}\n\n# MEMORY\n{memory_block}"
 
     def _add_message(
         self,
@@ -299,7 +322,9 @@ class BasicMemoryAgent(AgentInterface):
         current_assistant_message_content = []
 
         while True:
-            stream = self._llm.chat_completion(messages, self._system, tools=tools)
+            stream = self._llm.chat_completion(
+                messages, self._current_system, tools=tools
+            )
             pending_tool_calls.clear()
             current_assistant_message_content.clear()
 
@@ -409,20 +434,19 @@ class BasicMemoryAgent(AgentInterface):
         messages = initial_messages.copy()
         current_turn_text = ""
         pending_tool_calls: Union[List[ToolCallObject], List[Dict[str, Any]]] = []
-        current_system_prompt = self._system
+        base_system = self._current_system
+        current_system_prompt = base_system
 
         while True:
             if self.prompt_mode_flag:
                 if self._mcp_prompt_string:
-                    current_system_prompt = (
-                        f"{self._system}\n\n{self._mcp_prompt_string}"
-                    )
+                    current_system_prompt = f"{base_system}\n\n{self._mcp_prompt_string}"
                 else:
                     logger.warning("Prompt mode active but mcp_prompt_string is empty!")
-                    current_system_prompt = self._system
+                    current_system_prompt = base_system
                 tools_for_api = None
             else:
-                current_system_prompt = self._system
+                current_system_prompt = base_system
                 tools_for_api = tools
 
             stream = self._llm.chat_completion(
@@ -598,6 +622,20 @@ class BasicMemoryAgent(AgentInterface):
             self.reset_interrupt()
             self.prompt_mode_flag = False
 
+            # Persistent memory: let the prior context compact (topic change /
+            # buffer full) before recording the new user turn, then refresh the
+            # memory block injected into the system prompt for this turn.
+            if self._memory_manager:
+                user_text = self._to_text_prompt(input_data)
+                if user_text:
+                    try:
+                        await self._memory_manager.maybe_compact_context(user_text)
+                        self._memory_manager.add_user_message(user_text)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(f"Memory: failed recording user turn: {exc}")
+            self._active_system = self._build_active_system()
+            assistant_chunks: List[str] = []
+
             messages = self._to_messages(input_data)
             tools = None
             tool_mode = None
@@ -630,7 +668,10 @@ class BasicMemoryAgent(AgentInterface):
                 async for output in self._claude_tool_interaction_loop(
                     messages, tools if tools else []
                 ):
+                    if isinstance(output, str):
+                        assistant_chunks.append(output)
                     yield output
+                self._record_assistant_memory(assistant_chunks)
                 return
             elif self._use_mcpp and tool_mode == "OpenAI":
                 logger.debug(
@@ -639,11 +680,14 @@ class BasicMemoryAgent(AgentInterface):
                 async for output in self._openai_tool_interaction_loop(
                     messages, tools if tools else []
                 ):
+                    if isinstance(output, str):
+                        assistant_chunks.append(output)
                     yield output
+                self._record_assistant_memory(assistant_chunks)
                 return
             else:
                 logger.info("Starting simple chat completion.")
-                token_stream = self._llm.chat_completion(messages, self._system)
+                token_stream = self._llm.chat_completion(messages, self._current_system)
                 complete_response = ""
                 async for event in token_stream:
                     text_chunk = ""
@@ -658,8 +702,34 @@ class BasicMemoryAgent(AgentInterface):
                         complete_response += text_chunk
                 if complete_response:
                     self._add_message(complete_response, "assistant")
+                    self._record_assistant_memory([complete_response])
 
         return chat_with_memory
+
+    async def run_memory_startup(self) -> None:
+        """Promote past daily memory into long-term memory at startup.
+
+        Drives the Daily -> Long-term (and Long-term -> compact) flows once when
+        the agent comes up, so they run without an external scheduler.
+        """
+        if not self._memory_manager:
+            return
+        try:
+            await self._memory_manager.startup_compaction()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Memory: startup compaction failed: {exc}")
+
+    def _record_assistant_memory(self, chunks: List[str]) -> None:
+        """Record the assistant's reply into persistent memory (best-effort)."""
+        if not self._memory_manager:
+            return
+        text = "".join(chunks).strip()
+        if not text:
+            return
+        try:
+            self._memory_manager.add_assistant_message(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Memory: failed recording assistant turn: {exc}")
 
     async def chat(
         self,
