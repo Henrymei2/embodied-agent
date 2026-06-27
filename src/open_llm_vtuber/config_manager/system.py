@@ -15,19 +15,17 @@ class SystemConfig(I18nMixin):
     enable_proxy: bool = Field(False, alias="enable_proxy")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "conf_version": Description(en="Configuration version", zh="配置文件版本"),
-        "host": Description(en="Server host address", zh="服务器主机地址"),
-        "port": Description(en="Server port number", zh="服务器端口号"),
+        "conf_version": Description(en="Configuration version"),
+        "host": Description(en="Server host address"),
+        "port": Description(en="Server port number"),
         "config_alts_dir": Description(
-            en="Directory for alternative configurations", zh="备用配置目录"
+            en="Directory for alternative configurations"
         ),
         "tool_prompts": Description(
             en="Tool prompts to be inserted into persona prompt",
-            zh="要插入到角色提示词中的工具提示词",
         ),
         "enable_proxy": Description(
             en="Enable proxy mode for multiple clients",
-            zh="启用代理模式以支持多个客户端使用一个 ws 连接",
         ),
     }
 

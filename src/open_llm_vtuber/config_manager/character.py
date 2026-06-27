@@ -30,42 +30,40 @@ class CharacterConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "conf_name": Description(
-            en="Name of the character configuration", zh="角色配置名称"
+            en="Name of the character configuration"
         ),
         "conf_uid": Description(
             en="Unique identifier for the character configuration",
-            zh="角色配置唯一标识符",
         ),
         "live2d_model_name": Description(
-            en="Name of the Live2D model to use", zh="使用的Live2D模型名称"
+            en="Name of the Live2D model to use"
         ),
         "character_name": Description(
-            en="Name of the AI character in conversation", zh="对话中AI角色的名字"
+            en="Name of the AI character in conversation"
         ),
         "persona_prompt": Description(
-            en="Persona prompt. The persona of your character.", zh="角色人设提示词"
+            en="Persona prompt. The persona of your character."
         ),
         "agent_config": Description(
-            en="Configuration for the conversation agent", zh="对话代理配置"
+            en="Configuration for the conversation agent"
         ),
         "asr_config": Description(
-            en="Configuration for Automatic Speech Recognition", zh="语音识别配置"
+            en="Configuration for Automatic Speech Recognition"
         ),
         "tts_config": Description(
-            en="Configuration for Text-to-Speech", zh="语音合成配置"
+            en="Configuration for Text-to-Speech"
         ),
         "vad_config": Description(
-            en="Configuration for Voice Activity Detection", zh="语音活动检测配置"
+            en="Configuration for Voice Activity Detection"
         ),
         "tts_preprocessor_config": Description(
             en="Configuration for Text-to-Speech Preprocessor",
-            zh="语音合成预处理器配置",
         ),
         "human_name": Description(
-            en="Name of the human user in conversation", zh="对话中人类用户的名字"
+            en="Name of the human user in conversation"
         ),
         "avatar": Description(
-            en="Avatar image path for the character", zh="角色头像图片路径"
+            en="Avatar image path for the character"
         ),
     }
 

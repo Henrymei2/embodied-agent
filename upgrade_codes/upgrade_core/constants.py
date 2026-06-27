@@ -34,98 +34,9 @@ def get_current_script_version():
 CURRENT_SCRIPT_VERSION = get_current_script_version()
 
 TEXTS = {
-    "zh": {
-        # "welcome_message": f"Auto-Upgrade Script {CURRENT_SCRIPT_VERSION}\nOpen-LLM-VTuber 升级脚本 - 此脚本仍在实验阶段，可能无法按预期工作。",
-        "welcome_message": f"正在从 {CURRENT_SCRIPT_VERSION} 自动升级...",
-        # "lang_select": "请选择语言/Please select language (zh/en):",
-        # "invalid_lang": "无效的语言选择，使用英文作为默认语言",
-        "not_git_repo": "错误：当前目录不是git仓库。请进入 Open-LLM-VTuber 目录后再运行此脚本。\n当然，更有可能的是你下载的Open-LLM-VTuber不包含.git文件夹 (如果你是透过下载压缩包而非使用 git clone 命令下载的话可能会造成这种情况)，这种情况下目前无法用脚本升级。",
-        "backup_user_config": "正在备份 {user_conf} 到 {backup_conf}",
-        "configs_up_to_date": "[DEBUG] 用户配置已是最新。",
-        "no_config": "警告：未找到conf.yaml文件",
-        "copy_default_config": "正在从模板复制默认配置",
-        "uncommitted": "发现未提交的更改，正在暂存...",
-        "stash_error": "错误：无法暂存更改",
-        "changes_stashed": "更改已暂存",
-        "pulling": "正在从远程仓库拉取更新...",
-        "pull_error": "错误：无法拉取更新",
-        "restoring": "正在恢复暂存的更改...",
-        "conflict_warning": "警告：恢复暂存的更改时发生冲突",
-        "manual_resolve": "请手动解决冲突",
-        "stash_list": "你可以使用 'git stash list' 查看暂存的更改",
-        "stash_pop": "使用 'git stash pop' 恢复更改",
-        "upgrade_complete": "升级完成！",
-        "check_config": "1. 请检查conf.yaml是否需要更新",
-        "resolve_conflicts": "2. 如果有配置文件冲突，请手动解决",
-        "check_backup": "3. 检查备份的配置文件以确保没有丢失重要设置",
-        "git_not_found": "错误：未检测到 Git。请先安装 Git:\nWindows: https://git-scm.com/download/win\nmacOS: brew install git\nLinux: sudo apt install git",
-        "operation_preview": """
-此脚本将执行以下操作：
-1. 备份当前的 conf.yaml 配置文件
-2. 暂存所有未提交的更改 (git stash)
-3. 从远程仓库拉取最新代码 (git pull)
-4. 尝试恢复之前暂存的更改 (git stash pop)
-
-是否继续？(y/N): """,
-        "merged_config_success": "新增配置项已合并:",
-        "merged_config_none": "未发现新增配置项。",
-        "merge_failed": "配置合并失败: {error}",
-        "updating_submodules": "正在更新子模块...",
-        "submodules_updated": "子模块更新完成",
-        "submodule_error": "更新子模块时出错",
-        "no_submodules": "未检测到子模块，跳过更新",
-        "env_info": "系统环境: {os_name} {os_version}, Python {python_version}",
-        "git_version": "Git 版本: {git_version}",
-        "current_branch": "当前分支: {branch}",
-        "operation_time": "操作 '{operation}' 完成, 耗时: {time:.2f} 秒",
-        "checking_stash": "检查是否有未提交的更改...",
-        "detected_changes": "检测到 {count} 个文件有更改",
-        "submodule_updating": "正在更新子模块: {submodule}",
-        "submodule_updated": "子模块已更新: {submodule}",
-        "submodule_update_error": "❌ 子模块更新失败。",
-        "checking_remote": "正在检查远程仓库状态...",
-        "remote_ahead": "本地版本已是最新",
-        "remote_behind": "发现 {count} 个新提交可供更新",
-        "config_backup_path": "配置备份路径: {path}",
-        "start_upgrade": "开始升级流程...",
-        "version_upgrade_success": "配置版本已成功升级: {old} → {new}",
-        "version_upgrade_none": "无需升级配置，当前版本为 {version}",
-        "version_upgrade_failed": "升级配置时出错: {error}",
-        "finish_upgrade": "升级流程结束, 总耗时: {time:.2f} 秒",
-        "backup_used_version": "✅ 从备份文件读取配置版本: {backup_version}",
-        "backup_read_error": "⚠️ 读取备份文件失败，使用默认版本 {version}。错误信息: {error}",
-        "version_too_old": "🔁 检测到旧版本号 {found} 低于最低支持版本，已强制使用 {adjusted}",
-        "checking_ahead_status": "🔍 正在检查是否存在未推送的本地提交...",
-        "local_ahead": "🚨 你在 'main' 分支上有 {count} 个尚未推送到远程的本地 commit。",
-        "push_blocked": (
-            "⛔ 你没有权限推送到 'main' 分支。\n"
-            "这些 commit 只保存在本地，无法同步到 GitHub。\n"
-            "如果继续升级，可能会导致这些提交丢失或与远程版本发生冲突。"
-        ),
-        "backup_suggestion": (
-            "🛟 为了安全保存你的本地提交，你可以选择以下任意方式：\n"
-            "🔄 1. 撤销最近的提交（推荐）：\n"
-            "   • GitHub Desktop：点击右下角的 “Undo” 按钮\n"
-            "   • 终端命令：git reset --soft HEAD~1\n"
-            "📦 2. 导出 patch 文件（保留提交记录）：\n"
-            "   → 终端执行：git format-patch origin/main --stdout > backup.patch\n"
-            "🌿 3. 创建一个备份分支（保存当前状态）：\n"
-            "   → 终端执行：git checkout -b my-backup-before-upgrade\n"
-            "💡 提示：撤销 commit 后，你可以新建分支或导出补丁以继续操作。"
-        ),
-        "abort_upgrade": "🛑 为保护本地提交，升级流程已中止。",
-        "no_config_fatal": (
-            "❌ 未找到配置文件 conf.yaml。\n"
-            "请执行以下任一操作：\n"
-            "👉 将旧版配置文件复制到当前目录\n"
-            "👉 或运行 run_server.py 自动生成默认模板"
-        ),
-    },
     "en": {
         # "welcome_message": f"Auto-Upgrade Script {CURRENT_SCRIPT_VERSION}\nOpen-LLM-VTuber upgrade script - This script is highly experimental and may not work as expected.",
         "welcome_message": f"Starting auto upgrade from {CURRENT_SCRIPT_VERSION}...",
-        # "lang_select": "请选择语言/Please select language (zh/en):",
-        # "invalid_lang": "Invalid language selection, using English as default",
         "not_git_repo": "Error: Current directory is not a git repository. Please run this script inside the Open-LLM-VTuber directory.\nAlternatively, it is likely that the Open-LLM-VTuber you downloaded does not contain the .git folder (this can happen if you downloaded a zip archive instead of using git clone), in which case you cannot upgrade using this script.",
         "backup_user_config": "Backing up {user_conf} to {backup_conf}",
         "configs_up_to_date": "[DEBUG] User configuration is up-to-date.",
@@ -209,33 +120,19 @@ Continue? (y/N): """,
         ),
     },
 }
+# Chinese localization has been removed; "zh" falls back to English.
+TEXTS["zh"] = TEXTS["en"]
 
 # Multilingual texts for merge_configs log messages
 TEXTS_MERGE = {
-    "zh": {
-        "new_config_item": "[信息] 新增配置项: {key}",
-    },
     "en": {
         "new_config_item": "[INFO] New config item: {key}",
     },
 }
+TEXTS_MERGE["zh"] = TEXTS_MERGE["en"]
 
 # Multilingual texts for compare_configs log messages
 TEXTS_COMPARE = {
-    "zh": {
-        "missing_keys": "用户配置缺少以下键，可能与默认配置不一致: {keys}",
-        "extra_keys": "用户配置包含以下默认配置中不存在的键: {keys}",
-        "up_to_date": "用户配置与默认配置一致。",
-        "compare_passed": "{name} 对比通过。",
-        "compare_failed": "{name} 配置不一致。",
-        "compare_diff_item": "- {item}",
-        "compare_error": "{name} 对比失败: {error}",
-        "comments_up_to_date": "注释一致，跳过注释同步。",
-        "extra_keys_deleted_count": "已删除 {count} 个额外键:",
-        "extra_keys_deleted_item": "  - {key}",
-        "comment_sync_success": "注释同步成功。",
-        "comment_sync_error": "注释同步失败: {error}",
-    },
     "en": {
         "missing_keys": "User config is missing the following keys, which may be out-of-date: {keys}",
         "extra_keys": "User config contains the following keys not present in default config: {keys}",
@@ -251,17 +148,9 @@ TEXTS_COMPARE = {
         "comment_sync_error": "Failed to synchronize comments: {error}",
     },
 }
+TEXTS_COMPARE["zh"] = TEXTS_COMPARE["en"]
 
 UPGRADE_TEXTS = {
-    "zh": {
-        "model_dict_not_found": "⚠️ 未找到 model_dict.json，跳过升级。",
-        "model_dict_read_error": "❌ 读取 model_dict.json 失败: {error}",
-        "upgrade_success": "✅ model_dict.json 已成功升级至 v1.2.1 格式 ({language} 语言)",
-        "already_latest": "model_dict.json 已是最新格式。",
-        "upgrade_error": "❌ 升级 model_dict.json 失败: {error}",
-        "no_upgrade_routine": "没有适用于版本 {version} 的升级程序",
-        "upgrading_path": "⬆️ 正在升级配置: {from_version} → {to_version}",
-    },
     "en": {
         "model_dict_not_found": "⚠️ model_dict.json not found. Skipping upgrade.",
         "model_dict_read_error": "❌ Failed to read model_dict.json: {error}",
@@ -272,3 +161,4 @@ UPGRADE_TEXTS = {
         "upgrading_path": "⬆️ Upgrading config: {from_version} → {to_version}",
     },
 }
+UPGRADE_TEXTS["zh"] = UPGRADE_TEXTS["en"]

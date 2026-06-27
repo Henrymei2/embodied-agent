@@ -9,19 +9,19 @@ class MultiLingualString(BaseModel):
     """
 
     en: str = Field(..., description="English translation")
-    zh: str = Field(..., description="Chinese translation")
 
     def get(self, lang_code: str) -> str:
         """
         Retrieves the translation for the specified language code.
 
         Args:
-            lang_code: The language code (e.g., "en", "zh").
+            lang_code: The language code (e.g., "en").
 
         Returns:
-            The translation for the specified language code, or the English translation if the specified language is not found.
+            The translation for the specified language code, or the English
+            translation if the specified language is not available.
         """
-        return getattr(self, lang_code, self.en)
+        return getattr(self, lang_code, None) or self.en
 
 
 class Description(MultiLingualString):
@@ -71,8 +71,7 @@ class Description(MultiLingualString):
         """
         return cls(
             en=text,
-            zh=text,
-            notes=MultiLingualString(en=notes, zh=notes) if notes else None,
+            notes=MultiLingualString(en=notes) if notes else None,
         )
 
 

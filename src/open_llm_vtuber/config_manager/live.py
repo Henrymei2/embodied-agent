@@ -11,11 +11,10 @@ class BiliBiliLiveConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "room_ids": Description(
-            en="List of BiliBili live room IDs to monitor", zh="要监控的B站直播间ID列表"
+            en="List of BiliBili live room IDs to monitor"
         ),
         "sessdata": Description(
             en="SESSDATA cookie value for authenticated requests (optional)",
-            zh="用于认证请求的SESSDATA cookie值（可选）",
         ),
     }
 
@@ -29,6 +28,6 @@ class LiveConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "bilibili_live": Description(
-            en="Configuration for BiliBili Live platform", zh="B站直播平台配置"
+            en="Configuration for BiliBili Live platform"
         ),
     }

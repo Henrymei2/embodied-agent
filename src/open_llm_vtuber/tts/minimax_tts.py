@@ -34,7 +34,7 @@ class TTSEngine(TTSInterface):
             "authorization": "Bearer " + self.api_key,
         }
 
-        # 处理 pronunciation_dict 字符串为 dict，如果为空则传 {"tone": []}
+        # Parse the pronunciation_dict string into a dict; if empty, use {"tone": []}
         try:
             pronunciation_dict = (
                 json.loads(self.pronunciation_dict)

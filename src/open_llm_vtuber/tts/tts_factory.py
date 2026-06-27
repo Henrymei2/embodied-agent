@@ -222,6 +222,6 @@ if __name__ == "__main__":
     tts_engine = TTSFactory.get_tts_engine(
         "spark_tts",
         api_url="http://127.0.0.1:7860/voice_clone",
-        used_voices=r"D:\python\spark_tts\收集的语音\纳西妲-完整.mp3",
+        used_voices=r"D:\python\spark_tts\voices\sample-voice.mp3",
     )
     tts_engine.generate_audio("Hello world")

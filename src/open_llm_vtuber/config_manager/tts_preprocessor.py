@@ -15,10 +15,9 @@ class DeepLXConfig(I18nMixin):
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "deeplx_target_lang": Description(
             en="Target language code for DeepLX translation",
-            zh="DeepLX 翻译的目标语言代码",
         ),
         "deeplx_api_endpoint": Description(
-            en="API endpoint URL for DeepLX service", zh="DeepLX 服务的 API 端点 URL"
+            en="API endpoint URL for DeepLX service"
         ),
     }
 
@@ -37,15 +36,14 @@ class TencentConfig(I18nMixin):
     )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "secret_id": Description(en="Tencent Secret ID", zh="腾讯服务的Secret ID"),
-        "secret_key": Description(en="Tencent Secret Key", zh="腾讯服务的Secret Key"),
-        "region": Description(en="Region for Tencent Service", zh="腾讯服务使用的区域"),
+        "secret_id": Description(en="Tencent Secret ID"),
+        "secret_key": Description(en="Tencent Secret Key"),
+        "region": Description(en="Region for Tencent Service"),
         "source_lang": Description(
-            en="Source language code for tencent translation", zh="腾讯翻译的源语言代码"
+            en="Source language code for tencent translation"
         ),
         "target_lang": Description(
             en="Target language code for tencent translation",
-            zh="腾讯翻译的目标语言代码",
         ),
     }
 
@@ -66,16 +64,15 @@ class TranslatorConfig(I18nMixin):
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "translate_audio": Description(
             en="Enable audio translation (requires DeepLX deployment)",
-            zh="启用音频翻译（需要部署 DeepLX）",
         ),
         "translate_provider": Description(
-            en="Translation service provider to use", zh="要使用的翻译服务提供者"
+            en="Translation service provider to use"
         ),
         "deeplx": Description(
-            en="Configuration for DeepLX translation service", zh="DeepLX 翻译服务配置"
+            en="Configuration for DeepLX translation service"
         ),
         "tencent": Description(
-            en="Configuration for TenCent translation service", zh="腾讯 翻译服务配置"
+            en="Configuration for TenCent translation service"
         ),
     }
 
@@ -110,9 +107,8 @@ class TTSPreprocessorConfig(I18nMixin):
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "remove_special_char": Description(
             en="Remove special characters from the input text",
-            zh="从输入文本中删除特殊字符",
         ),
         "translator_config": Description(
-            en="Configuration for translation services", zh="翻译服务的配置"
+            en="Configuration for translation services"
         ),
     }

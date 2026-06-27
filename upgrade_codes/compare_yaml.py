@@ -59,13 +59,13 @@ def compare_yaml_values(dict1, dict2):
             differences.append({"key_path": key, "value1": value1, "value2": value2})
 
     if not differences:
-        print("✅ 所有共同叶子节点的值完全一致\n")
+        print("✅ All shared leaf-node values are identical\n")
     else:
-        print(f"❌ 发现 {len(differences)} 个值不同的字段:\n\n")
+        print(f"❌ Found {len(differences)} field(s) with differing values:\n\n")
         for diff in differences:
-            print(f"键路径: {diff['key_path']}\n")
-            print(f"  {conf1}中的值: {diff['value1']}\n")
-            print(f"  {conf2}中的值: {diff['value2']}\n")
+            print(f"Key path: {diff['key_path']}\n")
+            print(f"  Value in {conf1}: {diff['value1']}\n")
+            print(f"  Value in {conf2}: {diff['value2']}\n")
             print("-" * 50 + "\n")
 
     return differences
@@ -84,15 +84,15 @@ if __name__ == "__main__":
     only_in_1, only_in_2 = compare_yaml_keys(config1, config2)
 
     if not only_in_1 and not only_in_2:
-        print("✅ 两个 YAML 文件的 key 完全一致")
+        print("✅ The two YAML files have identical keys")
     else:
-        print("❌ 不一致:")
+        print("❌ Mismatch:")
         if only_in_1:
-            print(f"仅在 {conf1} 中存在的 key ({len(only_in_1)} 个):")
+            print(f"Keys only in {conf1} ({len(only_in_1)}):")
             for key in sorted(only_in_1):
                 print(f"  - {key}")
         if only_in_2:
-            print(f"\n仅在 {conf2} 中存在的 key ({len(only_in_2)} 个):")
+            print(f"\nKeys only in {conf2} ({len(only_in_2)}):")
             for key in sorted(only_in_2):
                 print(f"  - {key}")
 
