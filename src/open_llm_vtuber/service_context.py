@@ -4,6 +4,7 @@ from typing import Callable
 from loguru import logger
 from fastapi import WebSocket
 
+from .workspace import build_workspace_prompt_context
 from prompts import prompt_loader
 from .live2d_model import Live2dModel
 from .asr.asr_interface import ASRInterface
@@ -467,6 +468,14 @@ class ServiceContext:
                 continue
 
             persona_prompt += prompt_content
+
+        workspace_context = build_workspace_prompt_context()
+        if workspace_context:
+            persona_prompt += workspace_context
+            logger.debug(
+                f"Injected workspace context into system prompt. "
+                f"Length: {len(workspace_context)}"
+            )
 
         logger.debug("\n === System Prompt ===")
         logger.debug(persona_prompt)

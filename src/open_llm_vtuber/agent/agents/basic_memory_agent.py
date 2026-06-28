@@ -8,6 +8,7 @@ from typing import (
     Union,
     Optional,
 )
+from ...workspace import build_workspace_prompt_context
 from loguru import logger
 from .agent_interface import AgentInterface
 from ..output_types import SentenceOutput, DisplayText
@@ -134,19 +135,33 @@ class BasicMemoryAgent(AgentInterface):
 
         self._system = system
 
-    @property
-    def _current_system(self) -> str:
-        """System prompt for the active turn (base prompt + injected memory)."""
-        return self._active_system or self._system
+    def _build_system_prompt_with_workspace_context(
+        self,
+        messages: List[Dict[str, Any]],
+        base_system_prompt: str,
+        include_core_files: bool = False,
+    ) -> str:
+        latest_user_message = ""
 
-    def _build_active_system(self) -> str:
-        """Compose the base system prompt with the current memory block."""
-        if not self._memory_manager:
-            return self._system
-        memory_block = self._memory_manager.build_memory_context()
-        if not memory_block:
-            return self._system
-        return f"{self._system}\n\n# MEMORY\n{memory_block}"
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                latest_user_message = str(message.get("content", ""))
+                break
+
+        workspace_context = build_workspace_prompt_context(
+            user_message=latest_user_message,
+            include_core_files=include_core_files,
+        )
+
+        if not workspace_context:
+            return base_system_prompt
+
+        logger.debug(
+            f"Injected query-specific workspace context. "
+            f"Length: {len(workspace_context)}"
+        )
+
+        return f"{base_system_prompt}\n\n{workspace_context}"
 
     def _add_message(
         self,
@@ -322,8 +337,15 @@ class BasicMemoryAgent(AgentInterface):
         current_assistant_message_content = []
 
         while True:
+            current_system_prompt = self._build_system_prompt_with_workspace_context(
+                messages,
+                self._system,
+            )
+
             stream = self._llm.chat_completion(
-                messages, self._current_system, tools=tools
+                messages,
+                current_system_prompt,
+                tools=tools,
             )
             pending_tool_calls.clear()
             current_assistant_message_content.clear()
@@ -448,6 +470,11 @@ class BasicMemoryAgent(AgentInterface):
             else:
                 current_system_prompt = base_system
                 tools_for_api = tools
+
+            current_system_prompt = self._build_system_prompt_with_workspace_context(
+                messages,
+                current_system_prompt,
+            )
 
             stream = self._llm.chat_completion(
                 messages, current_system_prompt, tools=tools_for_api
@@ -687,7 +714,11 @@ class BasicMemoryAgent(AgentInterface):
                 return
             else:
                 logger.info("Starting simple chat completion.")
-                token_stream = self._llm.chat_completion(messages, self._current_system)
+                current_system_prompt = self._build_system_prompt_with_workspace_context(
+                    messages,
+                    self._system,
+                )
+                token_stream = self._llm.chat_completion(messages, current_system_prompt)
                 complete_response = ""
                 async for event in token_stream:
                     text_chunk = ""
