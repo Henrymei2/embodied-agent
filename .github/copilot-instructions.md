@@ -22,8 +22,7 @@ Some key files and directories:
 doc/                 # A deprecated directory
 frontend/            # Compiled web frontend artifacts (from git submodule)
 config_templates/
-    conf.default.yaml    # Configuration template for English users
-    conf.ZH.default.yaml # Configuration template for Chinese users
+    conf.default.yaml    # Configuration template
 src/open_llm_vtuber/ # Project source code
     config_manager/
         main.py      # Pydantic models for configuration validation
@@ -40,9 +39,8 @@ conf.yaml            # User's configuration file, generated from a template
 ### 1.2. Configuration Files
 
 - Configuration templates are located in the `config_templates/` directory:
-- `conf.default.yaml`: Template for English-speaking users.
-- `conf.ZH.default.yaml`: Template for Chinese-speaking users.
-- When modifying the configuration structure, both template files MUST be updated accordingly.
+- `conf.default.yaml`: Configuration template.
+- When modifying the configuration structure, this template file MUST be updated accordingly.
 - Configuration is validated on load using the Pydantic models defined in `src/open_llm_vtuber/config_manager/main.py`. Any changes to configuration options must be reflected in these models.
 
 ## 2. Overarching Coding Philosophy

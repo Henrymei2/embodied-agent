@@ -7,8 +7,11 @@ class TTSEngine(TTSInterface):
     def __init__(
         self,
         client_url="http://127.0.0.1:50000/",
-        mode_checkbox_group="预训练音色",
-        sft_dropdown="中文女",
+        # NOTE: these must match the option labels of your CosyVoice Gradio
+        # WebUI exactly. The upstream demo UI uses localized labels, so set
+        # these to whatever your deployment exposes.
+        mode_checkbox_group="Pretrained Voice",
+        sft_dropdown="English Female",
         prompt_text="",
         prompt_wav_upload_url="https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav",
         prompt_wav_record_url="https://github.com/gradio-app/gradio/raw/main/test/test_files/audio_sample.wav",

@@ -21,7 +21,7 @@ Open-LLM-VTuber is a voice-interactive AI companion with Live2D avatar support t
 
 ### Server Configuration
 - **Main config file**: `conf.yaml` (user configuration)
-- **Default configs**: `config_templates/conf.default.yaml` and `config_templates/conf.ZH.default.yaml`
+- **Default config**: `config_templates/conf.default.yaml`
 - **Character configs**: `characters/` directory (YAML files)
 
 ## Architecture Overview

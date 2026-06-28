@@ -10,24 +10,18 @@ from dataclasses import dataclass
 COMMAS = [
     ",",
     "،",
-    "，",
-    "、",
     "፣",
     "၊",
     ";",
     "΄",
     "‛",
     "।",
-    "﹐",
     "꓾",
     "⹁",
-    "︐",
-    "﹑",
-    "､",
     "،",
 ]
 
-END_PUNCTUATIONS = [".", "!", "?", "。", "！", "？", "...", "。。。"]
+END_PUNCTUATIONS = [".", "!", "?", "..."]
 ABBREVIATIONS = [
     "Mr.",
     "Mrs.",

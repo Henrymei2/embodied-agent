@@ -112,8 +112,8 @@ class VoiceRecognition(ASRInterface):
 
         full_text = res[0]["text"]
 
-        # SenseVoiceSmall may spits out some tags
-        # like this: '<|zh|><|NEUTRAL|><|Speech|><|woitn|>欢迎大家来体验达摩院推出的语音识别模型'
+        # SenseVoiceSmall may spit out some tags
+        # like this: '<|en|><|NEUTRAL|><|Speech|><|woitn|>the transcribed text goes here'
         # we should remove those tags from the result
 
         # remove tags

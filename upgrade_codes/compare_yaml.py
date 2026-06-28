@@ -1,7 +1,7 @@
 from ruamel.yaml import YAML
 
 conf1 = "conf.yaml"
-conf2 = "config_templates/conf.ZH.default.yaml"
+conf2 = "config_templates/conf.default.yaml"
 
 
 def collect_all_key_paths(d, prefix=""):
