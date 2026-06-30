@@ -95,6 +95,7 @@ class WebSocketHandler:
             "audio-play-start": self._handle_audio_play_start,
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
+            "frontend-action-result": self._handle_frontend_action_result,
         }
 
     async def handle_new_connection(
@@ -142,6 +143,9 @@ class WebSocketHandler:
         self.client_connections[client_uid] = websocket
         self.client_contexts[client_uid] = session_service_context
         self.received_data_buffers[client_uid] = np.array([])
+
+        from .frontend_bridge import register_client_sender
+        register_client_sender(client_uid, websocket.send_text)
 
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
@@ -301,6 +305,10 @@ class WebSocketHandler:
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
+
+        from .frontend_bridge import unregister_client_sender
+        unregister_client_sender(client_uid)
+
         if client_uid in self.current_conversation_tasks:
             task = self.current_conversation_tasks[client_uid]
             if task and not task.done():
@@ -610,3 +618,18 @@ class WebSocketHandler:
             await websocket.send_json({"type": "heartbeat-ack"})
         except Exception as e:
             logger.error(f"Error sending heartbeat acknowledgment: {e}")
+
+    async def _handle_frontend_action_result(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Handle a frontend-action-result reply, completing a pending move_to/etc."""
+        from .frontend_bridge import resolve_action_result
+
+        request_id = data.get("request_id")
+        result = data.get("result", {})
+        if not request_id:
+            logger.warning("frontend-action-result received without request_id")
+            return
+        ok = bool(result.get("ok", False))
+        error = result.get("error")
+        resolve_action_result(request_id, ok, result, error)
