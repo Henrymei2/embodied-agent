@@ -81,7 +81,7 @@ async def _send_action_request(
 
     message = json.dumps(
         {
-            "type": "frontend-action-request",
+            "type": "frontend_action_request",
             "request_id": request_id,
             "action": action,
             "args": args,

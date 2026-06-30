@@ -95,7 +95,7 @@ class WebSocketHandler:
             "audio-play-start": self._handle_audio_play_start,
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
-            "frontend-action-result": self._handle_frontend_action_result,
+            "frontend_action_result": self._handle_frontend_action_result,
         }
 
     async def handle_new_connection(
@@ -622,7 +622,7 @@ class WebSocketHandler:
     async def _handle_frontend_action_result(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
-        """Handle a frontend-action-result reply, completing a pending move_to/etc."""
+        """Handle a frontend_action_result reply, completing a pending move_to/etc."""
         from .frontend_bridge import resolve_action_result
 
         request_id = data.get("request_id")
