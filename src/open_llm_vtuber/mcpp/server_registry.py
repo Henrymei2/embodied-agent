@@ -35,6 +35,7 @@ class ServerRegistry:
         self.servers: Dict[str, MCPServer] = {}
 
         self.npx_available = self._detect_runtime("npx")
+        self.uv_available = self._detect_runtime("uv")
         self.uvx_available = self._detect_runtime("uvx")
         self.node_available = self._detect_runtime("node")
 
@@ -64,6 +65,12 @@ class ServerRegistry:
                 if not self.npx_available:
                     logger.warning(
                         f"MCPSR: npx is not available. Cannot load server '{server_name}'."
+                    )
+                    continue
+            elif command == "uv":
+                if not self.uv_available:
+                    logger.warning(
+                        f"MCPSR: uv is not available. Cannot load server '{server_name}'."
                     )
                     continue
             elif command == "uvx":

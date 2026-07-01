@@ -135,6 +135,50 @@ class BasicMemoryAgent(AgentInterface):
 
         self._system = system
 
+    def _build_prompt_mode_system_prompt(self, base_system_prompt: str) -> str:
+        """Build prompt-mode tool instructions from the MCP prompt template."""
+        if not self._mcp_prompt_string:
+            logger.warning("Prompt mode active but mcp_prompt_string is empty!")
+            return base_system_prompt
+
+        try:
+            prompt_template = prompt_loader.load_util("mcp_prompt")
+        except FileNotFoundError:
+            logger.warning(
+                "MCP prompt template not found. Falling back to raw MCP tool listing."
+            )
+            prompt_template = "[<insert_mcp_servers_with_tools>]"
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Failed to load MCP prompt template: {exc}")
+            prompt_template = "[<insert_mcp_servers_with_tools>]"
+
+        mcp_prompt = prompt_template.replace(
+            "[<insert_mcp_servers_with_tools>]", self._mcp_prompt_string
+        )
+        return f"{base_system_prompt}\n\n{mcp_prompt}"
+
+    def _build_active_system(self) -> str:
+        """Build the per-turn system prompt with persistent memory context."""
+        if not self._memory_manager:
+            return self._system
+
+        try:
+            memory_context = self._memory_manager.build_memory_context()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Memory: failed building prompt context: {exc}")
+            return self._system
+
+        if not memory_context:
+            return self._system
+
+        return (
+            f"{self._system}\n\n"
+            "Use the following memory as background context. "
+            "It may be incomplete or outdated, so prefer the user's latest message "
+            "when there is a conflict.\n\n"
+            f"{memory_context}"
+        )
+
     def _build_system_prompt_with_workspace_context(
         self,
         messages: List[Dict[str, Any]],
@@ -335,11 +379,12 @@ class BasicMemoryAgent(AgentInterface):
         current_turn_text = ""
         pending_tool_calls = []
         current_assistant_message_content = []
+        base_system = self._active_system or self._system
 
         while True:
             current_system_prompt = self._build_system_prompt_with_workspace_context(
                 messages,
-                self._system,
+                base_system,
             )
 
             stream = self._llm.chat_completion(
@@ -456,16 +501,14 @@ class BasicMemoryAgent(AgentInterface):
         messages = initial_messages.copy()
         current_turn_text = ""
         pending_tool_calls: Union[List[ToolCallObject], List[Dict[str, Any]]] = []
-        base_system = self._current_system
+        base_system = self._active_system or self._system
         current_system_prompt = base_system
 
         while True:
             if self.prompt_mode_flag:
-                if self._mcp_prompt_string:
-                    current_system_prompt = f"{base_system}\n\n{self._mcp_prompt_string}"
-                else:
-                    logger.warning("Prompt mode active but mcp_prompt_string is empty!")
-                    current_system_prompt = base_system
+                current_system_prompt = self._build_prompt_mode_system_prompt(
+                    base_system
+                )
                 tools_for_api = None
             else:
                 current_system_prompt = base_system
@@ -509,7 +552,16 @@ class BasicMemoryAgent(AgentInterface):
                                     break
                         yield event
                 else:
-                    if isinstance(event, str):
+                    if event == "__API_NOT_SUPPORT_TOOLS__":
+                        logger.warning(
+                            f"LLM {getattr(self._llm, 'model', '')} has no native tool support. Switching to prompt mode."
+                        )
+                        self.prompt_mode_flag = True
+                        if self._json_detector:
+                            self._json_detector.reset()
+                        goto_next_while_iteration = True
+                        break
+                    elif isinstance(event, str):
                         current_turn_text += event
                         yield event
                     elif isinstance(event, list) and all(
@@ -532,17 +584,6 @@ class BasicMemoryAgent(AgentInterface):
                             ],
                         }
                         break
-                    elif event == "__API_NOT_SUPPORT_TOOLS__":
-                        logger.warning(
-                            f"LLM {getattr(self._llm, 'model', '')} has no native tool support. Switching to prompt mode."
-                        )
-                        self.prompt_mode_flag = True
-                        if self._tool_manager:
-                            self._tool_manager.disable()
-                        if self._json_detector:
-                            self._json_detector.reset()
-                        goto_next_while_iteration = True
-                        break
             if goto_next_while_iteration:
                 continue
 
@@ -550,17 +591,18 @@ class BasicMemoryAgent(AgentInterface):
                 logger.info("Processing tools detected via prompt mode JSON.")
                 self._add_message(current_turn_text, "assistant")
 
+                if not self._tool_executor:
+                    logger.error(
+                        "Prompt Tool interaction requested but ToolExecutor/MCPClient is not available."
+                    )
+                    yield "[Error: ToolExecutor/MCPClient not configured for prompt mode]"
+                    continue
+
                 parsed_tools = self._tool_executor.process_tool_from_prompt_json(
                     detected_prompt_json
                 )
                 if parsed_tools:
                     tool_results_for_llm = []
-                    if not self._tool_executor:
-                        logger.error(
-                            "Prompt Tool interaction requested but ToolExecutor/MCPClient is not available."
-                        )
-                        yield "[Error: ToolExecutor/MCPClient not configured for prompt mode]"
-                        continue
 
                     tool_executor_iterator = self._tool_executor.execute_tools(
                         tool_calls=parsed_tools,
@@ -714,9 +756,10 @@ class BasicMemoryAgent(AgentInterface):
                 return
             else:
                 logger.info("Starting simple chat completion.")
+                base_system = self._active_system or self._system
                 current_system_prompt = self._build_system_prompt_with_workspace_context(
                     messages,
-                    self._system,
+                    base_system,
                 )
                 token_stream = self._llm.chat_completion(messages, current_system_prompt)
                 complete_response = ""
