@@ -8,6 +8,7 @@ from llama_cpp import Llama
 from loguru import logger
 
 from .stateless_llm_interface import StatelessLLMInterface
+from .request_logging import log_llm_request
 
 
 class LLM(StatelessLLMInterface):
@@ -44,8 +45,6 @@ class LLM(StatelessLLMInterface):
         Yields:
         - str: The content of each chunk from the model response.
         """
-        logger.debug(f"Generating completion for messages: {messages}")
-
         try:
             # Add system prompt if provided
             messages_with_system = messages
@@ -54,6 +53,13 @@ class LLM(StatelessLLMInterface):
                     {"role": "system", "content": system},
                     *messages,
                 ]
+            log_llm_request(
+                provider="llama_cpp",
+                model=self.model_path,
+                messages=messages_with_system,
+                system=system,
+                extra={"stream": True},
+            )
 
             # Create chat completion in a separate thread to avoid blocking
             chat_completion = await asyncio.get_event_loop().run_in_executor(

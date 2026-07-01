@@ -11,6 +11,7 @@ from loguru import logger
 from typing import AsyncIterator, List, Dict, Any
 
 from .stateless_llm_interface import StatelessLLMInterface
+from .request_logging import log_llm_request, sanitize_for_llm_request_log
 
 
 TEMPLATES = {
@@ -136,7 +137,6 @@ class AsyncLLMWithTemplate(StatelessLLMInterface):
         - RateLimitError: When a 429 status code is received
         - APIError: For other API-related errors
         """
-        logger.debug(f"Messages: {messages}")
         bos_token = "<|begin_of_text|>"
         stream = None
         try:
@@ -157,6 +157,19 @@ class AsyncLLMWithTemplate(StatelessLLMInterface):
                 "temperature": self.temperature,
                 "prompt": prompt,
             }
+            log_llm_request(
+                provider="template_completion",
+                model=self.model,
+                endpoint=self.completion_url,
+                messages=messages_with_system,
+                system=system,
+                extra={
+                    "stream": True,
+                    "temperature": self.temperature,
+                    "prompt_chars": len(prompt),
+                    "prompt": sanitize_for_llm_request_log(prompt),
+                },
+            )
             with requests.post(
                 self.completion_url, headers=self.prompt_headers, json=data, stream=True
             ) as response:
