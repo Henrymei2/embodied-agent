@@ -111,14 +111,22 @@ class ServiceContext:
             # 1. Initialize ServerRegistry
             self.mcp_server_registery = ServerRegistry()
             logger.info("ServerRegistry initialized or referenced.")
+            logger.info(
+                f"MCP enabled servers requested by config: {enabled_servers}"
+            )
+            logger.info(
+                f"MCP servers loaded from registry: {sorted(self.mcp_server_registery.servers.keys())}"
+            )
+            self._configure_mcp_server_environment()
 
             # 2. Use ToolAdapter to get the MCP prompt and tools
             if not self.tool_adapter:
-                logger.error(
-                    "ToolAdapter not initialized before calling _init_mcp_components."
+                logger.info("Initializing ToolAdapter for current MCP registry.")
+                self.tool_adapter = ToolAdapter(
+                    server_registery=self.mcp_server_registery
                 )
-                self.mcp_prompt = "[Error: ToolAdapter not initialized]"
-                return  # Exit if ToolAdapter is mandatory and not initialized
+            else:
+                self.tool_adapter.server_registery = self.mcp_server_registery
 
             try:
                 (
@@ -187,6 +195,23 @@ class ServiceContext:
             logger.debug(
                 "MCP components not initialized (use_mcpp is False or no enabled servers)."
             )
+
+    def _configure_mcp_server_environment(self) -> None:
+        """Inject backend connection settings into MCP server subprocess envs."""
+        if not self.mcp_server_registery or not self.system_config:
+            return
+
+        host = self.system_config.host or "localhost"
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1"
+        backend_url = f"http://{host}:{self.system_config.port}"
+
+        for server in self.mcp_server_registery.servers.values():
+            server.env = {
+                **(server.env or {}),
+                "EMBODIED_AGENT_BACKEND_URL": backend_url,
+            }
+        logger.info(f"MCP subprocess backend URL: {backend_url}")
 
     async def close(self):
         """Clean up resources, especially the MCPClient."""

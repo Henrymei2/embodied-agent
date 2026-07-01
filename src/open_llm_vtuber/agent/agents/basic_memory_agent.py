@@ -90,6 +90,14 @@ class BasicMemoryAgent(AgentInterface):
             logger.debug(
                 f"Agent received pre-formatted tools - OpenAI: {len(self._formatted_tools_openai)}, Claude: {len(self._formatted_tools_claude)}"
             )
+            logger.info(
+                "Agent OpenAI tool names: "
+                f"{[tool.get('function', {}).get('name') for tool in self._formatted_tools_openai]}"
+            )
+            logger.info(
+                "Agent Claude tool names: "
+                f"{[tool.get('name') for tool in self._formatted_tools_claude]}"
+            )
         else:
             logger.debug(
                 "ToolManager not provided, agent will not have pre-formatted tools."
@@ -728,6 +736,10 @@ class BasicMemoryAgent(AgentInterface):
                 if llm_supports_native_tools and not tools:
                     logger.warning(
                         f"No tools available/formatted for '{tool_mode}' mode, despite MCP being enabled."
+                    )
+                elif llm_supports_native_tools:
+                    logger.info(
+                        f"Using {len(tools)} formatted tools for {tool_mode} mode."
                     )
 
             if self._use_mcpp and tool_mode == "Claude":
