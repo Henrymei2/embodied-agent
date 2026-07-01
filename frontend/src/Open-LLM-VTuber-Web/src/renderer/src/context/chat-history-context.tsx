@@ -135,6 +135,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           status: toolMessageData.status, // Update status
           name: toolMessageData.name || existingMsg.name,
           content: toolMessageData.content || existingMsg.content, // Update content (result/error or keep input)
+          browser_view: toolMessageData.browser_view || existingMsg.browser_view,
           timestamp: toolMessageData.timestamp!, // Update timestamp
         };
         return updatedMessages;
@@ -149,6 +150,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           tool_name: toolMessageData.tool_name,
           status: toolMessageData.status,
           content: toolMessageData.content || '', // Initial content (input)
+          browser_view: toolMessageData.browser_view,
           timestamp: toolMessageData.timestamp!,
           // name/avatar could potentially be added if needed
         };

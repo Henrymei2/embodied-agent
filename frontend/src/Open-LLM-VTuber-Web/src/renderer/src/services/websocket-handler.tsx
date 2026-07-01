@@ -318,6 +318,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             name: message.name,
             status: message.status as ('running' | 'completed' | 'error'),
             content: message.content || '',
+            browser_view: message.browser_view,
             timestamp: message.timestamp || new Date().toISOString(),
           });
         } else {

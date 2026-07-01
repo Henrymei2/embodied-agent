@@ -43,6 +43,7 @@ export interface Message {
   tool_id?: string; // Specific to tool calls
   tool_name?: string; // Specific to tool calls
   status?: 'running' | 'completed' | 'error'; // Specific to tool calls
+  browser_view?: MessageEvent['browser_view'];
 }
 
 export interface Actions {

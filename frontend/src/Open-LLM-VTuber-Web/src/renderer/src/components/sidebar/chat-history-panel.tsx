@@ -5,7 +5,6 @@
 /* eslint-disable import/order */
 /* eslint-disable import/no-extraneous-dependencies */
 /* eslint-disable react/require-default-props */
-import React, { useEffect } from 'react';
 import { Box, Spinner, Flex, Text, Icon } from '@chakra-ui/react';
 import { sidebarStyles, chatPanelStyles } from './sidebar-styles';
 import { MainContainer, ChatContainer, MessageList as ChatMessageList, Message as ChatMessage, Avatar as ChatAvatar } from '@chatscope/chat-ui-kit-react';
@@ -16,6 +15,48 @@ import { useConfig } from '@/context/character-config-context';
 import { useWebSocket } from '@/context/websocket-context';
 import { FaTools, FaCheck, FaTimes } from 'react-icons/fa';
 import { useTranslation } from 'react-i18next';
+
+const MAX_TOOL_CONTENT_LENGTH = 360;
+
+function getToolStatusLabel(status?: string): string {
+  switch (status) {
+    case 'running':
+      return 'Running';
+    case 'completed':
+      return 'Completed';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Tool call';
+  }
+}
+
+function getToolContentLabel(status?: string): string {
+  if (status === 'running') {
+    return 'Input';
+  }
+  if (status === 'error') {
+    return 'Error';
+  }
+  return 'Result';
+}
+
+function formatToolContent(content?: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const compact = trimmed.replace(/^Input:\s*/i, '').replace(/\s+/g, ' ');
+  if (compact.length <= MAX_TOOL_CONTENT_LENGTH) {
+    return compact;
+  }
+  return `${compact.slice(0, MAX_TOOL_CONTENT_LENGTH)}...`;
+}
 
 // Main component
 function ChatHistoryPanel(): JSX.Element {
@@ -56,41 +97,49 @@ function ChatHistoryPanel(): JSX.Element {
               validMessages.map((msg) => {
                 // Check if it's a tool call message
                 if (msg.type === 'tool_call_status') {
+                  const statusLabel = getToolStatusLabel(msg.status);
+                  const contentLabel = getToolContentLabel(msg.status);
+                  const toolContent = formatToolContent(msg.content);
+                  const speakerName = msg.name || confName || 'AI';
+
                   return (
                     // Render Tool Call Indicator using msg properties
                     <Flex
                       key={msg.id} // Use tool_id as key
                       {...sidebarStyles.toolCallIndicator.container}
-                      alignItems="center"
                     >
-                      <Icon
-                        as={FaTools}
-                        {...sidebarStyles.toolCallIndicator.icon}
-                      />
-                      <Text {...sidebarStyles.toolCallIndicator.text}>
-                        {/* {msg.tool_name}: {msg.status === 'running' ? 'Running...' : msg.content} */}
-                        {msg.status === "running" ? `${msg.name} is using tool ${msg.tool_name}` : `${msg.name} used tool ${msg.tool_name}`}
-                      </Text>
-                      {/* Show spinner if running, checkmark if completed, maybe error icon? */}
-                      {msg.status === "running" && (
-                        <Spinner
-                          size="xs"
-                          color={sidebarStyles.toolCallIndicator.spinner.color}
-                          ml={sidebarStyles.toolCallIndicator.spinner.ml}
-                        />
-                      )}
-                      {msg.status === "completed" && (
+                      <Flex {...sidebarStyles.toolCallIndicator.header}>
                         <Icon
-                          as={FaCheck}
-                          {...sidebarStyles.toolCallIndicator.completedIcon}
+                          as={FaTools}
+                          {...sidebarStyles.toolCallIndicator.icon}
                         />
-                      )}
-                      {/* Optional: Add an error icon */}
-                      {msg.status === "error" && (
-                        <Icon
-                          as={FaTimes}
-                          {...sidebarStyles.toolCallIndicator.errorIcon}
-                        />
+                        <Text {...sidebarStyles.toolCallIndicator.title}>
+                          {speakerName} | {statusLabel} | {msg.tool_name}
+                        </Text>
+                        {msg.status === "running" && (
+                          <Spinner
+                            size="xs"
+                            color={sidebarStyles.toolCallIndicator.spinner.color}
+                            ml={sidebarStyles.toolCallIndicator.spinner.ml}
+                          />
+                        )}
+                        {msg.status === "completed" && (
+                          <Icon
+                            as={FaCheck}
+                            {...sidebarStyles.toolCallIndicator.completedIcon}
+                          />
+                        )}
+                        {msg.status === "error" && (
+                          <Icon
+                            as={FaTimes}
+                            {...sidebarStyles.toolCallIndicator.errorIcon}
+                          />
+                        )}
+                      </Flex>
+                      {toolContent && (
+                        <Text {...sidebarStyles.toolCallIndicator.detail}>
+                          {contentLabel}: {toolContent}
+                        </Text>
                       )}
                     </Flex>
                   );

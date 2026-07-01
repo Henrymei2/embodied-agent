@@ -444,38 +444,68 @@ export const sidebarStyles = {
   // Add styles for the Tool Call Indicator
   toolCallIndicator: {
     container: {
-      pl: '44px', // Indent to align with message content (avatar width + gap)
-      my: '1', // Reduced vertical margin (e.g., 4px if theme space 1 = 4px)
+      ml: '44px',
+      mr: '12px',
+      my: '2',
+      px: 3,
+      py: 2,
+      gap: 1,
+      maxWidth: 'calc(100% - 56px)',
+      minHeight: '42px',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      justifyContent: 'center',
+      bg: 'whiteAlpha.100',
+      border: '1px solid',
+      borderColor: 'whiteAlpha.200',
+      borderRadius: 'md',
+      overflow: 'hidden',
+    },
+    header: {
+      display: 'flex',
+      alignItems: 'center',
       gap: 2,
-      width: '100%',
-      minHeight: '24px', // Ensure minimum height
-      display: 'flex', // Ensure display is flex
-      alignItems: 'center', // Keep vertical alignment
-      justifyContent: 'center', // Center items horizontally
+      minWidth: 0,
     },
     icon: {
       color: 'blue.300',
       boxSize: '14px',
+      flexShrink: 0,
     },
-    text: {
+    title: {
+      fontSize: 'xs',
+      color: 'whiteAlpha.900',
+      fontWeight: '600',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      minWidth: 0,
+    },
+    detail: {
       fontSize: 'xs',
       color: 'whiteAlpha.700',
-      fontStyle: 'italic',
+      fontFamily: 'mono',
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
+      lineHeight: '1.4',
     },
     spinner: {
       size: 'xs',
       color: 'blue.300',
-      ml: 0,
+      ml: 'auto',
     },
     completedIcon: {
       color: 'green.300',
       boxSize: '14px',
-      ml: 0,
+      ml: 'auto',
+      flexShrink: 0,
     },
     errorIcon: {
       color: 'red.300',
       boxSize: '14px',
-      ml: 0,
+      ml: 'auto',
+      flexShrink: 0,
     },
   },
 };
