@@ -3,7 +3,7 @@ import json
 from uuid import uuid4
 import numpy as np
 from datetime import datetime
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response
+from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
@@ -66,6 +66,43 @@ def init_proxy_route(server_url: str) -> APIRouter:
         except Exception as e:
             logger.error(f"Error in proxy connection: {e}")
             raise
+
+    return router
+
+
+def init_frontend_action_routes() -> APIRouter:
+    """Create routes that let local MCP subprocesses reach the active frontend."""
+    router = APIRouter()
+
+    @router.post("/internal/frontend-action")
+    async def frontend_action(payload: dict = Body(...)):
+        from .frontend_bridge import request_frontend_action
+
+        action = payload.get("action")
+        args = payload.get("args", {})
+        timeout = float(payload.get("timeout", 15.0))
+
+        if not isinstance(action, str) or not action:
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "missing action"},
+                status_code=400,
+            )
+        if not isinstance(args, dict):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "args must be an object"},
+                status_code=400,
+            )
+
+        ok, result, error = await request_frontend_action(
+            action=action,
+            args=args,
+            timeout=timeout,
+        )
+        status_code = 200 if ok else 503
+        return JSONResponse(
+            {"ok": ok, "result": result, "error": error},
+            status_code=status_code,
+        )
 
     return router
 

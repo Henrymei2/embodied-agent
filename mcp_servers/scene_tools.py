@@ -18,7 +18,12 @@ Run standalone for a quick sanity check:
 from __future__ import annotations
 
 import math
+import json
+import os
 import sys
+import urllib.error
+import urllib.request
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +34,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from src.open_llm_vtuber.stage_state_manager import load_stage_state
-from src.open_llm_vtuber.frontend_bridge import request_move_to
 
 # TODO: replace with however conf_uid actually gets resolved for the current
 # session once that's wired up end-to-end. Hardcoded to the default character
 # for now so this server is testable standalone.
 _DEFAULT_CONF_UID = "mao_pro_001"
+_DEFAULT_BACKEND_URL = "http://localhost:12393"
+_FRONTEND_ACTION_TIMEOUT_SECONDS = 15.0
 
 mcp = FastMCP("scene")
 
@@ -49,6 +55,46 @@ def _find_node(nodes: list[dict[str, Any]], label: str) -> dict[str, Any] | None
         if node.get("id") == label or node.get("label") == label:
             return node
     return None
+
+
+def _post_frontend_action_sync(action: str, args: dict[str, Any]) -> tuple[bool, str | None]:
+    backend_url = os.environ.get("EMBODIED_AGENT_BACKEND_URL", _DEFAULT_BACKEND_URL)
+    url = f"{backend_url.rstrip('/')}/internal/frontend-action"
+    body = json.dumps(
+        {
+            "action": action,
+            "args": args,
+            "timeout": _FRONTEND_ACTION_TIMEOUT_SECONDS,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=_FRONTEND_ACTION_TIMEOUT_SECONDS + 2.0,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001
+            return False, f"backend returned HTTP {exc.code}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"could not reach backend frontend-action bridge: {exc}"
+
+    if payload.get("ok"):
+        return True, None
+    return False, payload.get("error") or "frontend action failed"
+
+
+async def _post_frontend_action(action: str, args: dict[str, Any]) -> tuple[bool, str | None]:
+    return await asyncio.to_thread(_post_frontend_action_sync, action, args)
 
 
 @mcp.tool()
@@ -144,8 +190,9 @@ async def move_to(target: str) -> str:
     if node is None:
         return f"Error: no object found with label '{target}'; cannot move there."
 
-    ok, error = await request_move_to(
-        conf_uid=_DEFAULT_CONF_UID, x=node["x"], y=node["y"]
+    ok, error = await _post_frontend_action(
+        "move_to",
+        {"x": node["x"], "y": node["y"]},
     )
     if not ok:
         return f"Error: move_to failed: {error}"
