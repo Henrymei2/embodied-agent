@@ -15,7 +15,6 @@ class CharacterConfig(I18nMixin):
 
     conf_name: str = Field(..., alias="conf_name")
     conf_uid: str = Field(..., alias="conf_uid")
-    live2d_model_name: str = Field(..., alias="live2d_model_name")
     character_name: str = Field(default="", alias="character_name")
     human_name: str = Field(default="Human", alias="human_name")
     avatar: str = Field(default="", alias="avatar")
@@ -34,9 +33,6 @@ class CharacterConfig(I18nMixin):
         ),
         "conf_uid": Description(
             en="Unique identifier for the character configuration",
-        ),
-        "live2d_model_name": Description(
-            en="Name of the Live2D model to use"
         ),
         "character_name": Description(
             en="Name of the AI character in conversation"

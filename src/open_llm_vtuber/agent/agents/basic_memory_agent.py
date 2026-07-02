@@ -41,7 +41,6 @@ class BasicMemoryAgent(AgentInterface):
         self,
         llm: StatelessLLMInterface,
         system: str,
-        live2d_model,
         tts_preprocessor_config: TTSPreprocessorConfig = None,
         faster_first_response: bool = True,
         segment_method: str = "pysbd",
@@ -63,7 +62,6 @@ class BasicMemoryAgent(AgentInterface):
         # System prompt actually used for the current turn (base prompt plus the
         # memory block). Set per-turn in the chat pipeline; falls back to base.
         self._active_system: Optional[str] = None
-        self._live2d_model = live2d_model
         self._tts_preprocessor_config = tts_preprocessor_config
         self._faster_first_response = faster_first_response
         self._segment_method = segment_method
@@ -686,7 +684,7 @@ class BasicMemoryAgent(AgentInterface):
 
         @tts_filter(self._tts_preprocessor_config)
         @display_processor()
-        @actions_extractor(self._live2d_model)
+        @actions_extractor()
         @sentence_divider(
             faster_first_response=self._faster_first_response,
             segment_method=self._segment_method,

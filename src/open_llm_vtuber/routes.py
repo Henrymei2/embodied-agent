@@ -1,4 +1,3 @@
-import os
 import json
 from uuid import uuid4
 import numpy as np
@@ -129,51 +128,6 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
     async def web_tool_redirect_alt():
         """Redirect /web_tool to /web_tool/index.html"""
         return Response(status_code=302, headers={"Location": "/web-tool/index.html"})
-
-    @router.get("/live2d-models/info")
-    async def get_live2d_folder_info():
-        """Get information about available Live2D models"""
-        live2d_dir = "live2d-models"
-        if not os.path.exists(live2d_dir):
-            return JSONResponse(
-                {"error": "Live2D models directory not found"}, status_code=404
-            )
-
-        valid_characters = []
-        supported_extensions = [".png", ".jpg", ".jpeg"]
-
-        for entry in os.scandir(live2d_dir):
-            if entry.is_dir():
-                folder_name = entry.name.replace("\\", "/")
-                model3_file = os.path.join(
-                    live2d_dir, folder_name, f"{folder_name}.model3.json"
-                ).replace("\\", "/")
-
-                if os.path.isfile(model3_file):
-                    # Find avatar file if it exists
-                    avatar_file = None
-                    for ext in supported_extensions:
-                        avatar_path = os.path.join(
-                            live2d_dir, folder_name, f"{folder_name}{ext}"
-                        )
-                        if os.path.isfile(avatar_path):
-                            avatar_file = avatar_path.replace("\\", "/")
-                            break
-
-                    valid_characters.append(
-                        {
-                            "name": folder_name,
-                            "avatar": avatar_file,
-                            "model_path": model3_file,
-                        }
-                    )
-        return JSONResponse(
-            {
-                "type": "live2d-models/info",
-                "count": len(valid_characters),
-                "characters": valid_characters,
-            }
-        )
 
     @router.post("/asr")
     async def transcribe_audio(file: UploadFile = File(...)):

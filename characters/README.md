@@ -43,7 +43,7 @@ character_config:
   conf_name: 'Advanced - Cyber Hacker'
   conf_uid: 'cyber_hacker_001' # MUST be a unique ID
   character_name: 'Zero'
-  live2d_model_name: 'mao_pro' # Ensure this model exists in model_dict.json
+  avatar: 'zero.png'
   persona_prompt: |
     You are a mysterious hacker who goes by the codename "Zero". You speak in a concise, precise, and slightly robotic tone. You know everything about technology but are puzzled by human emotions.
 
@@ -82,13 +82,6 @@ Here is a breakdown of the core fields under `character_config`:
       - **Purpose**: The **Unique Identifier (UID)** for the character. It is used internally to distinguish between different character configs and manage chat histories. **It is highly recommended to keep this unique\!**
       - **Example**: `'my_ai_girlfriend_001'`
 
-  - `live2d_model_name` (string):
-
-      - **Purpose**: Specifies which Live2D model this character uses. This name must exactly match a model's `name` defined in the `model_dict.json` file.
-      - **How to add new models**:
-        1.  Place your Live2D model folder into the `/live2d-models` directory.
-        2.  Add a new entry for your model in `model_dict.json`.
-
   - `character_name` (string):
 
       - **Purpose**: The name the AI uses in conversations. This affects group chats and UI display.
@@ -112,4 +105,3 @@ Here is a breakdown of the core fields under `character_config`:
   - **Start by Copying**: The easiest way to get started is to duplicate an existing `.yaml` file and modify its contents with your `conf.yaml` content.
   - **Keep it Simple**: Only add the configuration keys you want to override from the base `conf.yaml`. This keeps your character files clean and easy to manage.
   - **Unique `conf_uid`**: Once again, ensure every character file has a unique `conf_uid` to prevent chat history conflicts.
-

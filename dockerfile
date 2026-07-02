@@ -44,22 +44,12 @@ RUN printf '%s\n' \
   '  exit 1' \
   'fi' \
   '' \
-  '# 2) model_dict.json (optional)' \
-  'if [ -f "/app/conf/model_dict.json" ]; then' \
-  '  ln -sf /app/conf/model_dict.json /app/model_dict.json' \
-  'fi' \
-  '' \
-  '# 3) live2d-models' \
-  'if [ -d "/app/conf/live2d-models" ]; then' \
-  '  rm -rf /app/live2d-models && ln -s /app/conf/live2d-models /app/live2d-models' \
-  'fi' \
-  '' \
-  '# 4) characters' \
+  '# 2) characters' \
   'if [ -d "/app/conf/characters" ]; then' \
   '  rm -rf /app/characters && ln -s /app/conf/characters /app/characters' \
   'fi' \
   '' \
-  '# 5) avatars' \
+  '# 3) avatars' \
   'if [ -d "/app/conf/avatars" ]; then' \
   '  rm -rf /app/avatars && ln -s /app/conf/avatars /app/avatars' \
   'fi' \

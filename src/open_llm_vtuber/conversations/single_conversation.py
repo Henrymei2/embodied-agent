@@ -105,7 +105,6 @@ async def process_single_conversation(
                     response_part = await process_agent_output(
                         output=output_item,
                         character_config=context.character_config,
-                        live2d_model=context.live2d_model,
                         tts_engine=context.tts_engine,
                         websocket_send=websocket_send,  # Pass websocket_send for audio/tts messages
                         tts_manager=tts_manager,

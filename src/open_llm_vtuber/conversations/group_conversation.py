@@ -371,7 +371,6 @@ async def process_member_response(
                 response_part = await process_agent_output(
                     output=output_item,
                     character_config=context.character_config,
-                    live2d_model=context.live2d_model,
                     tts_engine=context.tts_engine,
                     websocket_send=current_ws_send,  # Send TTS/display text directly to speaker's client
                     tts_manager=tts_manager,

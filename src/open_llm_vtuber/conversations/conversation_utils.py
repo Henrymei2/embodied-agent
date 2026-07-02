@@ -11,7 +11,6 @@ from .tts_manager import TTSTaskManager
 from ..agent.output_types import SentenceOutput, AudioOutput
 from ..agent.input_types import BatchInput, TextData, ImageData, TextSource, ImageSource
 from ..asr.asr_interface import ASRInterface
-from ..live2d_model import Live2dModel
 from ..tts.tts_interface import TTSInterface
 from ..utils.stream_audio import prepare_audio_payload
 
@@ -45,7 +44,6 @@ def create_batch_input(
 async def process_agent_output(
     output: Union[AudioOutput, SentenceOutput],
     character_config: Any,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
@@ -60,7 +58,6 @@ async def process_agent_output(
         if isinstance(output, SentenceOutput):
             full_response = await handle_sentence_output(
                 output,
-                live2d_model,
                 tts_engine,
                 websocket_send,
                 tts_manager,
@@ -83,7 +80,6 @@ async def process_agent_output(
 
 async def handle_sentence_output(
     output: SentenceOutput,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
@@ -106,7 +102,6 @@ async def handle_sentence_output(
             tts_text=tts_text,
             display_text=display_text,
             actions=actions,
-            live2d_model=live2d_model,
             tts_engine=tts_engine,
             websocket_send=websocket_send,
         )
