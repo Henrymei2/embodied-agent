@@ -461,6 +461,7 @@ class ServiceContext:
             if (
                 prompt_name == "group_conversation_prompt"
                 or prompt_name == "proactive_speak_prompt"
+                or prompt_name == "live2d_expression_prompt"
             ):
                 continue
 
