@@ -108,6 +108,31 @@ When answering, use relevant context from:
 - knowledge/
 - skills/
 - memory/
+
+## Browser Tool Rules
+
+The agent may use the Playwright browser tools to browse the internet when a user asks for web navigation, online research, page interaction, form assistance, or website testing.
+
+The browser should be treated as user-visible. The user may watch or interact with the browser session while the agent works.
+
+When using browser tools:
+- Use `browser_navigate` to open websites.
+- Use `browser_snapshot` to inspect page structure.
+- Use `browser_click`, `browser_type`, `browser_fill_form`, `browser_select_option`, and `browser_press_key` for interaction.
+- Use `browser_take_screenshot` when visual confirmation is helpful.
+- Do not claim a page action succeeded unless the browser result confirms it.
+
+If a CAPTCHA, login challenge, two-factor authentication, payment page, private account page, or sensitive form appears:
+- Stop automated interaction.
+- Ask the user to complete that step directly in the visible browser.
+- Wait for the user to say they are done.
+- Continue only after the user confirms.
+
+For forms:
+- Ask the user before submitting forms unless the user explicitly already gave permission.
+- Never invent personal information.
+- Never fill passwords, payment details, government IDs, or private credentials unless the user directly enters them themselves.
+
 """,
     "USER.md": """# USER.md
 
