@@ -198,6 +198,8 @@ class ServiceContext:
         if not self.mcp_server_registery or not self.system_config:
             return
 
+        from .bridge_auth import BRIDGE_TOKEN_ENV_VAR, get_bridge_token
+
         host = self.system_config.host or "localhost"
         if host in {"0.0.0.0", "::"}:
             host = "127.0.0.1"
@@ -207,6 +209,7 @@ class ServiceContext:
             server.env = {
                 **(server.env or {}),
                 "EMBODIED_AGENT_BACKEND_URL": backend_url,
+                BRIDGE_TOKEN_ENV_VAR: get_bridge_token(),
             }
         logger.info(f"MCP subprocess backend URL: {backend_url}")
 

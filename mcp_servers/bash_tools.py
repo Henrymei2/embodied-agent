@@ -48,8 +48,44 @@ _WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or None
 # Cap on how much output a single tool returns, to keep the LLM context sane.
 _MAX_OUTPUT_CHARS = 20_000
 _DEFAULT_BASH_TIMEOUT = 30
+_MAX_BASH_TIMEOUT = 120
+
+# Env vars whose names match these fragments are stripped from the environment
+# given to `execute_bash` children, so agent-run commands can't trivially
+# exfiltrate credentials that happen to live in the server's environment.
+_SENSITIVE_ENV_FRAGMENTS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
 
 mcp = FastMCP("bash")
+
+
+def _sanitized_env() -> dict[str, str]:
+    """Copy of our environment with credential-looking variables removed."""
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if not any(fragment in name.upper() for fragment in _SENSITIVE_ENV_FRAGMENTS)
+    }
+
+
+def _kill_process_tree(process: subprocess.Popen) -> None:
+    """Best-effort kill of a timed-out command and all of its children."""
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            import signal
+
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001 - fall through to killing just the shell
+        pass
+    try:
+        process.kill()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _workspace_root() -> Path:
@@ -92,32 +128,52 @@ def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
 
     Args:
         command: The shell command to execute.
-        timeout: Maximum seconds to allow the command to run (default 30).
+        timeout: Maximum seconds to allow the command to run
+            (default 30, capped at 120).
 
     Returns:
         Combined exit code, stdout and stderr.
     """
     root = _workspace_root()
+    timeout = max(1, min(int(timeout), _MAX_BASH_TIMEOUT))
+
+    popen_kwargs: dict = {
+        "shell": True,
+        "cwd": str(root),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "env": _sanitized_env(),
+    }
+    # Run the command in its own process group/session so a timeout can kill
+    # the whole tree, not just the shell.
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+
     try:
-        completed = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return f"Error: command timed out after {timeout}s."
+        process = subprocess.Popen(command, **popen_kwargs)
     except Exception as exc:  # noqa: BLE001 - surface any launch failure to the agent
         return f"Error: failed to run command: {exc}"
 
-    parts = [f"exit_code: {completed.returncode}"]
-    if completed.stdout:
-        parts.append(f"stdout:\n{completed.stdout}")
-    if completed.stderr:
-        parts.append(f"stderr:\n{completed.stderr}")
-    if not completed.stdout and not completed.stderr:
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(process)
+        try:
+            process.communicate(timeout=5)  # reap so we don't leak handles
+        except Exception:  # noqa: BLE001
+            pass
+        return f"Error: command timed out after {timeout}s (process tree killed)."
+
+    parts = [f"exit_code: {process.returncode}"]
+    if stdout:
+        parts.append(f"stdout:\n{stdout}")
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    if not stdout and not stderr:
         parts.append("(no output)")
     return _truncate("\n".join(parts))
 

@@ -15,6 +15,12 @@ STAGE_BASE_DIR = "stage_state"
 def _is_safe_filename(filename: str) -> bool:
     if not filename or len(filename) > 255:
         return False
+    # Reject names that are only dots/spaces ("." / ".." / "  ").
+    if filename.strip(". ") == "":
+        return False
+    # Reject path separators, drive colons, wildcards and control characters.
+    if re.search(r'[\\/:*?"<>|\x00-\x1f]', filename):
+        return False
     return bool(re.match(r"^[\w\-_\u0020-\u007E\u00A0-\uFFFF]+$", filename))
 
 

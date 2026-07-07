@@ -67,10 +67,16 @@ def _post_frontend_action_sync(action: str, args: dict[str, Any]) -> tuple[bool,
             "timeout": _FRONTEND_ACTION_TIMEOUT_SECONDS,
         }
     ).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    # The backend injects this per-run secret into our subprocess env; the
+    # bridge endpoint rejects requests without it.
+    bridge_token = os.environ.get("EMBODIED_AGENT_BRIDGE_TOKEN")
+    if bridge_token:
+        headers["X-Bridge-Token"] = bridge_token
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
 

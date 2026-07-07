@@ -99,6 +99,11 @@ class MemoryManager:
         self._context: List[ContextEntry] = []
         self._lock = asyncio.Lock()
 
+        # Soft-evolution: persistent familiarity/mood companion state.
+        from .evolution import EvolutionState
+
+        self._evolution = EvolutionState.load(self._workspace.root)
+
     # ------------------------------------------------------------------ #
     # Layer 1: contextual memory
     # ------------------------------------------------------------------ #
@@ -106,6 +111,17 @@ class MemoryManager:
         """Record a user message in the current context."""
         if text and text.strip():
             self._context.append(ContextEntry("user", text.strip()))
+            # Each user turn nudges the companion's familiarity and mood.
+            self._evolution.record_interaction(text.strip())
+
+    @property
+    def evolution(self):
+        """The persistent soft-evolution companion state."""
+        return self._evolution
+
+    def note_session_start(self) -> None:
+        """Mark the start of a session (bumps session count, decays idle mood)."""
+        self._evolution.note_session_start()
 
     def add_assistant_message(self, text: str) -> None:
         """Record an assistant message in the current context."""
@@ -372,6 +388,10 @@ class MemoryManager:
         current contextual buffer.
         """
         sections: List[str] = []
+
+        evolution_block = self._evolution.render().strip()
+        if evolution_block:
+            sections.append(evolution_block)
 
         longterm = self._read_if_exists(self._workspace.memory_file).strip()
         if longterm:

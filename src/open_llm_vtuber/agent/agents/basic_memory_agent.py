@@ -799,6 +799,7 @@ class BasicMemoryAgent(AgentInterface):
         if not self._memory_manager:
             return
         try:
+            self._memory_manager.note_session_start()
             await self._memory_manager.startup_compaction()
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Memory: startup compaction failed: {exc}")

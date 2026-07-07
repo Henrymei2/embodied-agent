@@ -10,7 +10,7 @@
       },
       "time": {
         "command": "uvx",
-        "args": ["mcp-server-time", "--local-timezone=Asia/Shanghai"]
+        "args": ["mcp-server-time", "--local-timezone=America/Chicago"]
       },
       "ddg-search": {
         "command": "uvx",

@@ -2,10 +2,11 @@ import json
 from uuid import uuid4
 import numpy as np
 from datetime import datetime
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body
+from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body, Request
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
+from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
@@ -69,17 +70,50 @@ def init_proxy_route(server_url: str) -> APIRouter:
     return router
 
 
+# Bounds for how long a bridge request may wait on the frontend. Prevents a
+# caller from parking unbounded futures in the bridge.
+_BRIDGE_TIMEOUT_MIN = 0.5
+_BRIDGE_TIMEOUT_MAX = 60.0
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
 def init_frontend_action_routes() -> APIRouter:
-    """Create routes that let local MCP subprocesses reach the active frontend."""
+    """Create routes that let local MCP subprocesses reach the active frontend.
+
+    This endpoint is for the server's own MCP tool subprocesses only. It is
+    guarded by a per-run shared secret (X-Bridge-Token) and restricted to
+    loopback callers, because the app serves permissive CORS headers and an
+    open endpoint here would let any website drive the frontend.
+    """
     router = APIRouter()
 
     @router.post("/internal/frontend-action")
-    async def frontend_action(payload: dict = Body(...)):
+    async def frontend_action(request: Request, payload: dict = Body(...)):
         from .frontend_bridge import request_frontend_action
+
+        client_host = request.client.host if request.client else None
+        if client_host not in _LOOPBACK_HOSTS:
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "forbidden"},
+                status_code=403,
+            )
+        if not verify_bridge_token(request.headers.get(BRIDGE_TOKEN_HEADER)):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "invalid bridge token"},
+                status_code=403,
+            )
 
         action = payload.get("action")
         args = payload.get("args", {})
-        timeout = float(payload.get("timeout", 15.0))
+        try:
+            timeout = float(payload.get("timeout", 15.0))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "timeout must be a number"},
+                status_code=400,
+            )
+        timeout = max(_BRIDGE_TIMEOUT_MIN, min(_BRIDGE_TIMEOUT_MAX, timeout))
 
         if not isinstance(action, str) or not action:
             return JSONResponse(
@@ -129,6 +163,9 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         """Redirect /web_tool to /web_tool/index.html"""
         return Response(status_code=302, headers={"Location": "/web-tool/index.html"})
 
+    # Reject absurdly large uploads before buffering them all in memory.
+    max_asr_upload_bytes = 50 * 1024 * 1024  # ~25 min of 16-bit 24kHz mono
+
     @router.post("/asr")
     async def transcribe_audio(file: UploadFile = File(...)):
         """
@@ -137,7 +174,13 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         logger.info(f"Received audio file for transcription: {file.filename}")
 
         try:
-            contents = await file.read()
+            contents = await file.read(max_asr_upload_bytes + 1)
+            if len(contents) > max_asr_upload_bytes:
+                return Response(
+                    content=json.dumps({"error": "Audio file too large"}),
+                    status_code=413,
+                    media_type="application/json",
+                )
 
             # Validate minimum file size
             if len(contents) < 44:  # Minimum WAV header size
