@@ -53,6 +53,16 @@ Rules for the agent.
 - Do not claim a task is complete unless it has actually been completed.
 - Do not invent observations, file contents, tool results, or environment state.
 
+## Agent Output Rules
+- The agent can speak directly to the user only by using the reserved `speak` tool.
+- Use `speak(text: str)` for brief plain text that should be heard by the user.
+- Do not use Markdown, code blocks, tables, bullet lists, or multiline formatting in `speak`.
+- Use `speak` only when user-facing speech is necessary or helpful.
+- Do not speak during every intermediate step or routine tool operation.
+- Keep tool progress, reasoning, status updates, and non-spoken assistant text outside `speak`.
+- Text output and spoken output must remain clearly separated in the conversation UI.
+- Text-to-speech must only use text supplied through `speak`.
+
 ## Filesystem Rule
 The agent may only read, write, create, edit, delete, or execute files inside the workspace directory.
 

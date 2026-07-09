@@ -8,6 +8,7 @@ from typing import (
     Union,
     Optional,
 )
+import json
 from ...workspace import build_workspace_prompt_context
 from loguru import logger
 from .agent_interface import AgentInterface
@@ -30,6 +31,53 @@ from ...mcpp.json_detector import StreamJSONDetector
 from ...mcpp.types import ToolCallObject
 from ...mcpp.tool_executor import ToolExecutor
 from ...memory import MemoryManager
+
+
+SPEAK_TOOL_NAME = "speak"
+SPEAK_TOOL_INPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "text": {
+            "type": "string",
+            "description": (
+                "Brief plain text to speak directly to the user. "
+                "Do not use Markdown or multiline formatting."
+            ),
+        }
+    },
+    "required": ["text"],
+}
+SPEAK_TOOL_DESCRIPTION = (
+    "Speak brief plain text directly to the user. Use only when user-facing "
+    "speech is necessary; do not narrate every intermediate step."
+)
+SPEAK_TOOL_OPENAI = {
+    "type": "function",
+    "function": {
+        "name": SPEAK_TOOL_NAME,
+        "description": SPEAK_TOOL_DESCRIPTION,
+        "parameters": {
+            **SPEAK_TOOL_INPUT_SCHEMA,
+            "additionalProperties": False,
+        },
+    },
+}
+SPEAK_TOOL_CLAUDE = {
+    "name": SPEAK_TOOL_NAME,
+    "description": SPEAK_TOOL_DESCRIPTION,
+    "input_schema": SPEAK_TOOL_INPUT_SCHEMA,
+}
+SPEAK_OUTPUT_REQUIREMENT = """\
+## Built-in Speak Tool Requirement
+
+You have a built-in tool named `speak`.
+
+When you want to say anything directly to the user, you must call `speak` with brief plain text.
+Do not put user-facing spoken content in normal assistant text.
+Normal assistant text is display-only and will not be converted to speech.
+Use normal assistant text only for non-spoken status or tool progress when needed.
+Do not call `speak` for every intermediate step.
+"""
 
 
 class BasicMemoryAgent(AgentInterface):
@@ -101,6 +149,24 @@ class BasicMemoryAgent(AgentInterface):
                 "ToolManager not provided, agent will not have pre-formatted tools."
             )
 
+        self._formatted_tools_openai = self._with_internal_speak_tool(
+            self._formatted_tools_openai,
+            "OpenAI",
+        )
+        self._formatted_tools_claude = self._with_internal_speak_tool(
+            self._formatted_tools_claude,
+            "Claude",
+        )
+        logger.info("Agent built-in tool names: ['speak']")
+        logger.info(
+            "Agent OpenAI tool names after built-in injection: "
+            f"{[tool.get('function', {}).get('name') for tool in self._formatted_tools_openai]}"
+        )
+        logger.info(
+            "Agent Claude tool names after built-in injection: "
+            f"{[tool.get('name') for tool in self._formatted_tools_claude]}"
+        )
+
         self._set_llm(llm)
         self.set_system(system if system else self._system)
 
@@ -127,6 +193,137 @@ class BasicMemoryAgent(AgentInterface):
 
         logger.info("BasicMemoryAgent initialized.")
 
+    def _with_internal_speak_tool(
+        self,
+        tools: List[Dict[str, Any]],
+        mode: Literal["Claude", "OpenAI"],
+    ) -> List[Dict[str, Any]]:
+        """Return formatted tools with the reserved local speak tool included."""
+        tool_names = {
+            tool.get("function", {}).get("name")
+            if mode == "OpenAI"
+            else tool.get("name")
+            for tool in tools
+        }
+        if SPEAK_TOOL_NAME in tool_names:
+            logger.warning(
+                "An external tool named 'speak' is already registered. "
+                "Replacing it with the reserved internal speak tool."
+            )
+
+        internal_tool = SPEAK_TOOL_OPENAI if mode == "OpenAI" else SPEAK_TOOL_CLAUDE
+        filtered_tools = [
+            tool
+            for tool in tools
+            if (
+                tool.get("function", {}).get("name")
+                if mode == "OpenAI"
+                else tool.get("name")
+            )
+            != SPEAK_TOOL_NAME
+        ]
+        return [*filtered_tools, internal_tool]
+
+    def _is_speak_tool_call(self, call: Dict[str, Any] | ToolCallObject) -> bool:
+        """Return whether a tool call targets the reserved local speak tool."""
+        if isinstance(call, ToolCallObject):
+            return call.function.name == SPEAK_TOOL_NAME
+        if isinstance(call, dict):
+            return (
+                call.get("name") == SPEAK_TOOL_NAME
+                or call.get("tool") == SPEAK_TOOL_NAME
+            )
+        return False
+
+    def _extract_speak_text(self, call: Dict[str, Any] | ToolCallObject) -> str:
+        """Extract and normalize text from a reserved speak tool call."""
+        tool_input: Any = {}
+
+        if isinstance(call, ToolCallObject):
+            try:
+                tool_input = json.loads(call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                logger.error("Failed to decode speak tool arguments.")
+                return ""
+        elif isinstance(call, dict):
+            tool_input = call.get("input", call.get("args", call.get("arguments", {})))
+            if isinstance(tool_input, str):
+                try:
+                    tool_input = json.loads(tool_input)
+                except json.JSONDecodeError:
+                    tool_input = {"text": tool_input}
+
+        if isinstance(tool_input, dict):
+            text = str(tool_input.get("text", ""))
+        else:
+            text = str(tool_input)
+
+        return " ".join(text.split())
+
+    def _make_spoken_event(self, text: str) -> Dict[str, str] | None:
+        """Create a reserved speak event for non-empty text."""
+        text = " ".join(text.split())
+        if not text:
+            return None
+
+        return {"type": "speak_text", "text": text}
+
+    def _make_agent_text_event(self, text: str) -> Dict[str, str] | None:
+        """Create a non-spoken display event for assistant text."""
+        if not text:
+            return None
+
+        return {"type": "agent_text", "content": text}
+
+    def _format_speak_tool_result(
+        self,
+        caller_mode: Literal["Claude", "OpenAI", "Prompt"],
+        tool_id: str,
+    ) -> Dict[str, Any]:
+        """Format a successful reserved speak tool result for the LLM."""
+        if caller_mode == "Claude":
+            return {
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": "Spoken to the user.",
+                "is_error": False,
+            }
+        if caller_mode == "OpenAI":
+            return {
+                "role": "tool",
+                "tool_call_id": tool_id,
+                "content": "Spoken to the user.",
+            }
+        return {
+            "tool_id": tool_id,
+            "content": "Spoken to the user.",
+            "is_error": False,
+        }
+
+    def _build_builtin_tool_prompt_string(self) -> str:
+        """Build prompt-mode instructions for agent-local built-in tools."""
+        return "\n".join(
+            [
+                "Server: builtin",
+                "    Tools:",
+                "        speak:",
+                f"            Description: {SPEAK_TOOL_DESCRIPTION}",
+                "            Parameters:",
+                "                text:",
+                "                    Type: string",
+                "                    Description: Brief plain text to speak directly to the user. Do not use Markdown or multiline formatting.",
+                "            Required: text",
+                "",
+                'Use mcp_server "builtin" when calling agent built-in tools.',
+            ]
+        )
+
+    def _build_speak_output_requirement(self, base_system_prompt: str) -> str:
+        """Append the speak requirement to the system prompt once."""
+        if "## Built-in Speak Tool Requirement" in base_system_prompt:
+            return base_system_prompt
+        return f"{base_system_prompt}\n\n{SPEAK_OUTPUT_REQUIREMENT}"
+
     def _set_llm(self, llm: StatelessLLMInterface):
         """Set the LLM for chat completion."""
         self._llm = llm
@@ -139,13 +336,16 @@ class BasicMemoryAgent(AgentInterface):
         if self.interrupt_method == "user":
             system = f"{system}\n\nIf you received `[interrupted by user]` signal, you were interrupted."
 
-        self._system = system
+        self._system = self._build_speak_output_requirement(system)
 
     def _build_prompt_mode_system_prompt(self, base_system_prompt: str) -> str:
         """Build prompt-mode tool instructions from the MCP prompt template."""
-        if not self._mcp_prompt_string:
-            logger.warning("Prompt mode active but mcp_prompt_string is empty!")
-            return base_system_prompt
+        builtin_prompt = self._build_builtin_tool_prompt_string()
+        combined_tool_prompt = (
+            f"{builtin_prompt}\n\n{self._mcp_prompt_string}"
+            if self._mcp_prompt_string
+            else builtin_prompt
+        )
 
         try:
             prompt_template = prompt_loader.load_util("mcp_prompt")
@@ -159,7 +359,7 @@ class BasicMemoryAgent(AgentInterface):
             prompt_template = "[<insert_mcp_servers_with_tools>]"
 
         mcp_prompt = prompt_template.replace(
-            "[<insert_mcp_servers_with_tools>]", self._mcp_prompt_string
+            "[<insert_mcp_servers_with_tools>]", combined_tool_prompt
         )
         return f"{base_system_prompt}\n\n{mcp_prompt}"
 
@@ -405,7 +605,9 @@ class BasicMemoryAgent(AgentInterface):
                 if event["type"] == "text_delta":
                     text = event["text"]
                     current_turn_text += text
-                    yield text
+                    text_event = self._make_agent_text_event(text)
+                    if text_event:
+                        yield text_event
                     if (
                         not current_assistant_message_content
                         or current_assistant_message_content[-1]["type"] != "text"
@@ -436,7 +638,11 @@ class BasicMemoryAgent(AgentInterface):
                     break
                 elif event["type"] == "error":
                     logger.error(f"LLM API Error: {event['message']}")
-                    yield f"[Error from LLM: {event['message']}]"
+                    error_event = self._make_agent_text_event(
+                        f"[Error from LLM: {event['message']}]"
+                    )
+                    if error_event:
+                        yield error_event
                     return
 
             if pending_tool_calls:
@@ -465,28 +671,61 @@ class BasicMemoryAgent(AgentInterface):
 
                 tool_results_for_llm = []
                 if not self._tool_executor:
-                    logger.error(
-                        "Claude Tool interaction requested but ToolExecutor is not available."
-                    )
-                    yield "[Error: ToolExecutor not configured]"
+                    non_speak_calls = [
+                        call
+                        for call in pending_tool_calls
+                        if not self._is_speak_tool_call(call)
+                    ]
+                    if non_speak_calls:
+                        logger.error(
+                            "Claude Tool interaction requested but ToolExecutor is not available."
+                        )
+                        error_event = self._make_agent_text_event(
+                            "[Error: ToolExecutor not configured]"
+                        )
+                        if error_event:
+                            yield error_event
+                        return
+
+                external_tool_calls = []
+                spoke_this_turn = False
+                for tool_call in pending_tool_calls:
+                    if self._is_speak_tool_call(tool_call):
+                        speak_text = self._extract_speak_text(tool_call)
+                        speak_event = self._make_spoken_event(speak_text)
+                        if speak_event:
+                            spoke_this_turn = True
+                            self._add_message(speak_text, "assistant")
+                            yield speak_event
+                        tool_results_for_llm.append(
+                            self._format_speak_tool_result(
+                                "Claude",
+                                tool_call.get("id", "speak"),
+                            )
+                        )
+                    else:
+                        external_tool_calls.append(tool_call)
+
+                if spoke_this_turn and not external_tool_calls:
                     return
 
-                tool_executor_iterator = self._tool_executor.execute_tools(
-                    tool_calls=pending_tool_calls,
-                    caller_mode="Claude",
-                )
-                try:
-                    while True:
-                        update = await anext(tool_executor_iterator)
-                        if update.get("type") == "final_tool_results":
-                            tool_results_for_llm = update.get("results", [])
-                            break
-                        else:
-                            yield update
-                except StopAsyncIteration:
-                    logger.warning(
-                        "Tool executor finished without final results marker."
+                if external_tool_calls:
+                    tool_executor_iterator = self._tool_executor.execute_tools(
+                        tool_calls=external_tool_calls,
+                        caller_mode="Claude",
                     )
+                    try:
+                        while True:
+                            update = await anext(tool_executor_iterator)
+                            if update.get("type") == "final_tool_results":
+                                tool_results_for_llm.extend(update.get("results", []))
+                                break
+                            else:
+                                yield update
+                    except StopAsyncIteration:
+                        logger.warning(
+                            "Tool executor finished without final results marker."
+                        )
 
                 if tool_results_for_llm:
                     messages.append({"role": "user", "content": tool_results_for_llm})
@@ -553,10 +792,16 @@ class BasicMemoryAgent(AgentInterface):
                                     logger.error(f"Error parsing detected JSON: {e}")
                                     if self._json_detector:
                                         self._json_detector.reset()
-                                    yield f"[Error parsing tool JSON: {e}]"
+                                    error_event = self._make_agent_text_event(
+                                        f"[Error parsing tool JSON: {e}]"
+                                    )
+                                    if error_event:
+                                        yield error_event
                                     goto_next_while_iteration = True
                                     break
-                        yield event
+                        text_event = self._make_agent_text_event(event)
+                        if text_event:
+                            yield text_event
                 else:
                     if event == "__API_NOT_SUPPORT_TOOLS__":
                         logger.warning(
@@ -569,7 +814,9 @@ class BasicMemoryAgent(AgentInterface):
                         break
                     elif isinstance(event, str):
                         current_turn_text += event
-                        yield event
+                        text_event = self._make_agent_text_event(event)
+                        if text_event:
+                            yield text_event
                     elif isinstance(event, list) and all(
                         isinstance(tc, ToolCallObject) for tc in event
                     ):
@@ -598,15 +845,50 @@ class BasicMemoryAgent(AgentInterface):
                 self._add_message(current_turn_text, "assistant")
 
                 if not self._tool_executor:
-                    logger.error(
-                        "Prompt Tool interaction requested but ToolExecutor/MCPClient is not available."
-                    )
-                    yield "[Error: ToolExecutor/MCPClient not configured for prompt mode]"
-                    continue
+                    non_speak_items = [
+                        item
+                        for item in detected_prompt_json
+                        if not self._is_speak_tool_call(item)
+                    ]
+                    if non_speak_items:
+                        logger.error(
+                            "Prompt Tool interaction requested but ToolExecutor/MCPClient is not available."
+                        )
+                        error_event = self._make_agent_text_event(
+                            "[Error: ToolExecutor/MCPClient not configured for prompt mode]"
+                        )
+                        if error_event:
+                            yield error_event
+                        continue
 
-                parsed_tools = self._tool_executor.process_tool_from_prompt_json(
-                    detected_prompt_json
-                )
+                speak_prompt_items = [
+                    item
+                    for item in detected_prompt_json
+                    if self._is_speak_tool_call(item)
+                ]
+                prompt_tool_results_for_llm = []
+                for item in speak_prompt_items:
+                    speak_text = self._extract_speak_text(item)
+                    speak_event = self._make_spoken_event(speak_text)
+                    if speak_event:
+                        self._add_message(speak_text, "assistant")
+                        yield speak_event
+                    prompt_tool_results_for_llm.append(
+                        self._format_speak_tool_result(
+                            "Prompt",
+                            item.get("id", "speak"),
+                        )
+                    )
+
+                parsed_tools = []
+                if self._tool_executor:
+                    parsed_tools = self._tool_executor.process_tool_from_prompt_json(
+                        [
+                            item
+                            for item in detected_prompt_json
+                            if not self._is_speak_tool_call(item)
+                        ]
+                    )
                 if parsed_tools:
                     tool_results_for_llm = []
 
@@ -627,15 +909,15 @@ class BasicMemoryAgent(AgentInterface):
                             "Prompt mode tool executor finished without final results marker."
                         )
 
-                    if tool_results_for_llm:
-                        result_strings = [
-                            res.get("content", "Error: Malformed result")
-                            for res in tool_results_for_llm
-                        ]
-                        combined_results_str = "\n".join(result_strings)
-                        messages.append(
-                            {"role": "user", "content": combined_results_str}
-                        )
+                    prompt_tool_results_for_llm.extend(tool_results_for_llm)
+
+                if prompt_tool_results_for_llm:
+                    result_strings = [
+                        res.get("content", "Error: Malformed result")
+                        for res in prompt_tool_results_for_llm
+                    ]
+                    combined_results_str = "\n".join(result_strings)
+                    messages.append({"role": "user", "content": combined_results_str})
                 continue
 
             elif pending_tool_calls and assistant_message_for_api:
@@ -645,28 +927,61 @@ class BasicMemoryAgent(AgentInterface):
 
                 tool_results_for_llm = []
                 if not self._tool_executor:
-                    logger.error(
-                        "OpenAI Tool interaction requested but ToolExecutor/MCPClient is not available."
-                    )
-                    yield "[Error: ToolExecutor/MCPClient not configured for OpenAI mode]"
-                    continue
+                    non_speak_calls = [
+                        call
+                        for call in pending_tool_calls
+                        if not self._is_speak_tool_call(call)
+                    ]
+                    if non_speak_calls:
+                        logger.error(
+                            "OpenAI Tool interaction requested but ToolExecutor/MCPClient is not available."
+                        )
+                        error_event = self._make_agent_text_event(
+                            "[Error: ToolExecutor/MCPClient not configured for OpenAI mode]"
+                        )
+                        if error_event:
+                            yield error_event
+                        continue
 
-                tool_executor_iterator = self._tool_executor.execute_tools(
-                    tool_calls=pending_tool_calls,
-                    caller_mode="OpenAI",
-                )
-                try:
-                    while True:
-                        update = await anext(tool_executor_iterator)
-                        if update.get("type") == "final_tool_results":
-                            tool_results_for_llm = update.get("results", [])
-                            break
-                        else:
-                            yield update
-                except StopAsyncIteration:
-                    logger.warning(
-                        "OpenAI tool executor finished without final results marker."
+                external_tool_calls = []
+                spoke_this_turn = False
+                for tool_call in pending_tool_calls:
+                    if self._is_speak_tool_call(tool_call):
+                        speak_text = self._extract_speak_text(tool_call)
+                        speak_event = self._make_spoken_event(speak_text)
+                        if speak_event:
+                            spoke_this_turn = True
+                            self._add_message(speak_text, "assistant")
+                            yield speak_event
+                        tool_results_for_llm.append(
+                            self._format_speak_tool_result(
+                                "OpenAI",
+                                tool_call.id,
+                            )
+                        )
+                    else:
+                        external_tool_calls.append(tool_call)
+
+                if spoke_this_turn and not external_tool_calls:
+                    return
+
+                if external_tool_calls:
+                    tool_executor_iterator = self._tool_executor.execute_tools(
+                        tool_calls=external_tool_calls,
+                        caller_mode="OpenAI",
                     )
+                    try:
+                        while True:
+                            update = await anext(tool_executor_iterator)
+                            if update.get("type") == "final_tool_results":
+                                tool_results_for_llm.extend(update.get("results", []))
+                                break
+                            else:
+                                yield update
+                    except StopAsyncIteration:
+                        logger.warning(
+                            "OpenAI tool executor finished without final results marker."
+                        )
 
                 if tool_results_for_llm:
                     messages.extend(tool_results_for_llm)
@@ -716,6 +1031,15 @@ class BasicMemoryAgent(AgentInterface):
             tool_mode = None
             llm_supports_native_tools = False
 
+            if isinstance(self._llm, ClaudeAsyncLLM):
+                tool_mode = "Claude"
+                tools = self._formatted_tools_claude
+                llm_supports_native_tools = True
+            elif isinstance(self._llm, OpenAICompatibleAsyncLLM):
+                tool_mode = "OpenAI"
+                tools = self._formatted_tools_openai
+                llm_supports_native_tools = True
+
             if self._use_mcpp and self._tool_manager:
                 tools = None
                 if isinstance(self._llm, ClaudeAsyncLLM):
@@ -740,7 +1064,7 @@ class BasicMemoryAgent(AgentInterface):
                         f"Using {len(tools)} formatted tools for {tool_mode} mode."
                     )
 
-            if self._use_mcpp and tool_mode == "Claude":
+            if tool_mode == "Claude" and tools:
                 logger.debug(
                     f"Starting Claude tool interaction loop with {len(tools)} tools."
                 )
@@ -749,10 +1073,15 @@ class BasicMemoryAgent(AgentInterface):
                 ):
                     if isinstance(output, str):
                         assistant_chunks.append(output)
+                    elif isinstance(output, dict):
+                        if output.get("type") == "agent_text":
+                            assistant_chunks.append(output.get("content", ""))
+                        elif output.get("type") == "speak_text":
+                            assistant_chunks.append(output.get("text", ""))
                     yield output
                 self._record_assistant_memory(assistant_chunks)
                 return
-            elif self._use_mcpp and tool_mode == "OpenAI":
+            elif tool_mode == "OpenAI" and tools:
                 logger.debug(
                     f"Starting OpenAI tool interaction loop with {len(tools)} tools."
                 )
@@ -761,17 +1090,26 @@ class BasicMemoryAgent(AgentInterface):
                 ):
                     if isinstance(output, str):
                         assistant_chunks.append(output)
+                    elif isinstance(output, dict):
+                        if output.get("type") == "agent_text":
+                            assistant_chunks.append(output.get("content", ""))
+                        elif output.get("type") == "speak_text":
+                            assistant_chunks.append(output.get("text", ""))
                     yield output
                 self._record_assistant_memory(assistant_chunks)
                 return
             else:
                 logger.info("Starting simple chat completion.")
                 base_system = self._active_system or self._system
-                current_system_prompt = self._build_system_prompt_with_workspace_context(
-                    messages,
-                    base_system,
+                current_system_prompt = (
+                    self._build_system_prompt_with_workspace_context(
+                        messages,
+                        base_system,
+                    )
                 )
-                token_stream = self._llm.chat_completion(messages, current_system_prompt)
+                token_stream = self._llm.chat_completion(
+                    messages, current_system_prompt
+                )
                 complete_response = ""
                 async for event in token_stream:
                     text_chunk = ""
@@ -782,7 +1120,9 @@ class BasicMemoryAgent(AgentInterface):
                     else:
                         continue
                     if text_chunk:
-                        yield text_chunk
+                        text_event = self._make_agent_text_event(text_chunk)
+                        if text_event:
+                            yield text_event
                         complete_response += text_chunk
                 if complete_response:
                     self._add_message(complete_response, "assistant")
