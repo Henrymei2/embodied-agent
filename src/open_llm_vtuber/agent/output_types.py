@@ -43,6 +43,22 @@ class DisplayText:
 
 
 @dataclass
+class AgentTextOutput(BaseOutput):
+    """
+    Output type for non-spoken assistant text.
+
+    Attributes:
+        display_text: Text to display in the conversation UI.
+    """
+
+    display_text: DisplayText
+
+    async def __aiter__(self):
+        """Yield the display text."""
+        yield self.display_text
+
+
+@dataclass
 class SentenceOutput(BaseOutput):
     """
     Output type for text-based responses.

@@ -17,7 +17,6 @@ import { CloseButton } from '@/components/ui/close-button';
 
 import { settingStyles } from './setting-styles';
 import General from './general';
-import Live2D from './live2d';
 import ASR from './asr';
 import TTS from './tts';
 import Agent from './agent';
@@ -64,12 +63,6 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
       <Tabs.ContentGroup>
         <Tabs.Content value="general" {...settingStyles.settingUI.tabs.content}>
           <General
-            onSave={handleSaveCallback}
-            onCancel={handleCancelCallback}
-          />
-        </Tabs.Content>
-        <Tabs.Content value="live2d" {...settingStyles.settingUI.tabs.content}>
-          <Live2D
             onSave={handleSaveCallback}
             onCancel={handleCancelCallback}
           />
@@ -126,12 +119,6 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
                 {...settingStyles.settingUI.tabs.trigger}
               >
                 {t('settings.tabs.general')}
-              </Tabs.Trigger>
-              <Tabs.Trigger
-                value="live2d"
-                {...settingStyles.settingUI.tabs.trigger}
-              >
-                {t('settings.tabs.live2d')}
               </Tabs.Trigger>
               <Tabs.Trigger
                 value="asr"

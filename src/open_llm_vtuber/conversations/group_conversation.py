@@ -5,7 +5,7 @@ from loguru import logger
 from fastapi import WebSocket
 import numpy as np
 
-from ..agent.output_types import AudioOutput, SentenceOutput
+from ..agent.output_types import AgentTextOutput, AudioOutput, SentenceOutput
 
 from .conversation_utils import (
     create_batch_input,
@@ -366,12 +366,13 @@ async def process_member_response(
                     logger.warning(
                         "Cannot broadcast tool status: broadcast_func or group_members missing."
                     )
-            elif isinstance(output_item, (SentenceOutput, AudioOutput)):
+            elif isinstance(
+                output_item, (AgentTextOutput, SentenceOutput, AudioOutput)
+            ):
                 # Handle SentenceOutput or AudioOutput: Send to current user, broadcast audio later if needed
                 response_part = await process_agent_output(
                     output=output_item,
                     character_config=context.character_config,
-                    live2d_model=context.live2d_model,
                     tts_engine=context.tts_engine,
                     websocket_send=current_ws_send,  # Send TTS/display text directly to speaker's client
                     tts_manager=tts_manager,

@@ -14,7 +14,12 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 
-from .routes import init_client_ws_route, init_webtool_routes, init_proxy_route
+from .routes import (
+    init_client_ws_route,
+    init_frontend_action_routes,
+    init_webtool_routes,
+    init_proxy_route,
+)
 from .service_context import ServiceContext
 from .config_manager.utils import Config
 
@@ -96,6 +101,7 @@ class WebSocketServer:
         self.app.include_router(
             init_webtool_routes(default_context_cache=self.default_context_cache),
         )
+        self.app.include_router(init_frontend_action_routes())
 
         # Initialize and include proxy routes if proxy is enabled
         system_config = config.system_config
@@ -118,11 +124,6 @@ class WebSocketServer:
         )
 
         # Mount static files with CORS-enabled handlers
-        self.app.mount(
-            "/live2d-models",
-            CORSStaticFiles(directory="live2d-models"),
-            name="live2d-models",
-        )
         self.app.mount(
             "/bg",
             CORSStaticFiles(directory="backgrounds"),

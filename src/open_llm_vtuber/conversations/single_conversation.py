@@ -19,7 +19,7 @@ from ..chat_history_manager import store_message
 from ..service_context import ServiceContext
 
 # Import necessary types from agent outputs
-from ..agent.output_types import SentenceOutput, AudioOutput
+from ..agent.output_types import AgentTextOutput, SentenceOutput, AudioOutput
 
 
 async def process_single_conversation(
@@ -100,12 +100,13 @@ async def process_single_conversation(
 
                     await websocket_send(json.dumps(output_item))
 
-                elif isinstance(output_item, (SentenceOutput, AudioOutput)):
+                elif isinstance(
+                    output_item, (AgentTextOutput, SentenceOutput, AudioOutput)
+                ):
                     # Handle SentenceOutput or AudioOutput
                     response_part = await process_agent_output(
                         output=output_item,
                         character_config=context.character_config,
-                        live2d_model=context.live2d_model,
                         tts_engine=context.tts_engine,
                         websocket_send=websocket_send,  # Pass websocket_send for audio/tts messages
                         tts_manager=tts_manager,

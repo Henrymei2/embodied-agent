@@ -7,10 +7,9 @@ import { wsService, MessageEvent } from '@/services/websocket-service';
 import {
   WebSocketContext, HistoryInfo, defaultWsUrl, defaultBaseUrl,
 } from '@/context/websocket-context';
-import { ModelInfo, useLive2DConfig } from '@/context/live2d-config-context';
 import { useSubtitle } from '@/context/subtitle-context';
 import { audioTaskQueue } from '@/utils/task-queue';
-import { useAudioTask } from '@/components/canvas/live2d';
+import { useAudioTask } from '@/hooks/utils/use-audio-task';
 import { useBgUrl } from '@/context/bgurl-context';
 import { useConfig } from '@/context/character-config-context';
 import { useChatHistory } from '@/context/chat-history-context';
@@ -29,13 +28,17 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const [wsUrl, setWsUrl] = useLocalStorage<string>('wsUrl', defaultWsUrl);
   const [baseUrl, setBaseUrl] = useLocalStorage<string>('baseUrl', defaultBaseUrl);
   const { aiState, setAiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
-  const { setModelInfo } = useLive2DConfig();
   const { setSubtitleText } = useSubtitle();
-  const { clearResponse, setForceNewMessage, appendHumanMessage, appendOrUpdateToolCallMessage } = useChatHistory();
+  const {
+    clearResponse,
+    setForceNewMessage,
+    appendHumanMessage,
+    appendAIMessage,
+    appendOrUpdateToolCallMessage,
+  } = useChatHistory();
   const { addAudioTask } = useAudioTask();
   const bgUrlContext = useBgUrl();
-  const { confUid, setConfName, setConfUid, setConfigFiles } = useConfig();
-  const [pendingModelInfo, setPendingModelInfo] = useState<ModelInfo | undefined>(undefined);
+  const { setConfName, setConfUid, setConfigFiles } = useConfig();
   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
   const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
@@ -46,13 +49,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
   }, [autoStartMicOnConvEnd]);
-
-  useEffect(() => {
-    if (pendingModelInfo && confUid) {
-      setModelInfo(pendingModelInfo);
-      setPendingModelInfo(undefined);
-    }
-  }, [pendingModelInfo, setModelInfo, confUid]);
 
   const {
     setCurrentHistoryUid, setMessages, setHistoryList,
@@ -149,15 +145,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         if (message.client_uid) {
           setSelfUid(message.client_uid);
         }
-        setPendingModelInfo(message.model_info);
-        // setModelInfo(message.model_info);
-        // We don't know when the confRef in live2d-config-context will be updated, so we set a delay here for convenience
-        if (message.model_info && !message.model_info.url.startsWith("http")) {
-          const modelUrl = baseUrl + message.model_info.url;
-          // eslint-disable-next-line no-param-reassign
-          message.model_info.url = modelUrl;
-        }
-
         setAiState('idle');
         break;
       case 'full-text':
@@ -180,8 +167,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           duration: 2000,
         });
 
-        // setModelInfo(undefined);
-
         wsService.sendMessage({ type: 'fetch-history-list' });
         wsService.sendMessage({ type: 'create-new-history' });
         break;
@@ -200,7 +185,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             volumes: message.volumes || [],
             sliceLength: message.slice_length || 0,
             displayText: message.display_text || null,
-            expressions: message.actions?.expressions || null,
             forwarded: message.forwarded || false,
           });
         }
@@ -256,6 +240,16 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         console.log('user-input-transcription: ', message.text);
         if (message.text) {
           appendHumanMessage(message.text);
+        }
+        break;
+      case 'agent_text':
+        if (message.content) {
+          appendAIMessage(
+            message.content,
+            message.display_text?.name,
+            message.display_text?.avatar,
+            false,
+          );
         }
         break;
       case 'error':
@@ -318,6 +312,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             name: message.name,
             status: message.status as ('running' | 'completed' | 'error'),
             content: message.content || '',
+            browser_view: message.browser_view,
             timestamp: message.timestamp || new Date().toISOString(),
           });
         } else {
@@ -327,7 +322,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setModelInfo, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, appendAIMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

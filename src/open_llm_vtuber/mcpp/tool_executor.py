@@ -129,10 +129,18 @@ class ToolExecutor:
         for item in data:
             server = item.get("mcp_server")
             tool_name = item.get("tool")
-            arguments_str = item.get("arguments")
-            if all([server, tool_name, arguments_str]):
+            arguments = item.get("arguments")
+            if server and tool_name and arguments is not None:
                 try:
-                    args_dict = json.loads(arguments_str)
+                    if isinstance(arguments, str):
+                        args_dict = json.loads(arguments)
+                    elif isinstance(arguments, dict):
+                        args_dict = arguments
+                    else:
+                        logger.warning(
+                            "Skipping prompt mode tool call with invalid arguments type"
+                        )
+                        continue
                     parsed_tools.append(
                         {
                             "name": tool_name,

@@ -14,7 +14,7 @@ interface ChatHistoryState {
   historyList: HistoryInfo[];
   currentHistoryUid: string | null;
   appendHumanMessage: (content: string) => void;
-  appendAIMessage: (content: string, name?: string, avatar?: string) => void;
+  appendAIMessage: (content: string, name?: string, avatar?: string, spoken?: boolean) => void;
   appendOrUpdateToolCallMessage: (toolMessageData: Partial<Message>) => void; // Accept partial data
   setMessages: (messages: Message[]) => void; // Use the unified Message type
   setHistoryList: (
@@ -80,12 +80,18 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
    * Append or update an AI message in the chat history
    * @param content - Message content
    */
-  const appendAIMessage = useCallback((content: string, name?: string, avatar?: string) => {
+  const appendAIMessage = useCallback((content: string, name?: string, avatar?: string, spoken = false) => {
     setMessages((prevMessages) => {
       const lastMessage = prevMessages[prevMessages.length - 1];
 
       // If forceNewMessage is true or last message is not an AI text message, create new message
-      if (forceNewMessage || !lastMessage || lastMessage.role !== 'ai' || lastMessage.type !== 'text') {
+      if (
+        forceNewMessage
+        || !lastMessage
+        || lastMessage.role !== 'ai'
+        || lastMessage.type !== 'text'
+        || lastMessage.spoken !== spoken
+      ) {
         setForceNewMessage(false); // Reset the flag
         return [...prevMessages, {
           id: Date.now().toString(),
@@ -95,6 +101,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           timestamp: new Date().toISOString(),
           name,
           avatar,
+          spoken,
         }];
       }
 
@@ -135,6 +142,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           status: toolMessageData.status, // Update status
           name: toolMessageData.name || existingMsg.name,
           content: toolMessageData.content || existingMsg.content, // Update content (result/error or keep input)
+          browser_view: toolMessageData.browser_view || existingMsg.browser_view,
           timestamp: toolMessageData.timestamp!, // Update timestamp
         };
         return updatedMessages;
@@ -149,6 +157,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           tool_name: toolMessageData.tool_name,
           status: toolMessageData.status,
           content: toolMessageData.content || '', // Initial content (input)
+          browser_view: toolMessageData.browser_view,
           timestamp: toolMessageData.timestamp!,
           // name/avatar could potentially be added if needed
         };

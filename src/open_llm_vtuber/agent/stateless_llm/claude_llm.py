@@ -10,6 +10,7 @@ from loguru import logger
 from anthropic import AsyncAnthropic, NOT_GIVEN
 
 from .stateless_llm_interface import StatelessLLMInterface
+from .request_logging import log_llm_request
 
 
 class AsyncLLM(StatelessLLMInterface):
@@ -116,12 +117,23 @@ class AsyncLLM(StatelessLLMInterface):
                 if msg["role"] != "system"
             ]
 
-            logger.debug(f"Sending messages to Claude API: {converted_messages}")
-            logger.debug(f"Tools provided: {tools}")
+            request_system = system if system else (self.system if self.system else "")
+            log_llm_request(
+                provider="claude",
+                model=self.model,
+                endpoint=getattr(self.client, "base_url", None),
+                messages=converted_messages,
+                system=request_system,
+                tools=tools if tools else NOT_GIVEN,
+                extra={
+                    "stream": True,
+                    "max_tokens": 1024,
+                },
+            )
 
             async with self.client.messages.stream(
                 messages=converted_messages,
-                system=system if system else (self.system if self.system else ""),
+                system=request_system,
                 model=self.model,
                 max_tokens=1024,
                 tools=tools if tools else NOT_GIVEN,

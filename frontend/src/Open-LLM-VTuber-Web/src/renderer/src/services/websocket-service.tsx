@@ -2,7 +2,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 /* eslint-disable no-use-before-define */
 import { Subject } from 'rxjs';
-import { ModelInfo } from '@/context/live2d-config-context';
 import { HistoryInfo } from '@/context/websocket-context';
 import { ConfigFile } from '@/context/character-config-context';
 import { DynamicStageDocument } from '@/context/dynamic-stage-context';
@@ -43,10 +42,11 @@ export interface Message {
   tool_id?: string; // Specific to tool calls
   tool_name?: string; // Specific to tool calls
   status?: 'running' | 'completed' | 'error'; // Specific to tool calls
+  browser_view?: MessageEvent['browser_view'];
+  spoken?: boolean;
 }
 
 export interface Actions {
-  expressions?: string[] | number [];
   pictures?: string[];
   sounds?: string[];
 }
@@ -68,7 +68,6 @@ export interface MessageEvent {
   files?: BackgroundFile[];
   actions?: Actions;
   text?: string;
-  model_info?: ModelInfo;
   conf_name?: string;
   conf_uid?: string;
   uids?: string[];
@@ -83,7 +82,6 @@ export interface MessageEvent {
   client_uid?: string;
   forwarded?: boolean;
   display_text?: DisplayText;
-  live2d_model?: string;
   stage?: DynamicStageDocument;
   state?: DynamicStageDocument;
   result?: Record<string, unknown>;

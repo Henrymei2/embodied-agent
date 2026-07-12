@@ -1,0 +1,20 @@
+{
+    "mcp_servers": {
+      "bash": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/bash_tools.py"]
+      },
+      "scene": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/scene_tools.py"]
+      },
+      "time": {
+        "command": "uvx",
+        "args": ["mcp-server-time", "--local-timezone=America/Chicago"]
+      },
+      "ddg-search": {
+        "command": "uvx",
+        "args": ["duckduckgo-mcp-server"]
+      }
+    }
+}

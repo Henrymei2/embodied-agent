@@ -18,6 +18,7 @@ from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from loguru import logger
 
 from .stateless_llm_interface import StatelessLLMInterface
+from .request_logging import log_llm_request
 from ...mcpp.types import ToolCallObject
 
 
@@ -93,9 +94,21 @@ class AsyncLLM(StatelessLLMInterface):
                     {"role": "system", "content": system},
                     *messages,
                 ]
-            logger.debug(f"Messages: {messages_with_system}")
 
             available_tools = tools if self.support_tools else NOT_GIVEN
+            log_llm_request(
+                provider="openai_compatible",
+                model=self.model,
+                endpoint=self.base_url,
+                messages=messages_with_system,
+                system=system,
+                tools=available_tools,
+                extra={
+                    "stream": True,
+                    "temperature": self.temperature,
+                    "support_tools": self.support_tools,
+                },
+            )
 
             stream: AsyncStream[
                 ChatCompletionChunk
@@ -105,9 +118,6 @@ class AsyncLLM(StatelessLLMInterface):
                 stream=True,
                 temperature=self.temperature,
                 tools=available_tools,
-            )
-            logger.debug(
-                f"Tool Support: {self.support_tools}, Available tools: {available_tools}"
             )
 
             async for chunk in stream:

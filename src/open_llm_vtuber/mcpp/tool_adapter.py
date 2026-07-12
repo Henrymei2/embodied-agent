@@ -29,6 +29,9 @@ class ToolAdapter:
             return servers_info, formatted_tools
 
         logger.debug(f"MC: Fetching tool info for enabled servers: {enabled_servers}")
+        logger.info(
+            f"MC: Registered MCP servers: {sorted(self.server_registery.servers.keys())}"
+        )
 
         # Use a single client instance for efficiency
         async with MCPClient(self.server_registery) as client:
@@ -44,6 +47,9 @@ class ToolAdapter:
                     tools = await client.list_tools(server_name)
                     logger.debug(
                         f"MC: Found {len(tools)} tools on server '{server_name}'"
+                    )
+                    logger.info(
+                        f"MC: Server '{server_name}' tools: {sorted(tool.name for tool in tools)}"
                     )
                     for tool in tools:
                         servers_info[server_name][tool.name] = {}

@@ -8,10 +8,9 @@ from loguru import logger
 from ..message_handler import message_handler
 from .types import WebSocketSend, BroadcastContext
 from .tts_manager import TTSTaskManager
-from ..agent.output_types import SentenceOutput, AudioOutput
+from ..agent.output_types import AgentTextOutput, SentenceOutput, AudioOutput
 from ..agent.input_types import BatchInput, TextData, ImageData, TextSource, ImageSource
 from ..asr.asr_interface import ASRInterface
-from ..live2d_model import Live2dModel
 from ..tts.tts_interface import TTSInterface
 from ..utils.stream_audio import prepare_audio_payload
 
@@ -43,9 +42,8 @@ def create_batch_input(
 
 
 async def process_agent_output(
-    output: Union[AudioOutput, SentenceOutput],
+    output: Union[AgentTextOutput, AudioOutput, SentenceOutput],
     character_config: Any,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
@@ -57,10 +55,11 @@ async def process_agent_output(
 
     full_response = ""
     try:
-        if isinstance(output, SentenceOutput):
+        if isinstance(output, AgentTextOutput):
+            full_response = await handle_agent_text_output(output, websocket_send)
+        elif isinstance(output, SentenceOutput):
             full_response = await handle_sentence_output(
                 output,
-                live2d_model,
                 tts_engine,
                 websocket_send,
                 tts_manager,
@@ -81,9 +80,29 @@ async def process_agent_output(
     return full_response
 
 
+async def handle_agent_text_output(
+    output: AgentTextOutput,
+    websocket_send: WebSocketSend,
+) -> str:
+    """Handle display-only assistant text without TTS synthesis."""
+    full_response = ""
+    async for display_text in output:
+        full_response += display_text.text
+        await websocket_send(
+            json.dumps(
+                {
+                    "type": "agent_text",
+                    "content": display_text.text,
+                    "display_text": display_text.to_dict(),
+                    "spoken": False,
+                }
+            )
+        )
+    return full_response
+
+
 async def handle_sentence_output(
     output: SentenceOutput,
-    live2d_model: Live2dModel,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
     tts_manager: TTSTaskManager,
@@ -106,7 +125,6 @@ async def handle_sentence_output(
             tts_text=tts_text,
             display_text=display_text,
             actions=actions,
-            live2d_model=live2d_model,
             tts_engine=tts_engine,
             websocket_send=websocket_send,
         )

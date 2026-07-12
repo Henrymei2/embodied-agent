@@ -103,10 +103,19 @@ async def _send_action_request(
         return False, {}, f"frontend did not respond within {timeout}s"
 
 
+async def request_frontend_action(
+    action: str,
+    args: dict,
+    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+) -> tuple[bool, dict, Optional[str]]:
+    """Ask the active frontend client to run an action and return its result."""
+    return await _send_action_request(action, args, timeout=timeout)
+
+
 async def request_move_to(conf_uid: str, x: float, y: float) -> tuple[bool, Optional[str]]:
     """Ask the frontend to move the avatar to (x, y); wait until it confirms.
 
     Returns (ok, error_message_or_None).
     """
-    ok, _result, error = await _send_action_request("move_to", {"x": x, "y": y})
+    ok, _result, error = await request_frontend_action("move_to", {"x": x, "y": y})
     return ok, error

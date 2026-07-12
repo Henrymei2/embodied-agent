@@ -1,8 +1,7 @@
 from typing import AsyncIterator, Tuple, Callable, List, Union, Dict, Any
 from functools import wraps
-from .output_types import Actions, SentenceOutput, DisplayText
+from .output_types import Actions, AgentTextOutput, SentenceOutput, DisplayText
 from ..utils.tts_preprocessor import tts_filter as filter_text
-from ..live2d_model import Live2dModel
 from ..config_manager import TTSPreprocessorConfig
 from ..utils.sentence_divider import SentenceDivider
 from ..utils.sentence_divider import SentenceWithTags, TagState
@@ -55,7 +54,7 @@ def sentence_divider(
     return decorator
 
 
-def actions_extractor(live2d_model: Live2dModel):
+def actions_extractor():
     """
     Decorator that extracts actions from sentences, passing through dicts.
     """
@@ -78,14 +77,6 @@ def actions_extractor(live2d_model: Live2dModel):
                 if isinstance(item, SentenceWithTags):
                     sentence = item
                     actions = Actions()
-                    # Only extract emotions for non-tag text
-                    if not any(
-                        tag.state in [TagState.START, TagState.END]
-                        for tag in sentence.tags
-                    ):
-                        expressions = live2d_model.extract_emotion(sentence.text)
-                        if expressions:
-                            actions.expressions = expressions
                     yield sentence, actions  # Yield the tuple
                 elif isinstance(item, dict):
                     # Pass through dictionaries
@@ -207,8 +198,28 @@ def tts_filter(
                         actions=actions,
                     )
                 elif isinstance(item, dict):
-                    # Pass through dictionaries
-                    yield item
+                    if item.get("type") == "speak_text":
+                        display = DisplayText(text=item.get("text", ""))
+                        tts = filter_text(
+                            text=display.text,
+                            remove_special_char=config.remove_special_char,
+                            ignore_brackets=config.ignore_brackets,
+                            ignore_parentheses=config.ignore_parentheses,
+                            ignore_asterisks=config.ignore_asterisks,
+                            ignore_angle_brackets=config.ignore_angle_brackets,
+                        )
+                        yield SentenceOutput(
+                            display_text=display,
+                            tts_text=tts,
+                            actions=Actions(),
+                        )
+                    elif item.get("type") == "agent_text":
+                        yield AgentTextOutput(
+                            display_text=DisplayText(text=item.get("content", ""))
+                        )
+                    else:
+                        # Pass through dictionaries
+                        yield item
                 else:
                     logger.warning(f"tts_filter received unexpected type: {type(item)}")
 

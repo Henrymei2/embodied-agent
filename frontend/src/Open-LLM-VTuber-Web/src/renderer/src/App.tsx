@@ -6,7 +6,6 @@ import { useState, useEffect } from "react";
 import Sidebar from "./components/sidebar/sidebar";
 import Footer from "./components/footer/footer";
 import { AiStateProvider } from "./context/ai-state-context";
-import { Live2DConfigProvider } from "./context/live2d-config-context";
 import { SubtitleProvider } from "./context/subtitle-context";
 import { BgUrlProvider } from "./context/bgurl-context";
 import { layoutStyles } from "./layout";
@@ -170,24 +169,22 @@ function AppWithGlobalStyles(): JSX.Element {
             <ChatHistoryProvider>
               <AiStateProvider>
                 <ProactiveSpeakProvider>
-                  <Live2DConfigProvider>
-                    <SubtitleProvider>
-                      <VADProvider>
-                        <BgUrlProvider>
-                          <GroupProvider>
-                            <BrowserProvider>
-                              <DynamicStageProvider>
-                                <WebSocketHandler>
-                                  <Toaster />
-                                  <AppContent />
-                                </WebSocketHandler>
-                              </DynamicStageProvider>
-                            </BrowserProvider>
-                          </GroupProvider>
-                        </BgUrlProvider>
-                      </VADProvider>
-                    </SubtitleProvider>
-                  </Live2DConfigProvider>
+                  <SubtitleProvider>
+                    <VADProvider>
+                      <BgUrlProvider>
+                        <GroupProvider>
+                          <BrowserProvider>
+                            <DynamicStageProvider>
+                              <WebSocketHandler>
+                                <Toaster />
+                                <AppContent />
+                              </WebSocketHandler>
+                            </DynamicStageProvider>
+                          </BrowserProvider>
+                        </GroupProvider>
+                      </BgUrlProvider>
+                    </VADProvider>
+                  </SubtitleProvider>
                 </ProactiveSpeakProvider>
               </AiStateProvider>
             </ChatHistoryProvider>

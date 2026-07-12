@@ -7,9 +7,6 @@ system_config:
   config_alts_dir: 'characters'
   # Tool prompts that will be appended to the persona prompt
   tool_prompts:
-    # This will be appended to the end of system prompt to let LLM include keywords to control facial expressions.
-    # Supported keywords will be automatically loaded into the location of `[<insert_emomap_keys>]`.
-    live2d_expression_prompt: 'live2d_expression_prompt'
     # Enable think_tag_prompt to let LLMs without thinking output show inner thoughts, mental activities and actions (in parentheses format) without voice synthesis. See think_tag_prompt for more details.
     # think_tag_prompt: 'think_tag_prompt'
     # live_prompt: 'live_prompt'
@@ -29,7 +26,6 @@ system_config:
 character_config:
   conf_name: 'mao_pro' # The name of character configuration file.
   conf_uid: 'mao_pro_001' # The unique identifier of character configuration.
-  live2d_model_name: 'mao_pro' # The name of Live2D model. Must be the same as the corresponding name in model_dict.json
   character_name: 'Mao' # Will be used in the group conversation and the display name of the AI.
   avatar: 'mao.png' # Suggest using a square image for the avatar. Save it in the avatars folder. Leave blank to use the first letter of the character name as the avatar.
   human_name: 'Human' # Will be used in the group conversation and the display name of the human.

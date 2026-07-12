@@ -11,24 +11,18 @@ import { audioManager } from '@/utils/audio-manager';
 import { toaster } from '@/components/ui/toaster';
 import { useWebSocket } from '@/context/websocket-context';
 import { DisplayText } from '@/services/websocket-service';
-import { useLive2DExpression } from '@/hooks/canvas/use-live2d-expression';
-import * as LAppDefine from '../../../WebSDK/src/lappdefine';
-
-// Simple type alias for Live2D model
-type Live2DModel = any;
 
 interface AudioTaskOptions {
   audioBase64: string
   volumes: number[]
   sliceLength: number
   displayText?: DisplayText | null
-  expressions?: string[] | number[] | null
   speaker_uid?: string
   forwarded?: boolean
 }
 
 /**
- * Custom hook for handling audio playback tasks with Live2D lip sync
+ * Custom hook for handling audio playback tasks
  */
 export const useAudioTask = () => {
   const { t } = useTranslation();
@@ -36,7 +30,6 @@ export const useAudioTask = () => {
   const { setSubtitleText } = useSubtitle();
   const { appendResponse, appendAIMessage } = useChatHistory();
   const { sendMessage } = useWebSocket();
-  const { setExpression } = useLive2DExpression();
 
   // State refs to avoid stale closures
   const stateRef = useRef({
@@ -46,8 +39,6 @@ export const useAudioTask = () => {
     appendAIMessage,
   });
 
-  // Note: currentAudioRef and currentModelRef are now managed by the global audioManager
-
   stateRef.current = {
     aiState,
     setSubtitleText,
@@ -56,14 +47,14 @@ export const useAudioTask = () => {
   };
 
   /**
-   * Stop current audio playback and lip sync (delegates to global audioManager)
+   * Stop current audio playback (delegates to global audioManager)
    */
-  const stopCurrentAudioAndLipSync = useCallback(() => {
-    audioManager.stopCurrentAudioAndLipSync();
+  const stopCurrentAudio = useCallback(() => {
+    audioManager.stopCurrentAudio();
   }, []);
 
   /**
-   * Handle audio playback with Live2D lip sync
+   * Handle audio playback
    */
   const handleAudioPlayback = (options: AudioTaskOptions): Promise<void> => new Promise((resolve) => {
     const {
@@ -80,12 +71,12 @@ export const useAudioTask = () => {
       return;
     }
 
-    const { audioBase64, displayText, expressions, forwarded } = options;
+    const { audioBase64, displayText, forwarded } = options;
 
     // Update display text
     if (displayText) {
       appendText(displayText.text);
-      appendAI(displayText.text, displayText.name, displayText.avatar);
+      appendAI(displayText.text, displayText.name, displayText.avatar, true);
       if (audioBase64) {
         updateSubtitle(displayText.text);
       }
@@ -102,84 +93,9 @@ export const useAudioTask = () => {
       // Process audio if available
       if (audioBase64) {
         const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
-        const playAudioWithoutLipSync = () => {
-          const audio = new Audio(audioDataUrl);
-          let isFinished = false;
-
-          const cleanup = () => {
-            audioManager.clearCurrentAudio(audio);
-            if (!isFinished) {
-              isFinished = true;
-              resolve();
-            }
-          };
-
-          audioManager.setCurrentAudio(audio);
-          audio.addEventListener('canplaythrough', () => {
-            if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
-              console.warn('Audio playback cancelled due to interruption or audio was stopped');
-              cleanup();
-              return;
-            }
-
-            audio.play().catch((err) => {
-              console.error("Audio play error:", err);
-              cleanup();
-            });
-          });
-          audio.addEventListener('ended', cleanup);
-          audio.addEventListener('error', cleanup);
-          audio.load();
-        };
-
-        // Get Live2D manager and model
-        const live2dManager = (window as any).getLive2DManager?.();
-        if (!live2dManager) {
-          console.warn('Live2D manager not found, playing audio without lip sync');
-          playAudioWithoutLipSync();
-          return;
-        }
-
-        const model = live2dManager.getModel(0);
-        if (!model) {
-          console.warn('Live2D model not found at index 0, playing audio without lip sync');
-          playAudioWithoutLipSync();
-          return;
-        }
-        console.log('Found model for audio playback');
-
-        if (!model._wavFileHandler) {
-          console.warn('Model does not have _wavFileHandler for lip sync');
-        } else {
-          console.log('Model has _wavFileHandler available');
-        }
-
-        // Set expression if available
-        const lappAdapter = (window as any).getLAppAdapter?.();
-        if (lappAdapter && expressions?.[0] !== undefined) {
-          setExpression(
-            expressions[0],
-            lappAdapter,
-            `Set expression to: ${expressions[0]}`,
-          );
-        }
-
-        // Start talk motion
-        if (LAppDefine && LAppDefine.PriorityNormal) {
-          console.log("Starting random 'Talk' motion");
-          model.startRandomMotion(
-            "Talk",
-            LAppDefine.PriorityNormal,
-          );
-        } else {
-          console.warn("LAppDefine.PriorityNormal not found - cannot start talk motion");
-        }
-
-        // Setup audio element
         const audio = new Audio(audioDataUrl);
         
-        // Register with global audio manager IMMEDIATELY after creating audio
-        audioManager.setCurrentAudio(audio, model);
+        audioManager.setCurrentAudio(audio);
         let isFinished = false;
 
         const cleanup = () => {
@@ -190,9 +106,6 @@ export const useAudioTask = () => {
           }
         };
 
-        // Enhance lip sync sensitivity
-        const lipSyncScale = 2.0;
-
         audio.addEventListener('canplaythrough', () => {
           // Check for interruption before playback
           if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
@@ -201,33 +114,11 @@ export const useAudioTask = () => {
             return;
           }
 
-          console.log('Starting audio playback with lip sync');
+          console.log('Starting audio playback');
           audio.play().catch((err) => {
             console.error("Audio play error:", err);
             cleanup();
           });
-
-          // Setup lip sync
-          if (model._wavFileHandler) {
-            if (!model._wavFileHandler._initialized) {
-              console.log('Applying enhanced lip sync');
-              model._wavFileHandler._initialized = true;
-
-              const originalUpdate = model._wavFileHandler.update.bind(model._wavFileHandler);
-              model._wavFileHandler.update = function (deltaTimeSeconds: number) {
-                const result = originalUpdate(deltaTimeSeconds);
-                // @ts-ignore
-                this._lastRms = Math.min(2.0, this._lastRms * lipSyncScale);
-                return result;
-              };
-            }
-
-            if (audioManager.hasCurrentAudio()) {
-              model._wavFileHandler.start(audioDataUrl);
-            } else {
-              console.warn('WavFileHandler start skipped - audio was stopped');
-            }
-          }
         });
 
         audio.addEventListener('ended', () => {
@@ -262,7 +153,7 @@ export const useAudioTask = () => {
     const handleComplete = async () => {
       await audioTaskQueue.waitForCompletion();
       if (isMounted && backendSynthComplete) {
-        stopCurrentAudioAndLipSync();
+        stopCurrentAudio();
         sendMessage({ type: "frontend-playback-complete" });
         setBackendSynthComplete(false);
       }
@@ -273,7 +164,7 @@ export const useAudioTask = () => {
     return () => {
       isMounted = false;
     };
-  }, [backendSynthComplete, sendMessage, setBackendSynthComplete, stopCurrentAudioAndLipSync]);
+  }, [backendSynthComplete, sendMessage, setBackendSynthComplete, stopCurrentAudio]);
 
   /**
    * Add a new audio task to the queue
@@ -293,6 +184,6 @@ export const useAudioTask = () => {
   return {
     addAudioTask,
     appendResponse,
-    stopCurrentAudioAndLipSync,
+    stopCurrentAudio,
   };
 };

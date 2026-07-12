@@ -179,27 +179,4 @@ export const settingStyles = {
       },
     },
   },
-  live2d: {
-    container: {
-      gap: 8,
-      maxW: 'sm',
-      css: { '--field-label-width': '120px' },
-    },
-    emotionMap: {
-      title: {
-        fontWeight: 'bold',
-        mb: 4,
-      },
-      entry: {
-        mb: 2,
-      },
-      button: {
-        colorPalette: 'blue',
-        mt: 2,
-      },
-      deleteButton: {
-        colorPalette: 'red',
-      },
-    },
-  },
 };

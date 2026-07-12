@@ -1,12 +1,12 @@
-import os
 import json
 from uuid import uuid4
 import numpy as np
 from datetime import datetime
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response
+from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body, Request
 from starlette.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
+from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
@@ -70,6 +70,76 @@ def init_proxy_route(server_url: str) -> APIRouter:
     return router
 
 
+# Bounds for how long a bridge request may wait on the frontend. Prevents a
+# caller from parking unbounded futures in the bridge.
+_BRIDGE_TIMEOUT_MIN = 0.5
+_BRIDGE_TIMEOUT_MAX = 60.0
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def init_frontend_action_routes() -> APIRouter:
+    """Create routes that let local MCP subprocesses reach the active frontend.
+
+    This endpoint is for the server's own MCP tool subprocesses only. It is
+    guarded by a per-run shared secret (X-Bridge-Token) and restricted to
+    loopback callers, because the app serves permissive CORS headers and an
+    open endpoint here would let any website drive the frontend.
+    """
+    router = APIRouter()
+
+    @router.post("/internal/frontend-action")
+    async def frontend_action(request: Request, payload: dict = Body(...)):
+        from .frontend_bridge import request_frontend_action
+
+        client_host = request.client.host if request.client else None
+        if client_host not in _LOOPBACK_HOSTS:
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "forbidden"},
+                status_code=403,
+            )
+        if not verify_bridge_token(request.headers.get(BRIDGE_TOKEN_HEADER)):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "invalid bridge token"},
+                status_code=403,
+            )
+
+        action = payload.get("action")
+        args = payload.get("args", {})
+        try:
+            timeout = float(payload.get("timeout", 15.0))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "timeout must be a number"},
+                status_code=400,
+            )
+        timeout = max(_BRIDGE_TIMEOUT_MIN, min(_BRIDGE_TIMEOUT_MAX, timeout))
+
+        if not isinstance(action, str) or not action:
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "missing action"},
+                status_code=400,
+            )
+        if not isinstance(args, dict):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "args must be an object"},
+                status_code=400,
+            )
+
+        ok, result, error = await request_frontend_action(
+            action=action,
+            args=args,
+            timeout=timeout,
+        )
+        status_code = 200 if ok else 503
+        return JSONResponse(
+            {"ok": ok, "result": result, "error": error},
+            status_code=status_code,
+        )
+
+    return router
+
+
 def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
     """
     Create and return API routes for handling web tool interactions.
@@ -93,50 +163,8 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         """Redirect /web_tool to /web_tool/index.html"""
         return Response(status_code=302, headers={"Location": "/web-tool/index.html"})
 
-    @router.get("/live2d-models/info")
-    async def get_live2d_folder_info():
-        """Get information about available Live2D models"""
-        live2d_dir = "live2d-models"
-        if not os.path.exists(live2d_dir):
-            return JSONResponse(
-                {"error": "Live2D models directory not found"}, status_code=404
-            )
-
-        valid_characters = []
-        supported_extensions = [".png", ".jpg", ".jpeg"]
-
-        for entry in os.scandir(live2d_dir):
-            if entry.is_dir():
-                folder_name = entry.name.replace("\\", "/")
-                model3_file = os.path.join(
-                    live2d_dir, folder_name, f"{folder_name}.model3.json"
-                ).replace("\\", "/")
-
-                if os.path.isfile(model3_file):
-                    # Find avatar file if it exists
-                    avatar_file = None
-                    for ext in supported_extensions:
-                        avatar_path = os.path.join(
-                            live2d_dir, folder_name, f"{folder_name}{ext}"
-                        )
-                        if os.path.isfile(avatar_path):
-                            avatar_file = avatar_path.replace("\\", "/")
-                            break
-
-                    valid_characters.append(
-                        {
-                            "name": folder_name,
-                            "avatar": avatar_file,
-                            "model_path": model3_file,
-                        }
-                    )
-        return JSONResponse(
-            {
-                "type": "live2d-models/info",
-                "count": len(valid_characters),
-                "characters": valid_characters,
-            }
-        )
+    # Reject absurdly large uploads before buffering them all in memory.
+    max_asr_upload_bytes = 50 * 1024 * 1024  # ~25 min of 16-bit 24kHz mono
 
     @router.post("/asr")
     async def transcribe_audio(file: UploadFile = File(...)):
@@ -146,7 +174,13 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         logger.info(f"Received audio file for transcription: {file.filename}")
 
         try:
-            contents = await file.read()
+            contents = await file.read(max_asr_upload_bytes + 1)
+            if len(contents) > max_asr_upload_bytes:
+                return Response(
+                    content=json.dumps({"error": "Audio file too large"}),
+                    status_code=413,
+                    media_type="application/json",
+                )
 
             # Validate minimum file size
             if len(contents) < 44:  # Minimum WAV header size

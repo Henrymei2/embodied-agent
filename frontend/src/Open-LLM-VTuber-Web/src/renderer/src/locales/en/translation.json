@@ -9,7 +9,6 @@
   "settings": {
     "tabs": {
       "general": "General",
-      "live2d": "Live2D",
       "asr": "ASR",
       "tts": "TTS",
       "agent": "Agent",
@@ -31,10 +30,6 @@
       "imageMaxWidth": "Image Max Width",
       "imageMaxWidthPlaceholder": "Enter maximum width in pixels",
       "imageMaxWidthHelp": "Maximum width for image resizing. Images exceeding this width will be proportionally scaled down. Set to 0 for no size limit. This feature exists because some AI models may have limitations when processing very large images. However, most AI models can handle images automatically, so the default is 0 (no restriction) to preserve your original images."
-    },
-    "live2d": {
-      "pointerInteractive": "Pointer Interactive",
-      "scrollToResize": "Enable Scroll to Resize"
     },
     "asr": {
       "autoStopMic": "Auto Stop Mic When AI Start Speaking",
