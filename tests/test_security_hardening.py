@@ -56,7 +56,7 @@ def test_safe_filenames_accepted(good):
 # --------------------------------------------------------------------------- #
 # Bash MCP env sanitization
 # --------------------------------------------------------------------------- #
-def test_sanitized_env_strips_credentials(monkeypatch):
+def test_sanitized_env_strips_credentials(monkeypatch, tmp_path):
     from mcp_servers import bash_tools
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
@@ -64,17 +64,20 @@ def test_sanitized_env_strips_credentials(monkeypatch):
     monkeypatch.setenv("SESSION_TOKEN", "abc")
     monkeypatch.setenv("SAFE_VALUE", "keepme")
 
-    env = bash_tools._sanitized_env()
+    env = bash_tools._sanitized_env(tmp_path)
 
     assert "OPENAI_API_KEY" not in env
     assert "MY_PASSWORD" not in env
     assert "SESSION_TOKEN" not in env
     assert env.get("SAFE_VALUE") == "keepme"
+    # Home is pinned to the workspace so ~ expansion can't reach the real home.
+    assert env["HOME"] == str(tmp_path)
+    assert env["USERPROFILE"] == str(tmp_path)
 
 
-def test_sanitized_env_keeps_path():
+def test_sanitized_env_keeps_path(tmp_path):
     from mcp_servers import bash_tools
 
-    env = bash_tools._sanitized_env()
+    env = bash_tools._sanitized_env(tmp_path)
     # PATH must survive or commands won't resolve.
     assert "PATH" in env or "Path" in os.environ or "PATH" in os.environ

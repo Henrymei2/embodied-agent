@@ -300,6 +300,76 @@ class BasicMemoryAgent(AgentInterface):
             "is_error": False,
         }
 
+    def _tool_call_name_and_args(
+        self, call: Dict[str, Any] | ToolCallObject
+    ) -> tuple[Optional[str], Dict[str, Any]]:
+        """Extract (tool_name, args_dict) from any supported tool-call shape."""
+        name: Optional[str] = None
+        args: Any = {}
+        if isinstance(call, ToolCallObject):
+            name = call.function.name
+            try:
+                args = json.loads(call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {}
+        elif isinstance(call, dict):
+            name = call.get("name") or call.get("tool")
+            args = call.get("input", call.get("args", call.get("arguments", {})))
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+        if not isinstance(args, dict):
+            args = {}
+        return name, args
+
+    def _describe_tool_action(
+        self, call: Dict[str, Any] | ToolCallObject
+    ) -> Optional[str]:
+        """Human-readable description of an embodied/tool action for memory.
+
+        The scope treats "what the agent was doing in the embodied environment"
+        as first-class contextual memory, so scene/navigation tools get natural
+        phrasing and other tools get a generic fallback. Returns None for the
+        reserved speak tool (that is captured as assistant speech instead).
+        """
+        name, args = self._tool_call_name_and_args(call)
+        if not name or name == SPEAK_TOOL_NAME:
+            return None
+
+        target = (
+            args.get("target")
+            or args.get("name")
+            or args.get("object")
+            or args.get("label")
+        )
+        if name == "move_to":
+            return f"moved to {target}" if target else "moved through the scene"
+        if name == "get_object_position":
+            return (
+                f"checked where {target} is" if target else "checked an object's position"
+            )
+        if name == "list_objects":
+            return "looked around at nearby objects"
+        if name == "get_scene_status":
+            return "checked its own position in the scene"
+        return f"used the {name} tool"
+
+    def _record_tool_actions(
+        self, calls: List[Dict[str, Any]] | List[ToolCallObject]
+    ) -> None:
+        """Record embodied/tool actions into contextual memory (best-effort)."""
+        if not self._memory_manager:
+            return
+        for call in calls:
+            try:
+                description = self._describe_tool_action(call)
+                if description:
+                    self._memory_manager.record_action(description)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Memory: failed recording tool action: {exc}")
+
     def _build_builtin_tool_prompt_string(self) -> str:
         """Build prompt-mode instructions for agent-local built-in tools."""
         return "\n".join(
@@ -710,6 +780,7 @@ class BasicMemoryAgent(AgentInterface):
                     return
 
                 if external_tool_calls:
+                    self._record_tool_actions(external_tool_calls)
                     tool_executor_iterator = self._tool_executor.execute_tools(
                         tool_calls=external_tool_calls,
                         caller_mode="Claude",
@@ -892,6 +963,7 @@ class BasicMemoryAgent(AgentInterface):
                 if parsed_tools:
                     tool_results_for_llm = []
 
+                    self._record_tool_actions(parsed_tools)
                     tool_executor_iterator = self._tool_executor.execute_tools(
                         tool_calls=parsed_tools,
                         caller_mode="Prompt",
@@ -966,6 +1038,7 @@ class BasicMemoryAgent(AgentInterface):
                     return
 
                 if external_tool_calls:
+                    self._record_tool_actions(external_tool_calls)
                     tool_executor_iterator = self._tool_executor.execute_tools(
                         tool_calls=external_tool_calls,
                         caller_mode="OpenAI",

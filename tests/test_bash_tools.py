@@ -109,3 +109,61 @@ def test_absolute_path_outside_denied(bt):
 
 def test_cannot_delete_workspace_root(bt):
     assert "refusing to delete the workspace root" in bt.delete_path(".")
+
+
+# --------------------------------------------------------------------------- #
+# execute_bash command firewall: commands may not reference outside the workspace
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat ../secret",                 # parent escape
+        "type ..\\..\\secret",           # parent escape (windows sep)
+        "dir \\\\server\\share",         # UNC network path
+        "echo $HOME/x",                  # env var expansion
+        "cat ${HOME}/x",                 # ${VAR} expansion
+        "cat $(echo /etc/passwd)",       # command substitution
+        "echo `whoami`",                 # backtick substitution
+        "cat /etc/passwd",               # posix absolute (outside on any OS)
+        "type ~/secret",                 # home dir (posix sep)
+        "type ~\\secret",                # home dir (windows sep)
+        "echo %USERPROFILE%\\x",         # windows env expansion
+        "echo hi > /etc/pwned.txt",      # redirect to outside path
+    ],
+)
+def test_execute_bash_refuses_outside_references(bt, command):
+    reason = bt._command_reaches_outside_workspace(command, bt._workspace_root())
+    assert reason is not None, f"should have been refused: {command!r}"
+    assert "refused" in bt.execute_bash(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hello",
+        "ls -la",
+        "type notes.txt",                # relative path
+        "mkdir sub/child",               # relative nested path
+        "echo hi > out.txt",             # relative redirect
+        "grep -r foo .",
+        "python script.py --flag",
+        "echo https://example.com/a/b/c",  # URL is not a filesystem path
+        "sort data.txt",
+    ],
+)
+def test_execute_bash_allows_in_workspace_commands(bt, command):
+    # The firewall must not refuse legitimate in-workspace commands. (They may
+    # still fail for unrelated reasons like a missing file, but never "refused".)
+    assert bt._command_reaches_outside_workspace(command, bt._workspace_root()) is None
+    assert "refused" not in bt.execute_bash(command)
+
+
+def test_execute_bash_absolute_outside_is_blocked_end_to_end(bt, tmp_path):
+    # Write a secret OUTSIDE the workspace and confirm a shell command can't read
+    # it (the exact escape that was demonstrated before the firewall).
+    secret = tmp_path / "outside_secret.txt"
+    secret.write_text("TOP_SECRET", encoding="utf-8")
+    cmd = f'type "{secret}"' if sys.platform == "win32" else f'cat "{secret}"'
+    out = bt.execute_bash(cmd)
+    assert "refused" in out
+    assert "TOP_SECRET" not in out

@@ -36,6 +36,7 @@ back to deterministic heuristics so it stays usable (and testable) offline.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -270,6 +271,17 @@ class MemoryManager:
                 self._append_longterm(important, target_day)
                 logger.info(f"Memory: promoted {daily_path.name} -> long-term memory.")
 
+            # Route durable, user-specific facts/preferences into USER.md so the
+            # workspace prompt (which loads USER.md) reflects what we've learned.
+            user_facts = await self._extract_user_facts(body)
+            if user_facts:
+                added = self._append_user_facts(user_facts)
+                if added:
+                    logger.info(
+                        f"Memory: learned {added} user fact(s) from "
+                        f"{daily_path.name} -> USER.md."
+                    )
+
             # Mark as promoted regardless, so we don't reprocess it.
             with daily_path.open("a", encoding="utf-8") as handle:
                 handle.write(f"\n{_PROMOTED_MARKER}\n")
@@ -298,6 +310,78 @@ class MemoryManager:
         if not result or result.upper().startswith("NONE"):
             return ""
         return result
+
+    async def _extract_user_facts(self, daily_body: str) -> str:
+        """Extract durable facts/preferences specifically about the user."""
+        if self._llm_complete is None:
+            return ""  # without an LLM we don't guess
+        system = (
+            "From the day's memory below, extract only durable facts and stable "
+            "preferences ABOUT THE USER that are worth remembering: their name, "
+            "preferred name, timezone, likes/dislikes, habits, recurring needs, "
+            "and standing instructions. Ignore anything not specifically about "
+            "the user, and ignore one-off task details. Output a short bulleted "
+            "list of concise user facts, or the single word NONE if nothing "
+            "qualifies."
+        )
+        try:
+            result = await self._llm_complete(
+                [{"role": "user", "content": daily_body}], system
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Memory: user-fact extraction failed: {exc}")
+            return ""
+        result = result.strip()
+        if not result or result.upper().startswith("NONE"):
+            return ""
+        return result
+
+    def _append_user_facts(self, text: str) -> int:
+        """Append newly-learned user facts to USER.md, skipping near-duplicates.
+
+        Returns the number of new bullet facts written.
+        """
+        path = self._workspace.user_file
+        existing = self._read_if_exists(path)
+        if not existing.strip():
+            existing = "# USER.md\n\nInformation about the user.\n"
+
+        seen = {
+            self._normalize_fact(line)
+            for line in existing.splitlines()
+            if self._normalize_fact(line)
+        }
+
+        new_bullets: List[str] = []
+        for raw in text.splitlines():
+            line = raw.strip().lstrip("-*").strip()
+            if not line:
+                continue
+            key = self._normalize_fact(line)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            new_bullets.append(f"- {line}")
+
+        if not new_bullets:
+            return 0
+
+        section = "## Learned about the user"
+        block = "\n".join(new_bullets)
+        if section in existing:
+            updated = f"{existing.rstrip()}\n{block}\n"
+        else:
+            updated = f"{existing.rstrip()}\n\n{section}\n{block}\n"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(updated, encoding="utf-8")
+        return len(new_bullets)
+
+    @staticmethod
+    def _normalize_fact(line: str) -> str:
+        """Normalize a fact line for duplicate detection (lowercase alnum only)."""
+        stripped = line.strip().lstrip("-*# ").strip()
+        return re.sub(r"[^a-z0-9]+", " ", stripped.lower()).strip()
 
     async def startup_compaction(self) -> int:
         """Promote any past, un-promoted daily memory into long-term memory.

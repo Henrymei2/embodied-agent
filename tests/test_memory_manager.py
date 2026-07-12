@@ -136,6 +136,61 @@ async def test_promote_daily_to_longterm(workspace):
     assert await mm.compact_daily_to_longterm(yesterday) is False
 
 
+async def test_user_facts_routed_to_user_md(workspace):
+    llm = FakeLLM(
+        responses={
+            "about the user": "- User prefers dark mode\n- User's name is Sam",
+        }
+    )
+    mm = MemoryManager(llm_complete=llm, workspace_dir=workspace)
+
+    day = mm._yesterday()
+    mm._daily_path(day).write_text(
+        mm._daily_header(day) + "## 10:00\n- talked about UI\n", "utf-8"
+    )
+
+    await mm.compact_daily_to_longterm(day)
+
+    user_md = mm._workspace.user_file.read_text("utf-8")
+    assert "## Learned about the user" in user_md
+    assert "prefers dark mode" in user_md
+    assert "name is Sam" in user_md
+
+
+async def test_user_facts_deduplicated(workspace):
+    llm = FakeLLM(
+        responses={"about the user": "- user prefers DARK mode\n- User likes tea"}
+    )
+    mm = MemoryManager(llm_complete=llm, workspace_dir=workspace)
+    # USER.md already knows one of the facts (different casing/bullet).
+    mm._workspace.user_file.write_text(
+        "# USER.md\n\n## Learned about the user\n- User prefers dark mode\n", "utf-8"
+    )
+
+    day = mm._yesterday()
+    mm._daily_path(day).write_text(
+        mm._daily_header(day) + "## 10:00\n- stuff\n", "utf-8"
+    )
+    await mm.compact_daily_to_longterm(day)
+
+    user_md = mm._workspace.user_file.read_text("utf-8")
+    assert user_md.lower().count("dark mode") == 1  # not duplicated
+    assert "User likes tea" in user_md  # new fact added
+
+
+async def test_user_facts_skipped_when_none(workspace):
+    llm = FakeLLM(responses={"about the user": "NONE"})
+    mm = MemoryManager(llm_complete=llm, workspace_dir=workspace)
+    day = mm._yesterday()
+    mm._daily_path(day).write_text(
+        mm._daily_header(day) + "## 10:00\n- small talk\n", "utf-8"
+    )
+    await mm.compact_daily_to_longterm(day)
+
+    user_md = mm._workspace.user_file.read_text("utf-8")
+    assert "## Learned about the user" not in user_md
+
+
 async def test_startup_compaction_promotes_past_days_only(workspace):
     from datetime import timedelta
 

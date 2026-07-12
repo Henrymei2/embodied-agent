@@ -21,6 +21,7 @@ Run standalone for a quick sanity check:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -58,13 +59,97 @@ _SENSITIVE_ENV_FRAGMENTS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
 mcp = FastMCP("bash")
 
 
-def _sanitized_env() -> dict[str, str]:
-    """Copy of our environment with credential-looking variables removed."""
-    return {
+def _sanitized_env(root: Path) -> dict[str, str]:
+    """Environment for child commands: credentials removed, home pinned to root.
+
+    Pinning HOME / USERPROFILE to the workspace means even shell/home expansion
+    resolves inside the workspace rather than the real user home.
+    """
+    env = {
         name: value
         for name, value in os.environ.items()
         if not any(fragment in name.upper() for fragment in _SENSITIVE_ENV_FRAGMENTS)
     }
+    env["HOME"] = str(root)
+    env["USERPROFILE"] = str(root)
+    return env
+
+
+# --------------------------------------------------------------------------- #
+# execute_bash sandbox firewall
+# --------------------------------------------------------------------------- #
+# `execute_bash` runs a real shell, so pinning the cwd is not enough: an
+# absolute path lets a command reach outside the workspace. To honor the rule
+# that these tools must not operate outside `~/embodied-agent/`, every command
+# is statically screened and rejected if it references a location outside the
+# workspace, or uses dynamic path construction we cannot verify.
+
+# Variable expansion / command substitution: their runtime value is unknown to
+# a static check, so we refuse them outright (the safe, conservative choice).
+_DYNAMIC_CONSTRUCT_RE = re.compile(
+    r"""`              # backtick command substitution
+      | \$\(           # $(...) command substitution
+      | <\( | >\(      # process substitution
+      | \$\{           # ${VAR}
+      | \$[A-Za-z_]    # $VAR
+      | %[A-Za-z_][A-Za-z0-9_]*%   # %VAR% (Windows)
+    """,
+    re.VERBOSE,
+)
+
+# URLs are not filesystem paths; strip them before scanning for paths.
+_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://\S*")
+
+_UNC_RE = re.compile(r"\\\\[^\s\"'|&<>]+")
+_DRIVE_RE = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s\"'|&<>]*")
+_HOME_RE = re.compile(r"(?<!\w)~(?:[\\/][^\s\"'|&<>]*)?")
+_PARENT_RE = re.compile(r"(?<![\w.])\.\.(?:[\\/][^\s\"'|&<>]*)?")
+_POSIX_ABS_RE = re.compile(r"(?<![\w:])/[^\s\"'|&<>]*")
+
+
+def _resolves_inside(candidate: str, root: Path) -> bool:
+    try:
+        p = Path(candidate)
+        resolved = p.resolve() if p.is_absolute() else (root / p).resolve()
+        resolved.relative_to(root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _command_reaches_outside_workspace(command: str, root: Path) -> str | None:
+    """Return a reason string if the command references outside the workspace."""
+    if _DYNAMIC_CONSTRUCT_RE.search(command):
+        return (
+            "uses variable expansion or command substitution, which the sandbox "
+            "cannot verify; use literal in-workspace paths instead"
+        )
+
+    scan = _URL_RE.sub(" ", command)
+
+    unc = _UNC_RE.search(scan)
+    if unc:
+        return f"references a network path ({unc.group().strip()})"
+
+    home = _HOME_RE.search(scan)
+    if home:
+        return f"references the home directory ({home.group().strip()})"
+
+    for token in _PARENT_RE.findall(scan):
+        return f"uses a parent-directory escape ({token.strip()})"
+
+    for regex in (_DRIVE_RE, _POSIX_ABS_RE):
+        for match in regex.finditer(scan):
+            token = match.group().strip().strip("\"'")
+            if not token:
+                continue
+            # A lone "/x" on Windows is usually a CLI switch, not a path.
+            if regex is _POSIX_ABS_RE and token != "/" and token.count("/") < 2:
+                continue
+            if not _resolves_inside(token, root):
+                return f"references a path outside the workspace ({token})"
+
+    return None
 
 
 def _kill_process_tree(process: subprocess.Popen) -> None:
@@ -123,7 +208,10 @@ def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
     """Run a shell command inside the agent workspace.
 
     The command's working directory is always the workspace root
-    (`~/embodied-agent/`); it cannot be changed. Use this for things the
+    (`~/embodied-agent/`); it cannot be changed, and the command may only
+    reference locations inside the workspace. Commands that reference an
+    absolute/network/parent path outside the workspace, or that use variable
+    expansion or command substitution, are refused. Use this for things the
     dedicated file tools don't cover (running scripts, grep, etc.).
 
     Args:
@@ -135,6 +223,14 @@ def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
         Combined exit code, stdout and stderr.
     """
     root = _workspace_root()
+
+    reason = _command_reaches_outside_workspace(command, root)
+    if reason is not None:
+        return (
+            f"Error: refused: command {reason}. execute_bash may only operate "
+            "inside the workspace."
+        )
+
     timeout = max(1, min(int(timeout), _MAX_BASH_TIMEOUT))
 
     popen_kwargs: dict = {
@@ -144,7 +240,7 @@ def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,
-        "env": _sanitized_env(),
+        "env": _sanitized_env(root),
     }
     # Run the command in its own process group/session so a timeout can kill
     # the whole tree, not just the shell.

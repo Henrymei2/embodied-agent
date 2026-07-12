@@ -249,9 +249,6 @@ async def _scheduler_loop(client_uid: str) -> None:
         get_queue,
         PRIORITY_SCHEDULED,
     )
-    from src.open_llm_vtuber.conversations.single_conversation import (
-        process_single_conversation,
-    )
 
     logger.info("Scheduler: background loop started.")
 
@@ -282,8 +279,6 @@ async def _scheduler_loop(client_uid: str) -> None:
                 }
 
                 # Get the service context for this client
-                from src.open_llm_vtuber.service_context import ServiceContext
-                from src.open_llm_vtuber.websocket_handler import WebSocketHandler
 
                 # Enqueue through the priority queue
                 queue = get_queue(client_uid)
@@ -325,10 +320,8 @@ async def _run_scheduled_task(
 ) -> None:
     """Actually run a scheduled task — gets a context and calls process_single_conversation."""
     try:
-        from src.open_llm_vtuber.conversations.llm_request_queue import _queues
         # Get context via the websocket handler's client_contexts
         # We import lazily to avoid circular imports
-        from src.open_llm_vtuber import service_context as _sc_module
 
         # service_context is stored per-client in websocket_handler
         # Access it through the module-level registry we'll add in websocket_handler
