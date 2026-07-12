@@ -146,7 +146,9 @@ class WebSocketHandler:
 
         from .frontend_bridge import register_client_sender
         register_client_sender(client_uid, websocket.send_text)
-
+        from .client_registry import register_client
+        register_client(client_uid, session_service_context, websocket.send_text)
+        
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
 
@@ -306,6 +308,8 @@ class WebSocketHandler:
 
         from .frontend_bridge import unregister_client_sender
         unregister_client_sender(client_uid)
+        from .client_registry import unregister_client
+        unregister_client(client_uid)
         from .conversations.llm_request_queue import remove_queue
         remove_queue(client_uid)
 
