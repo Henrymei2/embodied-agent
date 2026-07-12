@@ -1042,13 +1042,32 @@ class BasicMemoryAgent(AgentInterface):
 
             if self._use_mcpp and self._tool_manager:
                 tools = None
+                # Get current scene status for proximity-based tool filtering
+                _reachable = None
+                try:
+                    from ...stage_state_manager import load_stage_state
+                    import math
+                    _stage = load_stage_state(None)
+                    _nodes = _stage.get("nodes", [])
+                    _avatar = next((n for n in _nodes if n.get("id") == "avatar"), None)
+                    if _avatar:
+                        _ax, _ay = _avatar["x"], _avatar["y"]
+                        _reachable = [
+                            n.get("id") or n.get("label")
+                            for n in _nodes
+                            if n.get("id") != "avatar"
+                            and math.dist((_ax, _ay), (n["x"], n["y"])) <= 150.0
+                        ]
+                except Exception as _e:
+                    logger.warning(f"Could not fetch scene status for tool filtering: {_e}")
+
                 if isinstance(self._llm, ClaudeAsyncLLM):
                     tool_mode = "Claude"
-                    tools = self._formatted_tools_claude
+                    tools = self._tool_manager.get_formatted_tools("Claude", _reachable)
                     llm_supports_native_tools = True
                 elif isinstance(self._llm, OpenAICompatibleAsyncLLM):
                     tool_mode = "OpenAI"
-                    tools = self._formatted_tools_openai
+                    tools = self._tool_manager.get_formatted_tools("OpenAI", _reachable)
                     llm_supports_native_tools = True
                 else:
                     logger.warning(
