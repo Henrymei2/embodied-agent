@@ -148,6 +148,8 @@ class WebSocketHandler:
         register_client_sender(client_uid, websocket.send_text)
         from .client_registry import register_client
         register_client(client_uid, session_service_context, websocket.send_text)
+        from mcp_servers.scheduler import _scheduler_loop
+        asyncio.create_task(_scheduler_loop(client_uid))
         
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
