@@ -2,6 +2,7 @@
 from pydantic import Field, model_validator
 from typing import Dict, ClassVar
 from .i18n import I18nMixin, Description
+from .autonomy import AutonomyConfig
 
 
 class SystemConfig(I18nMixin):
@@ -13,6 +14,9 @@ class SystemConfig(I18nMixin):
     config_alts_dir: str = Field(..., alias="config_alts_dir")
     tool_prompts: Dict[str, str] = Field(..., alias="tool_prompts")
     enable_proxy: bool = Field(False, alias="enable_proxy")
+    autonomy_config: AutonomyConfig = Field(
+        default_factory=AutonomyConfig, alias="autonomy_config"
+    )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "conf_version": Description(en="Configuration version"),
@@ -26,6 +30,9 @@ class SystemConfig(I18nMixin):
         ),
         "enable_proxy": Description(
             en="Enable proxy mode for multiple clients",
+        ),
+        "autonomy_config": Description(
+            en="Autonomous behavior loop settings",
         ),
     }
 

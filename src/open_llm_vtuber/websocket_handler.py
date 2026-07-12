@@ -150,6 +150,15 @@ class WebSocketHandler:
         register_client(client_uid, session_service_context, websocket.send_text)
         from mcp_servers.scheduler import _scheduler_loop
         asyncio.create_task(_scheduler_loop(client_uid))
+
+        # Autonomous behavior loop (curiosity/care/housekeeping/growth/social/
+        # work), gated by the configurable interruption controls.
+        from .autonomy import AutonomySettings, autonomy_loop
+        autonomy_settings = AutonomySettings.from_config(
+            getattr(session_service_context, "system_config", None)
+        )
+        if autonomy_settings.enabled:
+            asyncio.create_task(autonomy_loop(client_uid, autonomy_settings))
         
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)

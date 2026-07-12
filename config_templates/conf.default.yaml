@@ -20,7 +20,16 @@ system_config:
     # Prompt to enhance the LLM's ability to output speakable text
     # speakable_prompt: 'speakable_prompt'
     # Additional guidance for LLM on how to use tools
-    # tool_guidance_prompt: 'tool_guidance_prompt' 
+    # tool_guidance_prompt: 'tool_guidance_prompt'
+  # Autonomous behavior: the agent periodically decides, on its own initiative,
+  # whether to act along a direction (curiosity/care/housekeeping/growth/social/
+  # work) and how to deliver it, subject to these interruption controls.
+  autonomy_config:
+    enabled: true
+    tick_seconds: 900              # how often the agent considers acting (min 30)
+    interruption_frequency: 'medium'   # low | medium | high
+    help_style: 'proactive'            # quiet | proactive | talkative
+    confidence_threshold: 'balanced'   # strict | balanced | loose
 
 # configuration for the default character
 character_config:
