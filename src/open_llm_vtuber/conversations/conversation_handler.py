@@ -13,6 +13,13 @@ from .group_conversation import process_group_conversation
 from .single_conversation import process_single_conversation
 from .conversation_utils import EMOJI_LIST
 from .types import GroupConversationState
+from .llm_request_queue import (
+    get_queue,
+    remove_queue,
+    interrupt_queue,
+    PRIORITY_USER,
+    PRIORITY_PROACTIVE,
+)
 from prompts import prompt_loader
 
 
@@ -34,7 +41,6 @@ async def handle_conversation_trigger(
 
     if msg_type == "ai-speak-signal":
         try:
-            # Get proactive speak prompt from config
             prompt_name = "proactive_speak_prompt"
             prompt_file = context.system_config.tool_prompts.get(prompt_name)
             if prompt_file:
@@ -46,12 +52,10 @@ async def handle_conversation_trigger(
             logger.error(f"Error loading proactive speak prompt: {e}")
             user_input = "Please say something."
 
-        # Add metadata to indicate this is a proactive speak request
-        # that should be skipped in both memory and history
         metadata = {
             "proactive_speak": True,
-            "skip_memory": True,  # Skip storing in AI's internal memory
-            "skip_history": True,  # Skip storing in local conversation history
+            "skip_memory": True,
+            "skip_history": True,
         }
 
         await websocket.send_text(
@@ -71,16 +75,17 @@ async def handle_conversation_trigger(
     images = data.get("images")
     session_emoji = np.random.choice(EMOJI_LIST)
 
+    # Determine priority: user-initiated requests beat proactive/background ones
+    priority = PRIORITY_PROACTIVE if msg_type == "ai-speak-signal" else PRIORITY_USER
+
     group = chat_group_manager.get_client_group(client_uid)
     if group and len(group.members) > 1:
-        # Use group_id as task key for group conversations
         task_key = group.group_id
         if (
             task_key not in current_conversation_tasks
             or current_conversation_tasks[task_key].done()
         ):
             logger.info(f"Starting new group conversation for {task_key}")
-
             current_conversation_tasks[task_key] = asyncio.create_task(
                 process_group_conversation(
                     client_contexts=client_contexts,
@@ -95,9 +100,10 @@ async def handle_conversation_trigger(
                 )
             )
     else:
-        # Use client_uid as task key for individual conversations
-        current_conversation_tasks[client_uid] = asyncio.create_task(
-            process_single_conversation(
+        # Route through the priority queue instead of creating a task directly
+        queue = get_queue(client_uid)
+        await queue.enqueue(
+            coro=process_single_conversation(
                 context=context,
                 websocket_send=websocket.send_text,
                 client_uid=client_uid,
@@ -105,7 +111,9 @@ async def handle_conversation_trigger(
                 images=images,
                 session_emoji=session_emoji,
                 metadata=metadata,
-            )
+            ),
+            priority=priority,
+            label=f"{msg_type} ({session_emoji})",
         )
 
 
@@ -115,32 +123,40 @@ async def handle_individual_interrupt(
     context: ServiceContext,
     heard_response: str,
 ):
+    # Interrupt via queue (cancels current in-flight request)
+    interrupt_queue(client_uid)
+
     if client_uid in current_conversation_tasks:
         task = current_conversation_tasks[client_uid]
         if task and not task.done():
             task.cancel()
             logger.info("🛑 Conversation task was successfully interrupted")
 
-        try:
-            context.agent_engine.handle_interrupt(heard_response)
-        except Exception as e:
-            logger.error(f"Error handling interrupt: {e}")
+    try:
+        context.agent_engine.handle_interrupt(heard_response)
+    except Exception as e:
+        logger.error(f"Error handling interrupt: {e}")
 
-        if context.history_uid:
-            store_message(
-                conf_uid=context.character_config.conf_uid,
-                history_uid=context.history_uid,
-                role="ai",
-                content=heard_response,
-                name=context.character_config.character_name,
-                avatar=context.character_config.avatar,
-            )
-            store_message(
-                conf_uid=context.character_config.conf_uid,
-                history_uid=context.history_uid,
-                role="system",
-                content="[Interrupted by user]",
-            )
+    if context.history_uid:
+        store_message(
+            conf_uid=context.character_config.conf_uid,
+            history_uid=context.history_uid,
+            role="ai",
+            content=heard_response,
+            name=context.character_config.character_name,
+            avatar=context.character_config.avatar,
+        )
+        store_message(
+            conf_uid=context.character_config.conf_uid,
+            history_uid=context.history_uid,
+            role="system",
+            content="[Interrupted by user]",
+        )
+
+
+async def handle_client_queue_cleanup(client_uid: str) -> None:
+    """Call this when a client disconnects to clean up their queue."""
+    remove_queue(client_uid)
 
 
 async def handle_group_interrupt(
@@ -156,11 +172,9 @@ async def handle_group_interrupt(
     if not task or task.done():
         return
 
-    # Get state and speaker info before cancellation
     state = GroupConversationState.get_state(group_id)
     current_speaker_uid = state.current_speaker_uid if state else None
 
-    # Get context from current speaker
     context = None
     group = chat_group_manager.get_group_by_id(group_id)
     if current_speaker_uid:
@@ -170,7 +184,6 @@ async def handle_group_interrupt(
         logger.warning(f"No context found for group {group_id}, using first member")
         context = client_contexts.get(next(iter(group.members)))
 
-    # Now cancel the task
     task.cancel()
     try:
         await task
@@ -178,9 +191,8 @@ async def handle_group_interrupt(
         logger.info(f"🛑 Group conversation {group_id} cancelled successfully.")
 
     current_conversation_tasks.pop(group_id, None)
-    GroupConversationState.remove_state(group_id)  # Clean up state after we've used it
+    GroupConversationState.remove_state(group_id)
 
-    # Store messages with speaker info
     if context and group:
         for member_uid in group.members:
             if member_uid in client_contexts:

@@ -1,7 +1,24 @@
 from loguru import logger
-from typing import Dict, Any, List, Literal
-
+from typing import Dict, Any, List, Literal, Optional
 from .types import FormattedTool
+
+# Tools that require the agent to be physically close to a specific object.
+# Key = tool name, Value = object label in the scene the agent must be near.
+PROXIMITY_REQUIREMENTS: Dict[str, str] = {
+    "execute_bash": "computer",
+    "read_file": "computer",
+    "write_file": "computer",
+    "append_to_file": "computer",
+    "edit_file": "computer",
+    "list_directory": "computer",
+    "create_directory": "computer",
+    "delete_path": "computer",
+    "move_path": "computer",
+}
+
+# Distance threshold in scene units — agent must be within this distance
+# of the required object for the tool to be exposed to the LLM.
+PROXIMITY_THRESHOLD = 150.0
 
 
 class ToolManager:
@@ -14,19 +31,18 @@ class ToolManager:
         initial_tools_dict: Dict[str, FormattedTool] = None,
     ) -> None:
         """Initialize the Tool Manager with pre-formatted tool lists."""
-        # Store the raw tool data (optional, for get_tool)
         self.tools: Dict[str, FormattedTool] = initial_tools_dict or {}
-
-        # Store the pre-formatted lists
         self._formatted_tools_openai: List[Dict[str, Any]] = (
             formatted_tools_openai or []
         )
         self._formatted_tools_claude: List[Dict[str, Any]] = (
             formatted_tools_claude or []
         )
-
         logger.info(
             f"ToolManager initialized with {len(self._formatted_tools_openai)} OpenAI tools and {len(self._formatted_tools_claude)} Claude tools."
+        )
+        logger.info(
+            f"ToolManager available tool names: {sorted(self.tools.keys())}"
         )
 
     def get_tool(self, tool_name: str) -> FormattedTool | None:
@@ -40,11 +56,56 @@ class ToolManager:
         return None
 
     def get_formatted_tools(
-        self, mode: Literal["OpenAI", "Claude"]
+        self,
+        mode: Literal["OpenAI", "Claude"],
+        reachable_objects: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]] | Any:
-        """Get the pre-formatted list of tools for the specified API mode."""
+        """Get the pre-formatted list of tools, filtered by agent proximity.
 
+        Args:
+            mode: API format to return ("OpenAI" or "Claude").
+            reachable_objects: List of object labels currently within reach
+                of the agent (from get_scene_status). If None, no proximity
+                filtering is applied and all tools are returned.
+
+        Returns:
+            Filtered list of tool schemas for the specified API.
+        """
         if mode == "OpenAI":
-            return self._formatted_tools_openai
+            all_tools = self._formatted_tools_openai
         elif mode == "Claude":
-            return self._formatted_tools_claude
+            all_tools = self._formatted_tools_claude
+        else:
+            return []
+
+        if reachable_objects is None:
+            # No scene status available — return everything, no filtering
+            logger.debug("TM: No scene status provided, returning all tools unfiltered.")
+            return all_tools
+
+        filtered = []
+        blocked = []
+        for tool in all_tools:
+            # Get tool name depending on API format
+            if mode == "OpenAI":
+                tool_name = tool.get("function", {}).get("name", "")
+            else:
+                tool_name = tool.get("name", "")
+
+            required_object = PROXIMITY_REQUIREMENTS.get(tool_name)
+            if required_object is None:
+                # No proximity requirement — always expose this tool
+                filtered.append(tool)
+            elif required_object in reachable_objects:
+                # Agent is close enough — expose the tool
+                filtered.append(tool)
+            else:
+                # Agent is too far — block the tool
+                blocked.append(tool_name)
+
+        if blocked:
+            logger.info(
+                f"TM: Blocked {len(blocked)} tool(s) due to proximity requirements: {blocked}"
+            )
+
+        return filtered

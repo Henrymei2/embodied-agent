@@ -308,6 +308,8 @@ class WebSocketHandler:
 
         from .frontend_bridge import unregister_client_sender
         unregister_client_sender(client_uid)
+        from .conversations.llm_request_queue import remove_queue
+        remove_queue(client_uid)
 
         if client_uid in self.current_conversation_tasks:
             task = self.current_conversation_tasks[client_uid]
