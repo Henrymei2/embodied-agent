@@ -81,6 +81,7 @@ Every filesystem operation must resolve paths through the workspace path validat
 - skills/: reusable skills
 - tmp/: temporary files
 - memory/: daily memory files
+- calendar/: local calendar events
 
 ## Embodied Environment Rules
 - The agent exists in a spatial environment.
@@ -162,6 +163,7 @@ ROOT_DIRECTORIES = [
     "skills",
     "tmp",
     "memory",
+    "calendar",
 ]
 
 
@@ -177,6 +179,7 @@ class Workspace:
     skills_dir: Path
     tmp_dir: Path
     daily_memory_dir: Path
+    calendar_dir: Path
 
 
 class WorkspaceAccessError(ValueError):
@@ -221,6 +224,7 @@ def ensure_workspace(workspace_dir: str | Path | None = None) -> Workspace:
         skills_dir=root / "skills",
         tmp_dir=root / "tmp",
         daily_memory_dir=root / "memory",
+        calendar_dir=root / "calendar",
     )
 
 

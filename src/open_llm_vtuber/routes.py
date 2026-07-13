@@ -106,6 +106,8 @@ def init_frontend_action_routes() -> APIRouter:
 
         action = payload.get("action")
         args = payload.get("args", {})
+        client_uid = payload.get("client_uid")
+        conf_uid = payload.get("conf_uid")
         try:
             timeout = float(payload.get("timeout", 15.0))
         except (TypeError, ValueError):
@@ -125,11 +127,25 @@ def init_frontend_action_routes() -> APIRouter:
                 {"ok": False, "result": {}, "error": "args must be an object"},
                 status_code=400,
             )
+        if client_uid is not None and (
+            not isinstance(client_uid, str) or not client_uid
+        ):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "client_uid must be a string"},
+                status_code=400,
+            )
+        if conf_uid is not None and (not isinstance(conf_uid, str) or not conf_uid):
+            return JSONResponse(
+                {"ok": False, "result": {}, "error": "conf_uid must be a string"},
+                status_code=400,
+            )
 
         ok, result, error = await request_frontend_action(
             action=action,
             args=args,
             timeout=timeout,
+            client_uid=client_uid,
+            conf_uid=conf_uid,
         )
         status_code = 200 if ok else 503
         return JSONResponse(

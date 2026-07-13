@@ -6,6 +6,7 @@ import { HistoryInfo } from '@/context/websocket-context';
 import { ConfigFile } from '@/context/character-config-context';
 import { DynamicStageDocument } from '@/context/dynamic-stage-context';
 import { toaster } from '@/components/ui/toaster';
+import type { PresenceReceipt } from '@/context/presence-context';
 
 export interface DisplayText {
   text: string;
@@ -85,6 +86,18 @@ export interface MessageEvent {
   stage?: DynamicStageDocument;
   state?: DynamicStageDocument;
   result?: Record<string, unknown>;
+  enabled?: boolean;
+  attention_budget?: number;
+  attention_budget_max?: number;
+  attention_refill_per_hour?: number;
+  attention_budget_remaining?: number;
+  snoozed?: boolean;
+  snoozed_until?: string | null;
+  direction_affinity?: Record<string, number>;
+  receipts?: PresenceReceipt[];
+  receipt?: PresenceReceipt;
+  receipt_id?: string;
+  ok?: boolean;
   browser_view?: {
     debuggerFullscreenUrl: string;
     debuggerUrl: string;
@@ -246,7 +259,6 @@ class WebSocketService {
 
     return new Promise<object | null>((resolve) => {
       let settled = false;
-      let timeoutId: number;
       const subscription = this.outboundSubject.subscribe((outboundMessage) => {
         if (settled) {
           return;
@@ -259,7 +271,7 @@ class WebSocketService {
         resolve(outboundMessage);
       });
 
-      timeoutId = window.setTimeout(() => {
+      const timeoutId = window.setTimeout(() => {
         if (settled) {
           return;
         }

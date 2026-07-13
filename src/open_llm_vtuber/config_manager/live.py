@@ -10,9 +10,7 @@ class BiliBiliLiveConfig(I18nMixin):
     sessdata: str = Field("", alias="sessdata")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "room_ids": Description(
-            en="List of BiliBili live room IDs to monitor"
-        ),
+        "room_ids": Description(en="List of BiliBili live room IDs to monitor"),
         "sessdata": Description(
             en="SESSDATA cookie value for authenticated requests (optional)",
         ),
@@ -27,7 +25,5 @@ class LiveConfig(I18nMixin):
     )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "bilibili_live": Description(
-            en="Configuration for BiliBili Live platform"
-        ),
+        "bilibili_live": Description(en="Configuration for BiliBili Live platform"),
     }

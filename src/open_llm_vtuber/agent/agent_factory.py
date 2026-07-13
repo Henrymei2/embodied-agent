@@ -71,9 +71,7 @@ class AgentFactory:
             memory_manager: Optional[MemoryManager] = None
             if basic_memory_settings.get("use_memory", True):
                 try:
-                    memory_manager = MemoryManager(
-                        llm_complete=make_llm_complete(llm)
-                    )
+                    memory_manager = MemoryManager(llm_complete=make_llm_complete(llm))
                     logger.info("Three-layer memory system enabled for agent.")
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"Failed to initialize MemoryManager: {exc}")

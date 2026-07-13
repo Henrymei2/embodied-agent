@@ -1,3 +1,5 @@
 src/renderer/WebSDK/**/*.ts
 src/renderer/MotionSync/**/*.js
-src/renderer/MotionSync/**/*.ts 
+src/renderer/MotionSync/**/*.ts
+dist/
+out/

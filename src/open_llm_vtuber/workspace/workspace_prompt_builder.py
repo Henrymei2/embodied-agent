@@ -115,7 +115,9 @@ def build_workspace_prompt_context(
 
         sections.append(format_section(section_title, section_content))
 
-    context_body = "\n\n---\n\n".join(section for section in sections if section.strip())
+    context_body = "\n\n---\n\n".join(
+        section for section in sections if section.strip()
+    )
 
     if not context_body.strip():
         return ""

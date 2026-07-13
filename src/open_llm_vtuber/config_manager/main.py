@@ -18,13 +18,7 @@ class Config(I18nMixin, BaseModel):
     live_config: LiveConfig = Field(default=LiveConfig(), alias="live_config")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "system_config": Description(
-            en="System configuration settings"
-        ),
-        "character_config": Description(
-            en="Character configuration settings"
-        ),
-        "live_config": Description(
-            en="Live streaming platform integration settings"
-        ),
+        "system_config": Description(en="System configuration settings"),
+        "character_config": Description(en="Character configuration settings"),
+        "live_config": Description(en="Live streaming platform integration settings"),
     }

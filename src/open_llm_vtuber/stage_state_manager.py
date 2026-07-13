@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import os
 import re
 from datetime import datetime
@@ -260,13 +261,17 @@ def migrate_stage(stage: Any) -> Any:
             if "texture" not in migrated_node and "texture" in default_node:
                 migrated_node["texture"] = copy.deepcopy(default_node["texture"])
             if "spritesheet" not in migrated_node and "spritesheet" in default_node:
-                migrated_node["spritesheet"] = copy.deepcopy(default_node["spritesheet"])
+                migrated_node["spritesheet"] = copy.deepcopy(
+                    default_node["spritesheet"]
+                )
             nodes.append(migrated_node)
     else:
         nodes = copy.deepcopy(defaults["nodes"])
 
     existing_ids = {
-        node.get("id") for node in nodes if isinstance(node, dict) and isinstance(node.get("id"), str)
+        node.get("id")
+        for node in nodes
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
     }
     for node_id, default_node in default_nodes.items():
         if node_id not in existing_ids:
@@ -340,20 +345,32 @@ def _validate_spritesheet(spritesheet: Any, node_id: str, errors: list[str]) -> 
 
     animations = spritesheet.get("animations")
     if not isinstance(animations, dict) or not animations:
-        errors.append(f"Node {node_id} spritesheet.animations must be a non-empty object.")
+        errors.append(
+            f"Node {node_id} spritesheet.animations must be a non-empty object."
+        )
     elif len(animations) > 64:
-        errors.append(f"Node {node_id} spritesheet.animations can contain at most 64 animations.")
+        errors.append(
+            f"Node {node_id} spritesheet.animations can contain at most 64 animations."
+        )
     else:
         for name, animation in animations.items():
-            if not isinstance(name, str) or not re.match(r"^[A-Za-z0-9_-]{1,80}$", name):
-                errors.append(f"Node {node_id} spritesheet animation name {name} is invalid.")
+            if not isinstance(name, str) or not re.match(
+                r"^[A-Za-z0-9_-]{1,80}$", name
+            ):
+                errors.append(
+                    f"Node {node_id} spritesheet animation name {name} is invalid."
+                )
             if not isinstance(animation, dict):
-                errors.append(f"Node {node_id} spritesheet animation {name} must be an object.")
+                errors.append(
+                    f"Node {node_id} spritesheet animation {name} must be an object."
+                )
                 continue
             row = animation.get("row")
             frames = animation.get("frames")
             if not _is_number(row) or row < 0 or row > 256 or int(row) != row:
-                errors.append(f"Node {node_id} spritesheet animation {name}.row must be 0-256.")
+                errors.append(
+                    f"Node {node_id} spritesheet animation {name}.row must be 0-256."
+                )
             if not isinstance(frames, list) or not frames or len(frames) > 120:
                 errors.append(
                     f"Node {node_id} spritesheet animation {name}.frames must contain 1-120 frames."
@@ -373,7 +390,9 @@ def _validate_spritesheet(spritesheet: Any, node_id: str, errors: list[str]) -> 
     default_animations = spritesheet.get("defaultAnimations")
     if default_animations is not None:
         if not isinstance(default_animations, dict):
-            errors.append(f"Node {node_id} spritesheet.defaultAnimations must be an object.")
+            errors.append(
+                f"Node {node_id} spritesheet.defaultAnimations must be an object."
+            )
         else:
             for key, value in default_animations.items():
                 if (
@@ -430,7 +449,9 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
                 errors.append(f"Node {index} must be an object.")
                 continue
             node_id = node.get("id")
-            if not isinstance(node_id, str) or not re.match(r"^[A-Za-z0-9_-]{1,80}$", node_id):
+            if not isinstance(node_id, str) or not re.match(
+                r"^[A-Za-z0-9_-]{1,80}$", node_id
+            ):
                 errors.append(f"Node {index} id is invalid.")
             elif node_id in seen_ids:
                 errors.append(f"Node id {node_id} is duplicated.")
@@ -445,17 +466,23 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             if node.get("src") is not None and not _is_safe_asset_src(node.get("src")):
                 errors.append(f"Node {node_id or index} src is invalid.")
             _validate_texture(node.get("texture"), str(node_id or index), errors)
-            _validate_spritesheet(node.get("spritesheet"), str(node_id or index), errors)
+            _validate_spritesheet(
+                node.get("spritesheet"), str(node_id or index), errors
+            )
             if style is not None:
                 if not isinstance(style, dict):
                     errors.append(f"Node {node_id or index} style must be an object.")
                 else:
                     for key in style:
                         if key not in allowed_style:
-                            errors.append(f"Node {node_id or index} style.{key} is not allowed.")
+                            errors.append(
+                                f"Node {node_id or index} style.{key} is not allowed."
+                            )
                     for key in ["background", "borderColor", "color"]:
                         if not _is_safe_color(style.get(key)):
-                            errors.append(f"Node {node_id or index} style.{key} is invalid.")
+                            errors.append(
+                                f"Node {node_id or index} style.{key} is invalid."
+                            )
 
     if not isinstance(stage.get("metadata"), dict):
         errors.append("Stage metadata must be an object.")
@@ -487,7 +514,38 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
     return get_default_stage(conf_uid)
 
 
-def save_stage_state(conf_uid: str, stage: dict[str, Any], updated_by: str = "frontend_action") -> tuple[bool, list[str]]:
+def get_reachable_objects(
+    conf_uid: str,
+    distance: float = 150.0,
+) -> list[str]:
+    """Return object labels within ``distance`` of the persisted avatar."""
+    if not conf_uid:
+        raise ValueError("conf_uid cannot be empty")
+    if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+        raise ValueError("distance must be numeric")
+    if distance < 0:
+        raise ValueError("distance cannot be negative")
+
+    nodes = load_stage_state(conf_uid).get("nodes", [])
+    avatar = next(
+        (node for node in nodes if node.get("id") == "avatar"),
+        None,
+    )
+    if avatar is None:
+        return []
+
+    ax, ay = avatar["x"], avatar["y"]
+    return [
+        node.get("label") or node.get("id")
+        for node in nodes
+        if node.get("id") != "avatar"
+        and math.dist((ax, ay), (node["x"], node["y"])) <= float(distance)
+    ]
+
+
+def save_stage_state(
+    conf_uid: str, stage: dict[str, Any], updated_by: str = "frontend_action"
+) -> tuple[bool, list[str]]:
     if not conf_uid:
         return False, ["conf_uid cannot be empty."]
 

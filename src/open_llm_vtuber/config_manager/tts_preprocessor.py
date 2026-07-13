@@ -1,6 +1,6 @@
 # config_manager/translate.py
 from typing import Literal, Optional, Dict, ClassVar
-from pydantic import ValidationInfo, Field, model_validator
+from pydantic import Field, model_validator
 from .i18n import I18nMixin, Description
 
 # --- Sub-models for specific Translator providers ---
@@ -16,9 +16,7 @@ class DeepLXConfig(I18nMixin):
         "deeplx_target_lang": Description(
             en="Target language code for DeepLX translation",
         ),
-        "deeplx_api_endpoint": Description(
-            en="API endpoint URL for DeepLX service"
-        ),
+        "deeplx_api_endpoint": Description(en="API endpoint URL for DeepLX service"),
     }
 
 
@@ -39,9 +37,7 @@ class TencentConfig(I18nMixin):
         "secret_id": Description(en="Tencent Secret ID"),
         "secret_key": Description(en="Tencent Secret Key"),
         "region": Description(en="Region for Tencent Service"),
-        "source_lang": Description(
-            en="Source language code for tencent translation"
-        ),
+        "source_lang": Description(en="Source language code for tencent translation"),
         "target_lang": Description(
             en="Target language code for tencent translation",
         ),
@@ -65,33 +61,24 @@ class TranslatorConfig(I18nMixin):
         "translate_audio": Description(
             en="Enable audio translation (requires DeepLX deployment)",
         ),
-        "translate_provider": Description(
-            en="Translation service provider to use"
-        ),
-        "deeplx": Description(
-            en="Configuration for DeepLX translation service"
-        ),
-        "tencent": Description(
-            en="Configuration for TenCent translation service"
-        ),
+        "translate_provider": Description(en="Translation service provider to use"),
+        "deeplx": Description(en="Configuration for DeepLX translation service"),
+        "tencent": Description(en="Configuration for TenCent translation service"),
     }
 
     @model_validator(mode="after")
-    def check_translator_config(cls, values: "TranslatorConfig", info: ValidationInfo):
-        translate_audio = values.translate_audio
-        translate_provider = values.translate_provider
-
-        if translate_audio:
-            if translate_provider == "deeplx" and values.deeplx is None:
+    def check_translator_config(self):
+        if self.translate_audio:
+            if self.translate_provider == "deeplx" and self.deeplx is None:
                 raise ValueError(
                     "DeepLX configuration must be provided when translate_audio is True and translate_provider is 'deeplx'"
                 )
-            elif translate_provider == "tencent" and values.tencent is None:
+            elif self.translate_provider == "tencent" and self.tencent is None:
                 raise ValueError(
                     "Tencent configuration must be provided when translate_audio is True and translate_provider is 'tencent'"
                 )
 
-        return values
+        return self
 
 
 class TTSPreprocessorConfig(I18nMixin):
@@ -108,7 +95,5 @@ class TTSPreprocessorConfig(I18nMixin):
         "remove_special_char": Description(
             en="Remove special characters from the input text",
         ),
-        "translator_config": Description(
-            en="Configuration for translation services"
-        ),
+        "translator_config": Description(en="Configuration for translation services"),
     }

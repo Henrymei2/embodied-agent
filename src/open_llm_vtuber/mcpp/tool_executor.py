@@ -338,6 +338,12 @@ class ToolExecutor:
             content_items = [{"type": "error", "text": text_content}]
             is_error = True
         else:
+            allowed, denial_reason = self._tool_manager.authorize_tool(tool_name)
+            if not allowed:
+                logger.warning(f"Blocked tool execution: {denial_reason}")
+                text_content = f"Error: {denial_reason}"
+                content_items = [{"type": "error", "text": text_content}]
+                return True, text_content, metadata, content_items
             try:
                 result_dict = await self._mcp_client.call_tool(
                     server_name=tool_info.related_server,

@@ -130,5 +130,25 @@
     "connected": "Connected",
     "connecting": "Connecting",
     "clickToReconnect": "Click to Reconnect"
+  },
+  "presence": {
+    "title": "Presence Contract",
+    "subtitle": "Consent-aware autonomous behavior",
+    "openPanel": "Open presence controls",
+    "disabled": "Presence off",
+    "disabledDescription": "Enable autonomy in the server configuration to use attention budgets and action receipts.",
+    "budgetCompact": "Presence {{budget}}/{{max}}",
+    "attentionBudget": "Attention budget",
+    "refill": "Refills {{rate}} point(s) per hour",
+    "focusOn": "Focus on",
+    "focusOff": "Focus off",
+    "snoozed": "Proactive speech is snoozed",
+    "latestReceipt": "Why I acted",
+    "receiptContext": "{{activity}} · {{score}}% confidence",
+    "helpful": "Helpful",
+    "notNow": "Not now",
+    "snooze": "Snooze 1h",
+    "noReceipts": "No autonomous actions yet.",
+    "feedbackFailed": "Could not record presence feedback"
   }
 } 

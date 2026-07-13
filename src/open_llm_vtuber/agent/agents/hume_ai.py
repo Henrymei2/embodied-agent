@@ -48,6 +48,7 @@ class HumeAIAgent(AgentInterface):
         self._idle_timer = None
         self._current_conf_uid = None
         self._current_history_uid = None
+        self._interrupted = False
 
         # Create cache directory if it doesn't exist
         self.cache_dir = Path("./cache")
@@ -165,6 +166,7 @@ class HumeAIAgent(AgentInterface):
             AsyncIterator[AudioOutput]: Stream of AudioOutput objects
         """
         try:
+            self._interrupted = False
             self._reset_idle_timer()
             await self._ensure_connection()
 
@@ -226,6 +228,9 @@ class HumeAIAgent(AgentInterface):
                     continue
 
         except websockets.exceptions.ConnectionClosed as e:
+            if self._interrupted:
+                logger.info("Hume AI response stream stopped by user interruption.")
+                return
             logger.warning(f"Connection closed: {e}, attempting to reconnect...")
             self._connected = False
             await self._ensure_connection()
@@ -237,20 +242,47 @@ class HumeAIAgent(AgentInterface):
             raise
 
     def handle_interrupt(self, heard_response: str) -> None:
-        """Handle user interruption (not implemented for Hume AI)"""
-        pass
+        """Stop the active EVI stream; the next chat reconnects on demand."""
+        self._interrupted = True
+        self._current_text = None
+        self._current_id = None
+        if self._idle_timer:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        if self._ws:
+            websocket = self._ws
+            self._ws = None
+            self._connected = False
+            try:
+                asyncio.get_running_loop().create_task(websocket.close())
+            except RuntimeError:
+                logger.warning(
+                    "Hume AI interrupt occurred without a running event loop; "
+                    "the connection will be replaced on the next request."
+                )
+
+    async def close(self) -> None:
+        """Close the EVI connection and remove generated audio cache files."""
+        self._interrupted = True
+        if self._idle_timer:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        if self._ws:
+            await self._ws.close()
+            self._ws = None
+        self._connected = False
+        self._cleanup_cache()
+
+    def _cleanup_cache(self) -> None:
+        try:
+            for file in self.cache_dir.glob("evi_audio_*.wav"):
+                file.unlink()
+        except Exception as e:
+            logger.error(f"Error cleaning up Hume AI cache files: {e}")
 
     def __del__(self):
         """Cleanup WebSocket connection and cache files"""
         if self._idle_timer:
             self._idle_timer.cancel()
 
-        if self._ws:
-            self._ws.close()
-
-        # Clean up cache files
-        try:
-            for file in self.cache_dir.glob("evi_audio_*.wav"):
-                file.unlink()
-        except Exception as e:
-            logger.error(f"Error cleaning up cache files: {e}")
+        self._cleanup_cache()

@@ -23,7 +23,9 @@ def _bare_agent(memory_manager=None) -> BasicMemoryAgent:
 def test_describe_move_to_dict_claude_shape():
     agent = _bare_agent()
     assert (
-        agent._describe_tool_action({"name": "move_to", "input": {"target": "calendar"}})
+        agent._describe_tool_action(
+            {"name": "move_to", "input": {"target": "calendar"}}
+        )
         == "moved to calendar"
     )
 
@@ -59,7 +61,9 @@ def test_describe_openai_toolcallobject_shape():
 
 def test_speak_tool_is_not_recorded_as_action():
     agent = _bare_agent()
-    assert agent._describe_tool_action({"name": "speak", "input": {"text": "hi"}}) is None
+    assert (
+        agent._describe_tool_action({"name": "speak", "input": {"text": "hi"}}) is None
+    )
 
 
 def test_generic_tool_gets_fallback_description():

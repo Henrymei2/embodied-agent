@@ -158,7 +158,11 @@ export function RoomSceneProvider({ children }: { children: React.ReactNode }) {
         return {
           ok: true,
           agent_position: avatarPositionRef.current,
-          reachable_objects: SCENE_OBJECTS.map((object) => object.label),
+          reachable_objects: SCENE_OBJECTS
+            .filter((object) => (
+              distanceBetween(avatarPositionRef.current, object) <= 150
+            ))
+            .map((object) => object.label),
         };
 
       default:

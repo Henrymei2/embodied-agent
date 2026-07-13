@@ -90,7 +90,12 @@ class ServiceContext:
 
     # ==== Initializers
 
-    async def _init_mcp_components(self, use_mcpp, enabled_servers):
+    async def _init_mcp_components(
+        self,
+        use_mcpp,
+        enabled_servers,
+        conf_uid: str | None = None,
+    ):
         """Initializes MCP components based on configuration, dynamically fetching tool info."""
         logger.debug(
             f"Initializing MCP components: use_mcpp={use_mcpp}, enabled_servers={enabled_servers}"
@@ -108,13 +113,11 @@ class ServiceContext:
             # 1. Initialize ServerRegistry
             self.mcp_server_registery = ServerRegistry()
             logger.info("ServerRegistry initialized or referenced.")
-            logger.info(
-                f"MCP enabled servers requested by config: {enabled_servers}"
-            )
+            logger.info(f"MCP enabled servers requested by config: {enabled_servers}")
             logger.info(
                 f"MCP servers loaded from registry: {sorted(self.mcp_server_registery.servers.keys())}"
             )
-            self._configure_mcp_server_environment()
+            self._configure_mcp_server_environment(conf_uid=conf_uid)
 
             # 2. Use ToolAdapter to get the MCP prompt and tools
             if not self.tool_adapter:
@@ -149,6 +152,7 @@ class ServiceContext:
                     formatted_tools_openai=openai_tools,
                     formatted_tools_claude=claude_tools,
                     initial_tools_dict=raw_tools_dict,
+                    conf_uid=conf_uid,
                 )
                 logger.info("ToolManager initialized with dynamically fetched tools.")
 
@@ -193,7 +197,7 @@ class ServiceContext:
                 "MCP components not initialized (use_mcpp is False or no enabled servers)."
             )
 
-    def _configure_mcp_server_environment(self) -> None:
+    def _configure_mcp_server_environment(self, conf_uid: str | None = None) -> None:
         """Inject backend connection settings into MCP server subprocess envs."""
         if not self.mcp_server_registery or not self.system_config:
             return
@@ -204,13 +208,28 @@ class ServiceContext:
         if host in {"0.0.0.0", "::"}:
             host = "127.0.0.1"
         backend_url = f"http://{host}:{self.system_config.port}"
+        from .workspace import ensure_workspace
+
+        workspace_root = ensure_workspace(
+            os.environ.get("EMBODIED_AGENT_WORKSPACE")
+        ).root
 
         for server in self.mcp_server_registery.servers.values():
             server.env = {
                 **(server.env or {}),
                 "EMBODIED_AGENT_BACKEND_URL": backend_url,
                 BRIDGE_TOKEN_ENV_VAR: get_bridge_token(),
+                "EMBODIED_AGENT_WORKSPACE": str(workspace_root),
             }
+            if self.client_uid:
+                server.env["EMBODIED_AGENT_CLIENT_UID"] = self.client_uid
+            resolved_conf_uid = conf_uid or getattr(
+                self.character_config,
+                "conf_uid",
+                None,
+            )
+            if resolved_conf_uid:
+                server.env["EMBODIED_AGENT_CONF_UID"] = resolved_conf_uid
         logger.info(f"MCP subprocess backend URL: {backend_url}")
 
     async def close(self):
@@ -266,7 +285,18 @@ class ServiceContext:
         await self._init_mcp_components(
             self.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
             self.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
+            conf_uid=self.character_config.conf_uid,
         )
+
+        # Agent instances contain mutable conversation state and session-bound
+        # tool executors, so connected clients must not share the cached agent.
+        if self.client_uid:
+            self.agent_engine = None
+            await self.init_agent(
+                self.character_config.agent_config,
+                self.character_config.persona_prompt,
+                character_config=self.character_config,
+            )
 
         logger.debug(f"Loaded service context with cache: {character_config}")
 
@@ -315,12 +345,14 @@ class ServiceContext:
         await self._init_mcp_components(
             config.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
             config.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
+            conf_uid=config.character_config.conf_uid,
         )
 
         # init agent from character config
         await self.init_agent(
             config.character_config.agent_config,
             config.character_config.persona_prompt,
+            character_config=config.character_config,
         )
 
         self.init_translate(
@@ -373,36 +405,37 @@ class ServiceContext:
         else:
             logger.info("VAD already initialized with the same config.")
 
-    async def init_agent(self, agent_config: AgentConfig, persona_prompt: str) -> None:
+    async def init_agent(
+        self,
+        agent_config: AgentConfig,
+        persona_prompt: str,
+        character_config: CharacterConfig | None = None,
+    ) -> None:
         """Initialize or update the LLM engine based on agent configuration."""
         logger.info(f"Initializing Agent: {agent_config.conversation_agent_choice}")
 
-        if (
-            self.agent_engine is not None
-            and agent_config == self.character_config.agent_config
-            and persona_prompt == self.character_config.persona_prompt
-        ):
-            logger.debug("Agent already initialized with the same config.")
-            return
+        target_character = character_config or self.character_config
 
         system_prompt = await self.construct_system_prompt(persona_prompt)
 
         # Pass avatar to agent factory
-        avatar = self.character_config.avatar or ""  # Get avatar from config
+        avatar = target_character.avatar or ""  # Get avatar from config
 
         try:
-            self.agent_engine = AgentFactory.create_agent(
+            previous_agent = self.agent_engine
+            new_agent = AgentFactory.create_agent(
                 conversation_agent_choice=agent_config.conversation_agent_choice,
                 agent_settings=agent_config.agent_settings.model_dump(),
                 llm_configs=agent_config.llm_configs.model_dump(),
                 system_prompt=system_prompt,
-                tts_preprocessor_config=self.character_config.tts_preprocessor_config,
+                tts_preprocessor_config=target_character.tts_preprocessor_config,
                 character_avatar=avatar,
                 system_config=self.system_config.model_dump(),
                 tool_manager=self.tool_manager,
                 tool_executor=self.tool_executor,
                 mcp_prompt_string=self.mcp_prompt,
             )
+            self.agent_engine = new_agent
 
             logger.debug(f"Agent choice: {agent_config.conversation_agent_choice}")
             logger.debug(f"System prompt: {system_prompt}")
@@ -410,6 +443,9 @@ class ServiceContext:
             # Drive the Daily -> Long-term memory compaction once at startup.
             if hasattr(self.agent_engine, "run_memory_startup"):
                 await self.agent_engine.run_memory_startup()
+
+            if previous_agent is not None and hasattr(previous_agent, "close"):
+                await previous_agent.close()
 
             # Save the current configuration
             self.character_config.agent_config = agent_config

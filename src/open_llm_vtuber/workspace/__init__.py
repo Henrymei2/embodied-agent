@@ -10,7 +10,10 @@ from .workspace_manager import (
     write_workspace_file,
 )
 from .workspace_prompt_builder import build_workspace_prompt_context
-from .workspace_retriever import RetrievedWorkspaceDocument, retrieve_workspace_documents
+from .workspace_retriever import (
+    RetrievedWorkspaceDocument,
+    retrieve_workspace_documents,
+)
 
 __all__ = [
     "DEFAULT_WORKSPACE_DIR",

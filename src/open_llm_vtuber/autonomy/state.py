@@ -51,7 +51,9 @@ class AutonomyState:
                 state._path = path
                 return state
             except Exception as exc:  # noqa: BLE001 - corrupt file shouldn't crash
-                logger.warning(f"autonomy: could not read {path} ({exc}); starting fresh")
+                logger.warning(
+                    f"autonomy: could not read {path} ({exc}); starting fresh"
+                )
         state = cls()
         state._path = path
         return state
@@ -77,14 +79,21 @@ class AutonomyState:
             return 1.0
         occurrences = recent.count(direction.value)
         # Each recent occurrence subtracts a chunk of novelty.
-        return max(0.0, 1.0 - occurrences / _RECENT_WINDOW - (
-            0.25 if recent and recent[-1] == direction.value else 0.0
-        ))
+        return max(
+            0.0,
+            1.0
+            - occurrences / _RECENT_WINDOW
+            - (0.25 if recent and recent[-1] == direction.value else 0.0),
+        )
 
-    def seconds_since_last_spoke(self, now: Optional[datetime] = None) -> Optional[float]:
+    def seconds_since_last_spoke(
+        self, now: Optional[datetime] = None
+    ) -> Optional[float]:
         return self._seconds_since(self.last_spoke_ts, now)
 
-    def seconds_since_last_action(self, now: Optional[datetime] = None) -> Optional[float]:
+    def seconds_since_last_action(
+        self, now: Optional[datetime] = None
+    ) -> Optional[float]:
         return self._seconds_since(self.last_action_ts, now)
 
     @staticmethod
@@ -97,8 +106,9 @@ class AutonomyState:
             return None
         return max(0.0, ((now or datetime.now()) - then).total_seconds())
 
-    def record_action(self, direction: Direction, spoke: bool,
-                      now: Optional[datetime] = None) -> None:
+    def record_action(
+        self, direction: Direction, spoke: bool, now: Optional[datetime] = None
+    ) -> None:
         """Record that the agent acted along `direction` (and whether it spoke)."""
         stamp = (now or datetime.now()).isoformat(timespec="seconds")
         self.last_action_ts = stamp
@@ -107,7 +117,7 @@ class AutonomyState:
         self.total_actions += 1
         self.recent_directions.append(direction.value)
         if len(self.recent_directions) > _RECENT_WINDOW * 2:
-            self.recent_directions = self.recent_directions[-_RECENT_WINDOW * 2:]
+            self.recent_directions = self.recent_directions[-_RECENT_WINDOW * 2 :]
         self.direction_counts[direction.value] = (
             self.direction_counts.get(direction.value, 0) + 1
         )

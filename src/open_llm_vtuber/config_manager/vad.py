@@ -1,5 +1,5 @@
 # config_manager/vad.py
-from pydantic import ValidationInfo, Field, model_validator
+from pydantic import Field, model_validator
 from typing import Literal, Optional, Dict, ClassVar
 from .i18n import I18nMixin, Description
 
@@ -18,45 +18,31 @@ class SileroVADConfig(I18nMixin):
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "orig_sr": Description(en="Original Audio Sample Rate"),
         "target_sr": Description(en="Target Audio Sample Rate"),
-        "prob_threshold": Description(
-            en="Probability Threshold for VAD"
-        ),
-        "db_threshold": Description(
-            en="Decibel Threshold for VAD"
-        ),
+        "prob_threshold": Description(en="Probability Threshold for VAD"),
+        "db_threshold": Description(en="Decibel Threshold for VAD"),
         "required_hits": Description(
             en="Number of consecutive hits required to consider speech",
         ),
         "required_misses": Description(
             en="Number of consecutive misses required to consider silence",
         ),
-        "smoothing_window": Description(
-            en="Smoothing window size for VAD"
-        ),
+        "smoothing_window": Description(en="Smoothing window size for VAD"),
     }
 
 
 class VADConfig(I18nMixin):
-    """Configuration for Automatic Speech Recognition."""
+    """Configuration for voice activity detection."""
 
     vad_model: Optional[Literal["silero_vad"]] = Field(None, alias="vad_model")
     silero_vad: Optional[SileroVADConfig] = Field(None, alias="silero_vad")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "vad_model": Description(
-            en="Voice Activity Detection model to use"
-        ),
-        "silero_vad": Description(
-            en="Configuration for Silero VAD"
-        ),
+        "vad_model": Description(en="Voice Activity Detection model to use"),
+        "silero_vad": Description(en="Configuration for Silero VAD"),
     }
 
     @model_validator(mode="after")
-    def check_asr_config(cls, values: "VADConfig", info: ValidationInfo):
-        vad_model = values.silero_vad
-
-        # Only validate the selected ASR model
-        if vad_model == "silero_vad" and values.silero_vad is not None:
-            values.silero_vad.model_validate(values.silero_vad.model_dump())
-
-        return values
+    def check_vad_config(self):
+        if self.vad_model == "silero_vad" and self.silero_vad is None:
+            raise ValueError("Silero VAD configuration is required when VAD is enabled")
+        return self

@@ -1,189 +1,199 @@
-get_object_position:
-Parameter
-Type
-Required
-Description
-name
-string
-true
-The string label of the object
+# Frontend Action Protocol
 
-returns
-{
-"type": "frontend_action_result",
-"result": {
-"ok": true,
-"position": { "x": 420, "y": 180 }
-}
+## 1. Purpose
 
-stage document v2:
-The frontend scene is stored as a stage document. Version 2 keeps the same
-coordinate system as version 1, but nodes may now include texture and
-spritesheet assets.
+The backend uses a request/result protocol over `/client-ws` to inspect or
+change the live 2D stage. Every request has a unique `request_id`; the result is
+accepted only from the client that owns that ID. Character and client identity
+are also carried through the internal MCP bridge, preventing actions from being
+routed to a different connected frontend.
 
-Asset src values may be http(s) URLs, data:image base64 URLs, or relative
-public paths such as "./stage-assets/avatar.png". javascript: URLs are rejected.
+## 2. Request and result envelopes
 
-Avatar spritesheet node example:
-{
-  "id": "avatar",
-  "type": "avatar",
-  "label": "avatar",
-  "x": 480,
-  "y": 270,
-  "width": 70,
-  "height": 92,
-  "zIndex": 3,
-  "text": "avatar",
-  "spritesheet": {
-    "src": "./stage-assets/avatar.png",
-    "frameWidth": 48,
-    "frameHeight": 64,
-    "fps": 6,
-    "defaultAnimations": {
-      "idle": "idle_down",
-      "walk": "walk_down"
-    },
-    "animations": {
-      "idle_down": { "row": 0, "frames": [0, 1, 2, 1] },
-      "idle_left": { "row": 1, "frames": [0, 1, 2, 1] },
-      "idle_right": { "row": 2, "frames": [0, 1, 2, 1] },
-      "idle_up": { "row": 3, "frames": [0, 1, 2, 1] },
-      "walk_down": { "row": 4, "frames": [0, 1, 2, 3] },
-      "walk_left": { "row": 5, "frames": [0, 1, 2, 3] },
-      "walk_right": { "row": 6, "frames": [0, 1, 2, 3] },
-      "walk_up": { "row": 7, "frames": [0, 1, 2, 3] }
-    }
-  }
-}
+Backend to frontend:
 
-Textured furniture node examples:
-{
-  "id": "computer",
-  "type": "panel",
-  "label": "computer",
-  "x": 260,
-  "y": 255,
-  "width": 150,
-  "height": 104,
-  "zIndex": 2,
-  "text": "computer",
-  "texture": {
-    "src": "./stage-assets/computer.png",
-    "fit": "contain",
-    "alt": "computer"
-  }
-}
-
-{
-  "id": "calendar",
-  "type": "panel",
-  "label": "calendar",
-  "x": 480,
-  "y": 420,
-  "width": 118,
-  "height": 92,
-  "zIndex": 2,
-  "text": "calendar",
-  "texture": {
-    "src": "./stage-assets/calendar.png",
-    "fit": "contain",
-    "alt": "calendar"
-  }
-}
-
-{
-  "id": "bed",
-  "type": "panel",
-  "label": "bed",
-  "x": 700,
-  "y": 270,
-  "width": 188,
-  "height": 118,
-  "zIndex": 2,
-  "text": "bed",
-  "texture": {
-    "src": "./stage-assets/bed.png",
-    "fit": "contain",
-    "alt": "bed"
-  }
-}
-
-Replace a furniture texture:
+```json
 {
   "type": "frontend_action_request",
-  "request_id": "example-texture-patch",
-  "action": "stage_patch_state",
+  "request_id": "2c9cb643-20ad-4b22-93bc-ec50d1b34d40",
+  "action": "move_to",
   "args": {
-    "patch": {
-      "nodes": [
-        {
-          "id": "bed",
-          "type": "panel",
-          "label": "bed",
-          "x": 700,
-          "y": 270,
-          "width": 188,
-          "height": 118,
-          "zIndex": 2,
-          "text": "bed",
-          "texture": {
-            "src": "https://example.com/bed-texture.png",
-            "fit": "contain",
-            "alt": "bed"
-          }
-        }
-      ]
-    }
+    "target": "calendar"
   }
 }
+```
 
-move_to:
-Parameter
-Type
-Required
-Description
-x
-float
-true
-x-coordinate
-y
-float
-true
-y-coordinate
+Frontend to backend:
 
-Asynchronous, returns when finished:
+```json
 {
-"type": "frontend_action_result",
-"result": {
-"ok": true
+  "type": "frontend_action_result",
+  "request_id": "2c9cb643-20ad-4b22-93bc-ec50d1b34d40",
+  "result": {
+    "ok": true,
+    "action": "move_to",
+    "state": {}
+  }
 }
+```
 
-list_objects:
-Parameter
-Type
-Required
-Description
-distance
-float
-false
-Only returns objects within distance, default to positive infinity
+Failed actions return `"ok": false` and a human-readable `error`. State-changing
+results include the complete validated `state`; the backend persists it under
+the active character configuration before resolving the MCP call. If backend
+validation fails, the frontend receives the last authoritative `stage-state`.
 
-returns
+## 3. Spatial actions
+
+| Action | Arguments | Result |
+| --- | --- | --- |
+| `get_object_position` | `name: string` | `position: {x, y}` |
+| `move_to` | `target: string` or numeric `x`, `y` | validated stage `state` after the 900 ms movement |
+| `list_objects` | optional numeric `distance` | `objects: StageNode[]` |
+| `get_scene_status` | none | `agent_position`, `reachable_objects` |
+
+Reachability means a center-to-center distance of at most 150 stage units.
+
+### `get_object_position`
+
+```json
 {
-"type": "frontend_action_result",
-"result": {
-"ok": true,
-"objects": {{“label”: “bed”, "x": 420, "y": 180} }
+  "type": "frontend_action_request",
+  "request_id": "position-1",
+  "action": "get_object_position",
+  "args": { "name": "bed" }
 }
+```
 
-get_scene_status
-
-returns
+```json
 {
-"type": "frontend_action_result",
-"result": {
-"ok": true,
-"agent_position": {“x”: 100, “y”: 100},
-“reachable_objects”: {“bed”, “calendar”}
+  "type": "frontend_action_result",
+  "request_id": "position-1",
+  "result": {
+    "ok": true,
+    "position": { "x": 700, "y": 270 }
+  }
 }
+```
+
+### `list_objects`
+
+```json
+{
+  "type": "frontend_action_request",
+  "request_id": "list-1",
+  "action": "list_objects",
+  "args": { "distance": 200 }
+}
+```
+
+```json
+{
+  "type": "frontend_action_result",
+  "request_id": "list-1",
+  "result": {
+    "ok": true,
+    "objects": [
+      { "id": "calendar", "label": "calendar", "x": 480, "y": 420 }
+    ]
+  }
+}
+```
+
+### `get_scene_status`
+
+```json
+{
+  "type": "frontend_action_result",
+  "request_id": "status-1",
+  "result": {
+    "ok": true,
+    "agent_position": { "x": 480, "y": 270 },
+    "reachable_objects": ["calendar"]
+  }
+}
+```
+
+## 4. Stage document actions
+
+| Action | Arguments | Behavior |
+| --- | --- | --- |
+| `stage_get_state` | none | Return the current stage document |
+| `stage_set_state` | `state` | Replace the stage after validation |
+| `stage_patch_state` | `patch` | Merge canvas/nodes/metadata or remove node IDs |
+| `stage_reset_state` | optional `conf_uid` | Restore the default stage |
+| `stage_list_capabilities` | none | Return supported actions, nodes, and limits |
+
+Patch shape:
+
+```json
+{
+  "canvas": { "background": "#0f172a" },
+  "nodes": [],
+  "remove_node_ids": ["reading_chair"],
+  "metadata": { "updated_by": "example" }
+}
+```
+
+## 5. Stage document v2
+
+```json
+{
+  "version": 2,
+  "canvas": {
+    "width": 960,
+    "height": 540,
+    "background": "linear-gradient(135deg, #dbeafe, #fef3c7)"
+  },
+  "nodes": [],
+  "metadata": {
+    "conf_uid": "mao_pro_001",
+    "updated_at": "2026-07-13T20:00:00+00:00",
+    "updated_by": "frontend_action"
+  }
+}
+```
+
+Supported node types: `shape`, `text`, `image`, `avatar`, and `panel`. A node
+requires a unique safe ID, numeric `x`, `y`, `width`, and `height`, and may have
+label/text/style, a safe image source, a furniture texture, or an avatar
+spritesheet. The stage is capped at 80 nodes.
+
+Asset sources may be `http(s)` URLs, `data:image` base64 URLs, or relative
+public paths such as `./stage-assets/chair.png`. `javascript:` URLs and unknown
+style/asset fields are rejected in both the frontend and backend.
+
+Furniture example:
+
+```json
+{
+  "id": "reading_chair",
+  "type": "panel",
+  "label": "reading_chair",
+  "x": 320,
+  "y": 180,
+  "width": 120,
+  "height": 90,
+  "zIndex": 2,
+  "text": "reading chair",
+  "texture": {
+    "src": "./stage-assets/chair.png",
+    "fit": "contain",
+    "alt": "reading chair"
+  }
+}
+```
+
+## 6. Connection synchronization
+
+On connection and after a character switch, the backend sends:
+
+```json
+{
+  "type": "stage-state",
+  "stage": {}
+}
+```
+
+The frontend validates this document before rendering it. Scene MCP reads use
+the same persisted document, so the LLM's spatial view, execution-time safety
+gate, and visible avatar stay consistent across restarts.

@@ -51,6 +51,7 @@ _TICK_INTERVAL = 30
 
 # ── Persistence helpers ────────────────────────────────────────────────────────
 
+
 def _load_tasks() -> dict[str, dict[str, Any]]:
     """Load tasks from disk. Returns empty dict if file missing or corrupt."""
     try:
@@ -81,6 +82,7 @@ def _iso(dt: datetime) -> str:
 
 
 # ── MCP tools ─────────────────────────────────────────────────────────────────
+
 
 @mcp.tool()
 def schedule_task(
@@ -129,9 +131,7 @@ def schedule_task(
     tasks[task_id] = task
     _save_tasks(tasks)
 
-    kind = (
-        f"every {interval_seconds}s" if interval_seconds else "one-time"
-    )
+    kind = f"every {interval_seconds}s" if interval_seconds else "one-time"
     return (
         f"OK: scheduled task {task_id} ({kind}) at priority {priority}. "
         f"First run: {next_run}. Report to user: {report}."
@@ -198,7 +198,7 @@ DEFAULT_TASKS = [
         "prompt": "Review the user's recent activity and check if they seem idle or stuck. If so, offer help quietly.",
         "priority": 20,
         "interval_seconds": 1800,  # every 30 minutes
-        "delay_seconds": 300,      # start after 5 minutes
+        "delay_seconds": 300,  # start after 5 minutes
         "report": False,
         "description": "idle_check",
     },
@@ -210,9 +210,7 @@ def _initialize_default_tasks() -> None:
     tasks = _load_tasks()
 
     # Check by description field to avoid duplicating on restart
-    existing_descriptions = {
-        t.get("description") for t in tasks.values()
-    }
+    existing_descriptions = {t.get("description") for t in tasks.values()}
 
     added = 0
     for default in DEFAULT_TASKS:
@@ -242,6 +240,7 @@ def _initialize_default_tasks() -> None:
 
 
 # ── Background execution loop ──────────────────────────────────────────────────
+
 
 async def _scheduler_loop(client_uid: str) -> None:
     """Background loop that fires due tasks through the LLM priority queue."""
@@ -325,16 +324,24 @@ async def _run_scheduled_task(
 
         # service_context is stored per-client in websocket_handler
         # Access it through the module-level registry we'll add in websocket_handler
-        from src.open_llm_vtuber.client_registry import get_client_context, get_client_send
+        from src.open_llm_vtuber.client_registry import (
+            get_client_context,
+            get_client_send,
+        )
 
         context = get_client_context(client_uid)
         send_text = get_client_send(client_uid)
 
         if context is None or send_text is None:
-            logger.warning(f"Scheduler: no context for client {client_uid}, skipping task.")
+            logger.warning(
+                f"Scheduler: no context for client {client_uid}, skipping task."
+            )
             return
 
-        from src.open_llm_vtuber.conversations.single_conversation import process_single_conversation
+        from src.open_llm_vtuber.conversations.single_conversation import (
+            process_single_conversation,
+        )
+
         await process_single_conversation(
             context=context,
             websocket_send=send_text,

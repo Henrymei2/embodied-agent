@@ -30,6 +30,12 @@ system_config:
     interruption_frequency: 'medium'   # low | medium | high
     help_style: 'proactive'            # quiet | proactive | talkative
     confidence_threshold: 'balanced'   # strict | balanced | loose
+    # Presence Contract: proactive behavior spends a refillable attention budget
+    # and emits local, inspectable receipts. Costs: silent=.25, ask=1.25, speak=2.
+    attention_budget: 6.0
+    attention_refill_per_hour: 1.0
+    receipt_retention: 50
+    default_snooze_minutes: 60
 
 # configuration for the default character
 character_config:
@@ -72,7 +78,7 @@ character_config:
         # Use MCP (Model Context Protocol) Plus to let the LLM have the ability to use tools
         # 'Plus' means that it has the ability to call tools by using OpenAI API.
         use_mcpp: True
-        mcp_enabled_servers: ["bash", "scene", "scheduler", "time", "ddg-search"]
+        mcp_enabled_servers: ["bash", "scene", "calendar", "scheduler", "time", "ddg-search"]
         # Enable the three-layer persistent memory system
         # (contextual -> daily -> long-term), stored in the agent workspace.
         use_memory: True

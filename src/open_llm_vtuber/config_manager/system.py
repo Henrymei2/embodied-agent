@@ -22,9 +22,7 @@ class SystemConfig(I18nMixin):
         "conf_version": Description(en="Configuration version"),
         "host": Description(en="Server host address"),
         "port": Description(en="Server port number"),
-        "config_alts_dir": Description(
-            en="Directory for alternative configurations"
-        ),
+        "config_alts_dir": Description(en="Directory for alternative configurations"),
         "tool_prompts": Description(
             en="Tool prompts to be inserted into persona prompt",
         ),
@@ -37,8 +35,7 @@ class SystemConfig(I18nMixin):
     }
 
     @model_validator(mode="after")
-    def check_port(cls, values):
-        port = values.port
-        if port < 0 or port > 65535:
+    def check_port(self):
+        if self.port < 0 or self.port > 65535:
             raise ValueError("Port must be between 0 and 65535")
-        return values
+        return self

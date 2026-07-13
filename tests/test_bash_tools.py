@@ -117,18 +117,18 @@ def test_cannot_delete_workspace_root(bt):
 @pytest.mark.parametrize(
     "command",
     [
-        "cat ../secret",                 # parent escape
-        "type ..\\..\\secret",           # parent escape (windows sep)
-        "dir \\\\server\\share",         # UNC network path
-        "echo $HOME/x",                  # env var expansion
-        "cat ${HOME}/x",                 # ${VAR} expansion
-        "cat $(echo /etc/passwd)",       # command substitution
-        "echo `whoami`",                 # backtick substitution
-        "cat /etc/passwd",               # posix absolute (outside on any OS)
-        "type ~/secret",                 # home dir (posix sep)
-        "type ~\\secret",                # home dir (windows sep)
-        "echo %USERPROFILE%\\x",         # windows env expansion
-        "echo hi > /etc/pwned.txt",      # redirect to outside path
+        "cat ../secret",  # parent escape
+        "type ..\\..\\secret",  # parent escape (windows sep)
+        "dir \\\\server\\share",  # UNC network path
+        "echo $HOME/x",  # env var expansion
+        "cat ${HOME}/x",  # ${VAR} expansion
+        "cat $(echo /etc/passwd)",  # command substitution
+        "echo `whoami`",  # backtick substitution
+        "cat /etc/passwd",  # posix absolute (outside on any OS)
+        "type ~/secret",  # home dir (posix sep)
+        "type ~\\secret",  # home dir (windows sep)
+        "echo %USERPROFILE%\\x",  # windows env expansion
+        "echo hi > /etc/pwned.txt",  # redirect to outside path
     ],
 )
 def test_execute_bash_refuses_outside_references(bt, command):
@@ -142,9 +142,9 @@ def test_execute_bash_refuses_outside_references(bt, command):
     [
         "echo hello",
         "ls -la",
-        "type notes.txt",                # relative path
-        "mkdir sub/child",               # relative nested path
-        "echo hi > out.txt",             # relative redirect
+        "type notes.txt",  # relative path
+        "mkdir sub/child",  # relative nested path
+        "echo hi > out.txt",  # relative redirect
         "grep -r foo .",
         "python script.py --flag",
         "echo https://example.com/a/b/c",  # URL is not a filesystem path

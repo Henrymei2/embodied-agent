@@ -65,12 +65,8 @@ class Mem0VectorStoreConfig(I18nMixin, BaseModel):
     config: Dict = Field(..., alias="config")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "provider": Description(
-            en="Vector store provider (e.g., qdrant)"
-        ),
-        "config": Description(
-            en="Provider-specific configuration"
-        ),
+        "provider": Description(en="Vector store provider (e.g., qdrant)"),
+        "config": Description(en="Provider-specific configuration"),
     }
 
 
@@ -82,9 +78,7 @@ class Mem0LLMConfig(I18nMixin, BaseModel):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "provider": Description(en="LLM provider name"),
-        "config": Description(
-            en="Provider-specific configuration"
-        ),
+        "config": Description(en="Provider-specific configuration"),
     }
 
 
@@ -96,9 +90,7 @@ class Mem0EmbedderConfig(I18nMixin, BaseModel):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "provider": Description(en="Embedder provider name"),
-        "config": Description(
-            en="Provider-specific configuration"
-        ),
+        "config": Description(en="Provider-specific configuration"),
     }
 
 
@@ -128,15 +120,11 @@ class HumeAIConfig(I18nMixin, BaseModel):
     idle_timeout: int = Field(15, alias="idle_timeout")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Hume AI service"
-        ),
+        "api_key": Description(en="API key for Hume AI service"),
         "host": Description(
             en="Host URL for Hume AI service (default: api.hume.ai)",
         ),
-        "config_id": Description(
-            en="Configuration ID for EVI settings"
-        ),
+        "config_id": Description(en="Configuration ID for EVI settings"),
         "idle_timeout": Description(
             en="Idle timeout in seconds before disconnecting (default: 15)",
         ),
@@ -156,9 +144,7 @@ class LettaConfig(I18nMixin, BaseModel):
     segment_method: Literal["regex", "pysbd"] = Field("pysbd", alias="segment_method")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "host": Description(
-            en="Host address for the Letta server"
-        ),
+        "host": Description(en="Host address for the Letta server"),
         "port": Description(
             en="Port number for the Letta server (default: 8283)",
         ),
@@ -179,16 +165,10 @@ class AgentSettings(I18nMixin, BaseModel):
     letta_agent: Optional[LettaConfig] = Field(None, alias="letta_agent")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "basic_memory_agent": Description(
-            en="Configuration for basic memory agent"
-        ),
+        "basic_memory_agent": Description(en="Configuration for basic memory agent"),
         "mem0_agent": Description(en="Configuration for Mem0 agent"),
-        "hume_ai_agent": Description(
-            en="Configuration for Hume AI agent"
-        ),
-        "letta_agent": Description(
-            en="Configuration for Letta agent"
-        ),
+        "hume_ai_agent": Description(en="Configuration for Hume AI agent"),
+        "letta_agent": Description(en="Configuration for Letta agent"),
     }
 
 
@@ -205,12 +185,8 @@ class AgentConfig(I18nMixin, BaseModel):
         "conversation_agent_choice": Description(
             en="Type of conversation agent to use"
         ),
-        "agent_settings": Description(
-            en="Settings for different agent types"
-        ),
-        "llm_configs": Description(
-            en="Pool of LLM provider configurations"
-        ),
+        "agent_settings": Description(en="Settings for different agent types"),
+        "llm_configs": Description(en="Pool of LLM provider configurations"),
         "faster_first_response": Description(
             en="Whether to respond as soon as encountering a comma in the first sentence to reduce latency (default: True)",
         ),

@@ -8,6 +8,10 @@
         "command": "uv",
         "args": ["run", "python", "mcp_servers/scene_tools.py"]
       },
+      "calendar": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/calendar_tools.py"]
+      },
       "scheduler": {
         "command": "uv",
         "args": ["run", "python", "mcp_servers/scheduler.py"]

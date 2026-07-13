@@ -69,6 +69,7 @@ class WebSocketHandler:
         self.current_conversation_tasks: Dict[str, Optional[asyncio.Task]] = {}
         self.default_context_cache = default_context_cache
         self.received_data_buffers: Dict[str, np.ndarray] = {}
+        self.autonomy_tasks: Dict[str, asyncio.Task] = {}
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -96,6 +97,9 @@ class WebSocketHandler:
             "request-init-config": self._handle_init_config_request,
             "heartbeat": self._handle_heartbeat,
             "frontend_action_result": self._handle_frontend_action_result,
+            "presence-context": self._handle_presence_context,
+            "autonomy-feedback": self._handle_autonomy_feedback,
+            "request-presence-state": self._handle_presence_state_request,
         }
 
     async def handle_new_connection(
@@ -145,21 +149,36 @@ class WebSocketHandler:
         self.received_data_buffers[client_uid] = np.array([])
 
         from .frontend_bridge import register_client_sender
-        register_client_sender(client_uid, websocket.send_text)
+
+        register_client_sender(
+            client_uid,
+            websocket.send_text,
+            session_service_context.character_config.conf_uid,
+        )
         from .client_registry import register_client
+
         register_client(client_uid, session_service_context, websocket.send_text)
         from mcp_servers.scheduler import _scheduler_loop
+
         asyncio.create_task(_scheduler_loop(client_uid))
 
         # Autonomous behavior loop (curiosity/care/housekeeping/growth/social/
         # work), gated by the configurable interruption controls.
         from .autonomy import AutonomySettings, autonomy_loop
+        from .autonomy.presence import get_or_create_presence_ledger
+        from .workspace import ensure_workspace
+
         autonomy_settings = AutonomySettings.from_config(
             getattr(session_service_context, "system_config", None)
         )
         if autonomy_settings.enabled:
-            asyncio.create_task(autonomy_loop(client_uid, autonomy_settings))
-        
+            presence = get_or_create_presence_ledger(
+                client_uid, ensure_workspace().root, autonomy_settings
+            )
+            self.autonomy_tasks[client_uid] = asyncio.create_task(
+                autonomy_loop(client_uid, autonomy_settings, presence=presence)
+            )
+
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
 
@@ -190,6 +209,25 @@ class WebSocketHandler:
 
         # Start microphone
         await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))
+
+        from .autonomy.presence import get_presence_ledger
+
+        presence = get_presence_ledger(client_uid)
+        if presence is not None:
+            await websocket.send_text(json.dumps(presence.snapshot()))
+
+        from .stage_state_manager import load_stage_state
+
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "stage-state",
+                    "stage": load_stage_state(
+                        session_service_context.character_config.conf_uid
+                    ),
+                }
+            )
+        )
 
     async def _init_service_context(
         self, send_text: Callable, client_uid: str
@@ -267,6 +305,11 @@ class WebSocketHandler:
             logger.warning("Message received without type")
             return
 
+        if msg_type in {"text-input", "mic-audio-end"}:
+            from .autonomy.observation import mark_user_activity
+
+            mark_user_activity(client_uid)
+
         handler = self._message_handlers.get(msg_type)
         if handler:
             await handler(websocket, client_uid, data)
@@ -294,6 +337,7 @@ class WebSocketHandler:
 
     async def handle_disconnect(self, client_uid: str) -> None:
         """Handle client disconnection"""
+        context = self.client_contexts.get(client_uid)
         group = self.chat_group_manager.get_client_group(client_uid)
         if group:
             await handle_group_interrupt(
@@ -317,11 +361,23 @@ class WebSocketHandler:
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
 
+        autonomy_task = self.autonomy_tasks.pop(client_uid, None)
+        if autonomy_task and not autonomy_task.done():
+            autonomy_task.cancel()
+
         from .frontend_bridge import unregister_client_sender
+
         unregister_client_sender(client_uid)
         from .client_registry import unregister_client
+
         unregister_client(client_uid)
+        from .autonomy.observation import clear_client_presence
+        from .autonomy.presence import unregister_presence_ledger
+
+        clear_client_presence(client_uid)
+        unregister_presence_ledger(client_uid)
         from .conversations.llm_request_queue import remove_queue
+
         remove_queue(client_uid)
 
         if client_uid in self.current_conversation_tasks:
@@ -331,7 +387,6 @@ class WebSocketHandler:
             self.current_conversation_tasks.pop(client_uid, None)
 
         # Call context close to clean up resources (e.g., MCPClient)
-        context = self.client_contexts.get(client_uid)
         if context:
             await context.close()
 
@@ -341,9 +396,27 @@ class WebSocketHandler:
     async def _cleanup_failed_connection(self, client_uid: str) -> None:
         """Clean up failed connection data"""
         self.client_connections.pop(client_uid, None)
-        self.client_contexts.pop(client_uid, None)
+        context = self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
         self.chat_group_manager.client_group_map.pop(client_uid, None)
+
+        autonomy_task = self.autonomy_tasks.pop(client_uid, None)
+        if autonomy_task and not autonomy_task.done():
+            autonomy_task.cancel()
+
+        from .autonomy.observation import clear_client_presence
+        from .autonomy.presence import unregister_presence_ledger
+
+        clear_client_presence(client_uid)
+        unregister_presence_ledger(client_uid)
+
+        from .client_registry import unregister_client
+        from .conversations.llm_request_queue import remove_queue
+        from .frontend_bridge import unregister_client_sender
+
+        unregister_client_sender(client_uid)
+        unregister_client(client_uid)
+        remove_queue(client_uid)
 
         if client_uid in self.current_conversation_tasks:
             task = self.current_conversation_tasks[client_uid]
@@ -352,6 +425,8 @@ class WebSocketHandler:
             self.current_conversation_tasks.pop(client_uid, None)
 
         message_handler.cleanup_client(client_uid)
+        if context:
+            await context.close()
 
     async def broadcast_to_group(
         self, group_members: list[str], message: dict, exclude_uid: str = None
@@ -569,6 +644,22 @@ class WebSocketHandler:
         if config_file_name:
             context = self.client_contexts[client_uid]
             await context.handle_config_switch(websocket, config_file_name)
+            from .frontend_bridge import update_client_configuration
+
+            update_client_configuration(
+                client_uid,
+                context.character_config.conf_uid,
+            )
+            from .stage_state_manager import load_stage_state
+
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "stage-state",
+                        "stage": load_stage_state(context.character_config.conf_uid),
+                    }
+                )
+            )
 
     async def _handle_fetch_backgrounds(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
@@ -637,13 +728,158 @@ class WebSocketHandler:
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
         """Handle a frontend_action_result reply, completing a pending move_to/etc."""
-        from .frontend_bridge import resolve_action_result
+        from .frontend_bridge import owns_pending_request, resolve_action_result
 
         request_id = data.get("request_id")
-        result = data.get("result", {})
-        if not request_id:
+        if not isinstance(request_id, str) or not request_id:
             logger.warning("frontend-action-result received without request_id")
             return
+        raw_result = data.get("result")
+        if not isinstance(raw_result, dict):
+            error = "frontend action result must be an object"
+            resolve_action_result(
+                request_id,
+                False,
+                {"ok": False, "error": error},
+                error,
+                client_uid=client_uid,
+            )
+            return
+        result = raw_result
         ok = bool(result.get("ok", False))
         error = result.get("error")
-        resolve_action_result(request_id, ok, result, error)
+        if (
+            ok
+            and owns_pending_request(request_id, client_uid)
+            and isinstance(result.get("state"), dict)
+        ):
+            from .stage_state_manager import save_stage_state
+
+            context = self.client_contexts.get(client_uid)
+            if context is None:
+                ok = False
+                error = "client context is no longer available"
+            else:
+                saved, errors = save_stage_state(
+                    context.character_config.conf_uid,
+                    result["state"],
+                    updated_by="frontend_action",
+                )
+                if not saved:
+                    ok = False
+                    error = "stage state was rejected: " + "; ".join(errors)
+                    result = {**result, "ok": False, "error": error}
+                    from .stage_state_manager import load_stage_state
+
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "stage-state",
+                                "stage": load_stage_state(
+                                    context.character_config.conf_uid
+                                ),
+                            }
+                        )
+                    )
+        if not ok and result.get("ok") is not False:
+            result = {**result, "ok": False, "error": error}
+        resolve_action_result(
+            request_id,
+            ok,
+            result,
+            error,
+            client_uid=client_uid,
+        )
+
+    async def _handle_presence_context(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Accept coarse activity/focus signals without screen or app contents."""
+        from .autonomy.observation import update_client_presence
+        from .autonomy.presence import get_presence_ledger
+
+        try:
+            update_client_presence(client_uid, data)
+        except ValueError as exc:
+            logger.warning(
+                f"Rejected invalid presence context from {client_uid}: {exc}"
+            )
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": str(exc)})
+            )
+            return
+        presence = get_presence_ledger(client_uid)
+        if presence is not None:
+            await websocket.send_text(json.dumps(presence.snapshot()))
+        else:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "presence-state",
+                        "enabled": False,
+                        "receipts": [],
+                    }
+                )
+            )
+
+    async def _handle_autonomy_feedback(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Learn from a user's helpful/dismissed/snoozed receipt verdict."""
+        from .autonomy.presence import get_presence_ledger
+
+        presence = get_presence_ledger(client_uid)
+        receipt_id = data.get("receipt_id")
+        feedback = data.get("feedback")
+        if presence is None:
+            ok, message = False, "presence contract is not enabled"
+        elif not isinstance(receipt_id, str) or not isinstance(feedback, str):
+            ok, message = False, "receipt_id and feedback are required strings"
+        else:
+            snooze_minutes = data.get("snooze_minutes")
+            if isinstance(snooze_minutes, bool) or (
+                snooze_minutes is not None
+                and not isinstance(snooze_minutes, (int, float))
+            ):
+                ok, message = False, "snooze_minutes must be a number"
+            else:
+                ok, message = presence.apply_feedback(
+                    receipt_id,
+                    feedback,
+                    snooze_minutes=(
+                        int(snooze_minutes) if snooze_minutes is not None else None
+                    ),
+                )
+
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "autonomy-feedback-result",
+                    "ok": ok,
+                    "receipt_id": receipt_id,
+                    "message": message,
+                }
+            )
+        )
+        if presence is not None:
+            await websocket.send_text(json.dumps(presence.snapshot()))
+
+    async def _handle_presence_state_request(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Return the attention budget, snooze state, and recent receipts."""
+        from .autonomy.presence import get_presence_ledger
+
+        presence = get_presence_ledger(client_uid)
+        if presence is None:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "presence-state",
+                        "enabled": False,
+                        "receipts": [],
+                    }
+                )
+            )
+            return
+        await websocket.send_text(json.dumps(presence.snapshot()))

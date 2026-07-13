@@ -1,5 +1,5 @@
 # config_manager/tts.py
-from pydantic import ValidationInfo, Field, model_validator
+from pydantic import Field, model_validator
 from typing import Literal, Optional, Dict, ClassVar
 from .i18n import I18nMixin, Description
 
@@ -121,15 +121,9 @@ class AzureTTSConfig(I18nMixin):
     rate: str = Field(..., alias="rate")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Azure TTS service"
-        ),
-        "region": Description(
-            en="Azure region (e.g., eastus)"
-        ),
-        "voice": Description(
-            en="Voice name to use for Azure TTS"
-        ),
+        "api_key": Description(en="API key for Azure TTS service"),
+        "region": Description(en="Azure region (e.g., eastus)"),
+        "voice": Description(en="Voice name to use for Azure TTS"),
         "pitch": Description(en="Pitch adjustment percentage"),
         "rate": Description(en="Speaking rate adjustment"),
     }
@@ -141,9 +135,7 @@ class BarkTTSConfig(I18nMixin):
     voice: str = Field(..., alias="voice")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "voice": Description(
-            en="Voice name to use for Bark TTS"
-        ),
+        "voice": Description(en="Voice name to use for Bark TTS"),
     }
 
 
@@ -173,20 +165,12 @@ class CosyvoiceTTSConfig(I18nMixin):
     api_name: str = Field(..., alias="api_name")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "client_url": Description(
-            en="URL of the CosyVoice Gradio web UI"
-        ),
-        "mode_checkbox_group": Description(
-            en="Mode checkbox group value"
-        ),
+        "client_url": Description(en="URL of the CosyVoice Gradio web UI"),
+        "mode_checkbox_group": Description(en="Mode checkbox group value"),
         "sft_dropdown": Description(en="SFT dropdown value"),
         "prompt_text": Description(en="Prompt text"),
-        "prompt_wav_upload_url": Description(
-            en="URL for prompt WAV file upload"
-        ),
-        "prompt_wav_record_url": Description(
-            en="URL for prompt WAV file recording"
-        ),
+        "prompt_wav_upload_url": Description(en="URL for prompt WAV file upload"),
+        "prompt_wav_record_url": Description(en="URL for prompt WAV file recording"),
         "instruct_text": Description(en="Instruction text"),
         "seed": Description(en="Random seed"),
         "api_name": Description(en="API endpoint name"),
@@ -209,20 +193,12 @@ class Cosyvoice2TTSConfig(I18nMixin):
     api_name: str = Field(..., alias="api_name")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "client_url": Description(
-            en="URL of the CosyVoice Gradio web UI"
-        ),
-        "mode_checkbox_group": Description(
-            en="Mode checkbox group value"
-        ),
+        "client_url": Description(en="URL of the CosyVoice Gradio web UI"),
+        "mode_checkbox_group": Description(en="Mode checkbox group value"),
         "sft_dropdown": Description(en="SFT dropdown value"),
         "prompt_text": Description(en="Prompt text"),
-        "prompt_wav_upload_url": Description(
-            en="URL for prompt WAV file upload"
-        ),
-        "prompt_wav_record_url": Description(
-            en="URL for prompt WAV file recording"
-        ),
+        "prompt_wav_upload_url": Description(en="URL for prompt WAV file upload"),
+        "prompt_wav_record_url": Description(en="URL for prompt WAV file recording"),
         "instruct_text": Description(en="Instruction text"),
         "stream": Description(en="Streaming inference"),
         "seed": Description(en="Random seed"),
@@ -243,9 +219,7 @@ class MeloTTSConfig(I18nMixin):
         "speaker": Description(
             en="Speaker name (e.g., EN-Default, ZH)",
         ),
-        "language": Description(
-            en="Language code (e.g., EN, ZH)"
-        ),
+        "language": Description(en="Language code (e.g., EN, ZH)"),
         "device": Description(
             en="Device to use (auto, cpu, cuda, cuda:0, mps)",
         ),
@@ -261,15 +235,9 @@ class XTTSConfig(I18nMixin):
     language: str = Field(..., alias="language")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_url": Description(
-            en="URL of the XTTS API endpoint"
-        ),
-        "speaker_wav": Description(
-            en="Speaker reference WAV file"
-        ),
-        "language": Description(
-            en="Language code (e.g., en, zh)"
-        ),
+        "api_url": Description(en="URL of the XTTS API endpoint"),
+        "speaker_wav": Description(en="Speaker reference WAV file"),
+        "language": Description(en="Language code (e.g., en, zh)"),
     }
 
 
@@ -287,18 +255,12 @@ class GPTSoVITSConfig(I18nMixin):
     streaming_mode: str = Field(..., alias="streaming_mode")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_url": Description(
-            en="URL of the GPT-SoVITS API endpoint"
-        ),
+        "api_url": Description(en="URL of the GPT-SoVITS API endpoint"),
         "text_lang": Description(en="Language of the input text"),
-        "ref_audio_path": Description(
-            en="Path to reference audio file"
-        ),
+        "ref_audio_path": Description(en="Path to reference audio file"),
         "prompt_lang": Description(en="Language of the prompt"),
         "prompt_text": Description(en="Prompt text"),
-        "text_split_method": Description(
-            en="Method for splitting text"
-        ),
+        "text_split_method": Description(en="Method for splitting text"),
         "batch_size": Description(en="Batch size for processing"),
         "media_type": Description(en="Output media type"),
         "streaming_mode": Description(en="Enable streaming mode"),
@@ -314,18 +276,12 @@ class FishAPITTSConfig(I18nMixin):
     base_url: str = Field(..., alias="base_url")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Fish TTS service"
-        ),
+        "api_key": Description(en="API key for Fish TTS service"),
         "reference_id": Description(
             en="Voice reference ID from Fish Audio website",
         ),
-        "latency": Description(
-            en="Latency mode (normal or balanced)"
-        ),
-        "base_url": Description(
-            en="Base URL for Fish TTS API"
-        ),
+        "latency": Description(en="Latency mode (normal or balanced)"),
+        "base_url": Description(en="Base URL for Fish TTS API"),
     }
 
 
@@ -338,15 +294,11 @@ class CoquiTTSConfig(I18nMixin):
     device: str = Field("", alias="device")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "model_name": Description(
-            en="Name of the TTS model to use"
-        ),
+        "model_name": Description(en="Name of the TTS model to use"),
         "speaker_wav": Description(
             en="Path to speaker WAV file for voice cloning",
         ),
-        "language": Description(
-            en="Language code (e.g., en, zh)"
-        ),
+        "language": Description(en="Language code (e.g., en, zh)"),
         "device": Description(
             en="Device to use (cuda, cpu, or empty for auto)",
         ),
@@ -371,9 +323,7 @@ class SherpaOnnxTTSConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "vits_model": Description(en="Path to VITS model file"),
-        "vits_lexicon": Description(
-            en="Path to lexicon file (optional)"
-        ),
+        "vits_lexicon": Description(en="Path to lexicon file (optional)"),
         "vits_tokens": Description(en="Path to tokens file"),
         "vits_data_dir": Description(
             en="Path to espeak-ng data directory (optional)",
@@ -381,15 +331,9 @@ class SherpaOnnxTTSConfig(I18nMixin):
         "vits_dict_dir": Description(
             en="Path to Jieba dictionary directory (optional)",
         ),
-        "tts_rule_fsts": Description(
-            en="Path to rule FSTs file (optional)"
-        ),
-        "max_num_sentences": Description(
-            en="Maximum number of sentences per batch"
-        ),
-        "sid": Description(
-            en="Speaker ID for multi-speaker models"
-        ),
+        "tts_rule_fsts": Description(en="Path to rule FSTs file (optional)"),
+        "max_num_sentences": Description(en="Maximum number of sentences per batch"),
+        "sid": Description(en="Speaker ID for multi-speaker models"),
         "provider": Description(
             en="Computation provider (cpu, cuda, or coreml)",
         ),
@@ -421,15 +365,11 @@ class SiliconFlowTTSConfig(I18nMixin):
         "url": Description(
             en="API endpoint URL for SiliconFlow TTS",
         ),
-        "model": Description(
-            en="Model to use for SiliconFlow TTS"
-        ),
+        "model": Description(en="Model to use for SiliconFlow TTS"),
         "voice": Description(
             en="Voice name to use for SiliconFlow TTS",
         ),
-        "sample_rate": Description(
-            en="Sample rate of the output audio"
-        ),
+        "sample_rate": Description(en="Sample rate of the output audio"),
         "stream": Description(en="Enable streaming mode"),
         "speed": Description(en="Speaking speed multiplier"),
         "gain": Description(en="Audio gain adjustment"),
@@ -484,9 +424,7 @@ class SparkTTSConfig(I18nMixin):
         "api_name": Description(
             en="The API endpoint name. For example: voice_clone,voice_creation",
         ),
-        "gender": Description(
-            en="Gender of the voice (male or female)"
-        ),
+        "gender": Description(en="Gender of the voice (male or female)"),
         "pitch": Description(
             en="Pitch shift (in semitones) default 3,range 1-5.",
         ),
@@ -544,9 +482,7 @@ class PiperTTSConfig(I18nMixin):
         "noise_w": Description(
             en="Speaking style variation (0.0-1.0, higher=more diverse)",
         ),
-        "volume": Description(
-            en="Output volume (0.0-1.0, 1.0=normal)"
-        ),
+        "volume": Description(en="Output volume (0.0-1.0, 1.0=normal)"),
         "normalize_audio": Description(
             en="Whether to normalize audio output (recommended)",
         ),
@@ -569,9 +505,7 @@ class ElevenLabsTTSConfig(I18nMixin):
     use_speaker_boost: bool = Field(True, alias="use_speaker_boost")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for ElevenLabs TTS service"
-        ),
+        "api_key": Description(en="API key for ElevenLabs TTS service"),
         "voice_id": Description(
             en="Voice ID from ElevenLabs (e.g., JBFqnCBsd6RMkjVDRZzb)",
         ),
@@ -581,12 +515,8 @@ class ElevenLabsTTSConfig(I18nMixin):
         "output_format": Description(
             en="Output audio format (e.g., mp3_44100_128)",
         ),
-        "stability": Description(
-            en="Voice stability (0.0 to 1.0)"
-        ),
-        "similarity_boost": Description(
-            en="Voice similarity boost (0.0 to 1.0)"
-        ),
+        "stability": Description(en="Voice stability (0.0 to 1.0)"),
+        "similarity_boost": Description(en="Voice similarity boost (0.0 to 1.0)"),
         "style": Description(
             en="Voice style exaggeration (0.0 to 1.0)",
         ),
@@ -612,9 +542,7 @@ class CartesiaTTSConfig(I18nMixin):
     speed: float = Field(1.0, alias="speed")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Cartesia TTS service"
-        ),
+        "api_key": Description(en="API key for Cartesia TTS service"),
         "voice_id": Description(
             en="Voice ID from Cartesia (e.g., 6ccbfb76-1fc6-48f7-b71d-91ac6298247b)",
         ),
@@ -687,89 +615,31 @@ class TTSConfig(I18nMixin):
     piper_tts: Optional[PiperTTSConfig] = Field(None, alias="piper_tts")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "tts_model": Description(
-            en="Text-to-speech model to use"
-        ),
+        "tts_model": Description(en="Text-to-speech model to use"),
         "azure_tts": Description(en="Configuration for Azure TTS"),
         "bark_tts": Description(en="Configuration for Bark TTS"),
         "edge_tts": Description(en="Configuration for Edge TTS"),
-        "cosyvoice_tts": Description(
-            en="Configuration for Cosyvoice TTS"
-        ),
-        "cosyvoice2_tts": Description(
-            en="Configuration for Cosyvoice2 TTS"
-        ),
+        "cosyvoice_tts": Description(en="Configuration for Cosyvoice TTS"),
+        "cosyvoice2_tts": Description(en="Configuration for Cosyvoice2 TTS"),
         "melo_tts": Description(en="Configuration for Melo TTS"),
         "coqui_tts": Description(en="Configuration for Coqui TTS"),
         "x_tts": Description(en="Configuration for XTTS"),
-        "gpt_sovits_tts": Description(
-            en="Configuration for GPT-SoVITS"
-        ),
-        "fish_api_tts": Description(
-            en="Configuration for Fish API TTS"
-        ),
-        "sherpa_onnx_tts": Description(
-            en="Configuration for Sherpa Onnx TTS"
-        ),
-        "siliconflow_tts": Description(
-            en="Configuration for SiliconFlow TTS"
-        ),
-        "openai_tts": Description(
-            en="Configuration for OpenAI-compatible TTS"
-        ),
+        "gpt_sovits_tts": Description(en="Configuration for GPT-SoVITS"),
+        "fish_api_tts": Description(en="Configuration for Fish API TTS"),
+        "sherpa_onnx_tts": Description(en="Configuration for Sherpa Onnx TTS"),
+        "siliconflow_tts": Description(en="Configuration for SiliconFlow TTS"),
+        "openai_tts": Description(en="Configuration for OpenAI-compatible TTS"),
         "spark_tts": Description(en="Configuration for Spark TTS"),
-        "minimax_tts": Description(
-            en="Configuration for Minimax TTS"
-        ),
-        "elevenlabs_tts": Description(
-            en="Configuration for ElevenLabs TTS"
-        ),
-        "cartesia_tts": Description(
-            en="Configuration for Cartesia TTS"
-        ),
+        "minimax_tts": Description(en="Configuration for Minimax TTS"),
+        "elevenlabs_tts": Description(en="Configuration for ElevenLabs TTS"),
+        "cartesia_tts": Description(en="Configuration for Cartesia TTS"),
         "piper_tts": Description(en="Configuration for Piper TTS"),
     }
 
     @model_validator(mode="after")
-    def check_tts_config(cls, values: "TTSConfig", info: ValidationInfo):
-        tts_model = values.tts_model
-
-        # Only validate the selected TTS model
-        if tts_model == "azure_tts" and values.azure_tts is not None:
-            values.azure_tts.model_validate(values.azure_tts.model_dump())
-        elif tts_model == "bark_tts" and values.bark_tts is not None:
-            values.bark_tts.model_validate(values.bark_tts.model_dump())
-        elif tts_model == "edge_tts" and values.edge_tts is not None:
-            values.edge_tts.model_validate(values.edge_tts.model_dump())
-        elif tts_model == "cosyvoice_tts" and values.cosyvoice_tts is not None:
-            values.cosyvoice_tts.model_validate(values.cosyvoice_tts.model_dump())
-        elif tts_model == "cosyvoice2_tts" and values.cosyvoice2_tts is not None:
-            values.cosyvoice2_tts.model_validate(values.cosyvoice2_tts.model_dump())
-        elif tts_model == "melo_tts" and values.melo_tts is not None:
-            values.melo_tts.model_validate(values.melo_tts.model_dump())
-        elif tts_model == "coqui_tts" and values.coqui_tts is not None:
-            values.coqui_tts.model_validate(values.coqui_tts.model_dump())
-        elif tts_model == "x_tts" and values.x_tts is not None:
-            values.x_tts.model_validate(values.x_tts.model_dump())
-        elif tts_model == "gpt_sovits_tts" and values.gpt_sovits_tts is not None:
-            values.gpt_sovits_tts.model_validate(values.gpt_sovits_tts.model_dump())
-        elif tts_model == "fish_api_tts" and values.fish_api_tts is not None:
-            values.fish_api_tts.model_validate(values.fish_api_tts.model_dump())
-        elif tts_model == "sherpa_onnx_tts" and values.sherpa_onnx_tts is not None:
-            values.sherpa_onnx_tts.model_validate(values.sherpa_onnx_tts.model_dump())
-        elif tts_model == "siliconflow_tts" and values.siliconflow_tts is not None:
-            values.siliconflow_tts.model_validate(values.siliconflow_tts.model_dump())
-        elif tts_model == "openai_tts" and values.openai_tts is not None:
-            values.openai_tts.model_validate(values.openai_tts.model_dump())
-        elif tts_model == "spark_tts" and values.spark_tts is not None:
-            values.spark_tts.model_validate(values.spark_tts.model_dump())
-        elif tts_model == "minimax_tts" and values.minimax_tts is not None:
-            values.minimax_tts.model_validate(values.minimax_tts.model_dump())
-        elif tts_model == "elevenlabs_tts" and values.elevenlabs_tts is not None:
-            values.elevenlabs_tts.model_validate(values.elevenlabs_tts.model_dump())
-        elif tts_model == "cartesia_tts" and values.cartesia_tts is not None:
-            values.cartesia_tts.model_validate(values.cartesia_tts.model_dump())
-
-        elif tts_model == "piper_tts" and values.piper_tts is not None:
-            values.piper_tts.model_validate(values.piper_tts.model_dump())
-        return values
+    def check_tts_config(self):
+        if getattr(self, self.tts_model) is None:
+            raise ValueError(
+                f"Configuration for selected TTS model '{self.tts_model}' is required"
+            )
+        return self

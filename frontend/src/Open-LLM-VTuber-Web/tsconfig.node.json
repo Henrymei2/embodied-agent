@@ -30,6 +30,6 @@
     // "noImplicitOverride": false
   },
   "include": [
-    "vite.config.ts"
+    "vite.config.mts"
   ]
 }

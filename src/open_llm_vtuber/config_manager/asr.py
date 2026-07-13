@@ -1,5 +1,5 @@
 # config_manager/asr.py
-from pydantic import ValidationInfo, Field, model_validator
+from pydantic import Field, model_validator
 from typing import Literal, Optional, Dict, ClassVar
 from .i18n import I18nMixin, Description
 
@@ -12,12 +12,8 @@ class AzureASRConfig(I18nMixin):
     languages: list[str] = Field(["en-US", "zh-CN"], alias="languages")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Azure ASR service"
-        ),
-        "region": Description(
-            en="Azure region (e.g., eastus)"
-        ),
+        "api_key": Description(en="API key for Azure ASR service"),
+        "region": Description(en="Azure region (e.g., eastus)"),
         "languages": Description(
             en="List of languages to detect (e.g., ['en-US', 'zh-CN'])",
         ),
@@ -36,12 +32,8 @@ class FasterWhisperConfig(I18nMixin):
     )
     prompt: str | None = Field(None, alias="prompt")
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "model_path": Description(
-            en="Path to the Faster Whisper model"
-        ),
-        "download_root": Description(
-            en="Root directory for downloading models"
-        ),
+        "model_path": Description(en="Path to the Faster Whisper model"),
+        "download_root": Description(en="Root directory for downloading models"),
         "language": Description(
             en="Language code (e.g., en, zh) or empty string for auto-detect",
         ),
@@ -67,21 +59,11 @@ class WhisperCPPConfig(I18nMixin):
     language: str = Field("auto", alias="language")
     prompt: str | None = Field(None, alias="prompt")
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "model_name": Description(
-            en="Name of the Whisper model"
-        ),
-        "model_dir": Description(
-            en="Directory containing Whisper models"
-        ),
-        "print_realtime": Description(
-            en="Print output in real-time"
-        ),
-        "print_progress": Description(
-            en="Print progress information"
-        ),
-        "language": Description(
-            en="Language code (e.g., auto, en, zh)"
-        ),
+        "model_name": Description(en="Name of the Whisper model"),
+        "model_dir": Description(en="Directory containing Whisper models"),
+        "print_realtime": Description(en="Print output in real-time"),
+        "print_progress": Description(en="Print progress information"),
+        "language": Description(en="Language code (e.g., auto, en, zh)"),
         "prompt": Description(
             en="An initial prompt to provide context or guide the transcription. Language of the prompt should match the audio language.",
         ),
@@ -97,12 +79,8 @@ class WhisperConfig(I18nMixin):
     prompt: str | None = Field(None, alias="prompt")
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "name": Description(en="Name of the Whisper model"),
-        "download_root": Description(
-            en="Root directory for downloading models"
-        ),
-        "device": Description(
-            en="Device to use for inference (cpu or cuda)"
-        ),
+        "download_root": Description(en="Root directory for downloading models"),
+        "device": Description(en="Device to use for inference (cpu or cuda)"),
         "prompt": Description(
             en="An initial prompt to provide context or guide the transcription. Language of the prompt should match the audio language.",
         ),
@@ -124,13 +102,9 @@ class FunASRConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "model_name": Description(en="Name of the FunASR model"),
-        "vad_model": Description(
-            en="Voice Activity Detection model"
-        ),
+        "vad_model": Description(en="Voice Activity Detection model"),
         "punc_model": Description(en="Punctuation model"),
-        "device": Description(
-            en="Device to use for inference (cpu or cuda)"
-        ),
+        "device": Description(en="Device to use for inference (cpu or cuda)"),
         "disable_update": Description(
             en="Disable checking for FunASR updates on launch",
         ),
@@ -140,12 +114,8 @@ class FunASRConfig(I18nMixin):
         "hub": Description(
             en="Model hub to use (ms for ModelScope, hf for Hugging Face)",
         ),
-        "use_itn": Description(
-            en="Enable inverse text normalization"
-        ),
-        "language": Description(
-            en="Language code (e.g., auto, zh, en)"
-        ),
+        "use_itn": Description(en="Enable inverse text normalization"),
+        "language": Description(en="Language code (e.g., auto, zh, en)"),
     }
 
 
@@ -157,9 +127,7 @@ class GroqWhisperASRConfig(I18nMixin):
     lang: Optional[str] = Field(None, alias="lang")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "api_key": Description(
-            en="API key for Groq Whisper ASR"
-        ),
+        "api_key": Description(en="API key for Groq Whisper ASR"),
         "model": Description(
             en="Name of the Groq Whisper model to use",
         ),
@@ -200,9 +168,7 @@ class SherpaOnnxASRConfig(I18nMixin):
     provider: Literal["cpu", "cuda", "rocm"] = Field("cpu", alias="provider")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "model_type": Description(
-            en="Type of ASR model to use"
-        ),
+        "model_type": Description(en="Type of ASR model to use"),
         "encoder": Description(
             en="Path to encoder model (for transducer)",
         ),
@@ -212,83 +178,71 @@ class SherpaOnnxASRConfig(I18nMixin):
         "joiner": Description(
             en="Path to joiner model (for transducer)",
         ),
-        "paraformer": Description(
-            en="Path to paraformer model"
-        ),
+        "paraformer": Description(en="Path to paraformer model"),
         "nemo_ctc": Description(en="Path to NeMo CTC model"),
         "wenet_ctc": Description(en="Path to WeNet CTC model"),
         "tdnn_model": Description(en="Path to TDNN model"),
-        "whisper_encoder": Description(
-            en="Path to Whisper encoder model"
-        ),
-        "whisper_decoder": Description(
-            en="Path to Whisper decoder model"
-        ),
-        "sense_voice": Description(
-            en="Path to SenseVoice model"
-        ),
-        "fire_red_asr_encoder": Description(
-            en="Path to FireredASR encoder model"
-        ),
-        "fire_red_asr_decoder": Description(
-            en="Path to FireredASR decoder model"
-        ),
+        "whisper_encoder": Description(en="Path to Whisper encoder model"),
+        "whisper_decoder": Description(en="Path to Whisper decoder model"),
+        "sense_voice": Description(en="Path to SenseVoice model"),
+        "fire_red_asr_encoder": Description(en="Path to FireredASR encoder model"),
+        "fire_red_asr_decoder": Description(en="Path to FireredASR decoder model"),
         "tokens": Description(en="Path to tokens file"),
         "num_threads": Description(en="Number of threads to use"),
-        "use_itn": Description(
-            en="Enable inverse text normalization"
-        ),
+        "use_itn": Description(en="Enable inverse text normalization"),
         "provider": Description(
             en="Provider for inference (cpu or cuda) (cuda option needs additional settings. Please check our docs)",
         ),
     }
 
     @model_validator(mode="after")
-    def check_model_paths(cls, values: "SherpaOnnxASRConfig", info: ValidationInfo):
-        model_type = values.model_type
+    def check_model_paths(self):
+        model_type = self.model_type
 
         if model_type == "transducer":
-            if not all([values.encoder, values.decoder, values.joiner, values.tokens]):
+            if not all([self.encoder, self.decoder, self.joiner, self.tokens]):
                 raise ValueError(
                     "encoder, decoder, joiner, and tokens must be provided for transducer model type"
                 )
         elif model_type == "paraformer":
-            if not all([values.paraformer, values.tokens]):
+            if not all([self.paraformer, self.tokens]):
                 raise ValueError(
                     "paraformer and tokens must be provided for paraformer model type"
                 )
         elif model_type == "nemo_ctc":
-            if not all([values.nemo_ctc, values.tokens]):
+            if not all([self.nemo_ctc, self.tokens]):
                 raise ValueError(
                     "nemo_ctc and tokens must be provided for nemo_ctc model type"
                 )
         elif model_type == "wenet_ctc":
-            if not all([values.wenet_ctc, values.tokens]):
+            if not all([self.wenet_ctc, self.tokens]):
                 raise ValueError(
                     "wenet_ctc and tokens must be provided for wenet_ctc model type"
                 )
         elif model_type == "tdnn_ctc":
-            if not all([values.tdnn_model, values.tokens]):
+            if not all([self.tdnn_model, self.tokens]):
                 raise ValueError(
                     "tdnn_model and tokens must be provided for tdnn_ctc model type"
                 )
         elif model_type == "whisper":
-            if not all([values.whisper_encoder, values.whisper_decoder, values.tokens]):
+            if not all([self.whisper_encoder, self.whisper_decoder, self.tokens]):
                 raise ValueError(
                     "whisper_encoder, whisper_decoder, and tokens must be provided for whisper model type"
                 )
         elif model_type == "sense_voice":
-            if not all([values.sense_voice, values.tokens]):
+            if not all([self.sense_voice, self.tokens]):
                 raise ValueError(
                     "sense_voice and tokens must be provided for sense_voice model type"
                 )
         elif model_type == "fire_red_asr":
-            if not all([values.fire_red_asr_encoder, values.fire_red_asr_decoder, values.tokens]):
+            if not all(
+                [self.fire_red_asr_encoder, self.fire_red_asr_decoder, self.tokens]
+            ):
                 raise ValueError(
                     "fire_red_asr_encoder, fire_red_asr_decoder, and tokens must be provided for fire_red_asr model type"
                 )
 
-        return values
+        return self
 
 
 class ASRConfig(I18nMixin):
@@ -316,44 +270,20 @@ class ASRConfig(I18nMixin):
     )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "asr_model": Description(
-            en="Speech-to-text model to use"
-        ),
+        "asr_model": Description(en="Speech-to-text model to use"),
         "azure_asr": Description(en="Configuration for Azure ASR"),
-        "faster_whisper": Description(
-            en="Configuration for Faster Whisper"
-        ),
-        "whisper_cpp": Description(
-            en="Configuration for WhisperCPP"
-        ),
+        "faster_whisper": Description(en="Configuration for Faster Whisper"),
+        "whisper_cpp": Description(en="Configuration for WhisperCPP"),
         "whisper": Description(en="Configuration for Whisper"),
         "fun_asr": Description(en="Configuration for FunASR"),
-        "groq_whisper_asr": Description(
-            en="Configuration for Groq Whisper ASR"
-        ),
-        "sherpa_onnx_asr": Description(
-            en="Configuration for Sherpa Onnx ASR"
-        ),
+        "groq_whisper_asr": Description(en="Configuration for Groq Whisper ASR"),
+        "sherpa_onnx_asr": Description(en="Configuration for Sherpa Onnx ASR"),
     }
 
     @model_validator(mode="after")
-    def check_asr_config(cls, values: "ASRConfig", info: ValidationInfo):
-        asr_model = values.asr_model
-
-        # Only validate the selected ASR model
-        if asr_model == "AzureASR" and values.azure_asr is not None:
-            values.azure_asr.model_validate(values.azure_asr.model_dump())
-        elif asr_model == "Faster-Whisper" and values.faster_whisper is not None:
-            values.faster_whisper.model_validate(values.faster_whisper.model_dump())
-        elif asr_model == "WhisperCPP" and values.whisper_cpp is not None:
-            values.whisper_cpp.model_validate(values.whisper_cpp.model_dump())
-        elif asr_model == "Whisper" and values.whisper is not None:
-            values.whisper.model_validate(values.whisper.model_dump())
-        elif asr_model == "FunASR" and values.fun_asr is not None:
-            values.fun_asr.model_validate(values.fun_asr.model_dump())
-        elif asr_model == "GroqWhisperASR" and values.groq_whisper_asr is not None:
-            values.groq_whisper_asr.model_validate(values.groq_whisper_asr.model_dump())
-        elif asr_model == "SherpaOnnxASR" and values.sherpa_onnx_asr is not None:
-            values.sherpa_onnx_asr.model_validate(values.sherpa_onnx_asr.model_dump())
-
-        return values
+    def check_asr_config(self):
+        if getattr(self, self.asr_model) is None:
+            raise ValueError(
+                f"Configuration for selected ASR model '{self.asr_model}' is required"
+            )
+        return self

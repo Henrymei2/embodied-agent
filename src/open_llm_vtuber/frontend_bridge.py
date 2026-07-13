@@ -21,63 +21,143 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from loguru import logger
 
-# client_uid -> "send_text" callable (the same one ServiceContext uses)
-_client_senders: dict[str, Callable[[str], Awaitable[None]]] = {}
 
-# request_id -> Future that the waiting tool call is blocked on
-_pending_requests: dict[str, asyncio.Future] = {}
+@dataclass(frozen=True)
+class _ConnectedClient:
+    send_text: Callable[[str], Awaitable[None]]
+    conf_uid: str | None
+
+
+@dataclass(frozen=True)
+class _PendingRequest:
+    client_uid: str
+    future: asyncio.Future
+
+
+# client_uid -> connection metadata
+_clients: dict[str, _ConnectedClient] = {}
+
+# request_id -> owning client and Future that the waiting tool call awaits
+_pending_requests: dict[str, _PendingRequest] = {}
 
 # How long to wait for the frontend to report back before giving up.
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 
-# TODO: this assumes a single connected client (fine for the MVP / local
-# desktop-pet use case described in the project doc). If multi-client support
-# is ever needed, route by conf_uid -> client_uid instead of "most recent".
-_active_client_uid: Optional[str] = None
-
 
 def register_client_sender(
-    client_uid: str, send_text: Callable[[str], Awaitable[None]]
+    client_uid: str,
+    send_text: Callable[[str], Awaitable[None]],
+    conf_uid: str | None = None,
 ) -> None:
     """Called by websocket_handler.py when a client connects."""
-    _client_senders[client_uid] = send_text
-    global _active_client_uid
-    _active_client_uid = client_uid
+    _clients[client_uid] = _ConnectedClient(send_text=send_text, conf_uid=conf_uid)
     logger.debug(f"frontend_bridge: registered sender for client {client_uid}")
 
 
-def unregister_client_sender(client_uid: str) -> None:
-    """Called by websocket_handler.py when a client disconnects."""
-    _client_senders.pop(client_uid, None)
-    global _active_client_uid
-    if _active_client_uid == client_uid:
-        _active_client_uid = None
-
-
-def resolve_action_result(request_id: str, ok: bool, result: dict, error: Optional[str] = None) -> None:
-    """Called by websocket_handler.py when a "frontend-action-result" message arrives."""
-    future = _pending_requests.pop(request_id, None)
-    if future is None:
-        logger.warning(f"frontend_bridge: no pending request for id {request_id}")
+def update_client_configuration(client_uid: str, conf_uid: str) -> None:
+    """Update the character binding after a connected client switches config."""
+    client = _clients.get(client_uid)
+    if client is None:
+        logger.warning(f"frontend_bridge: cannot update unknown client {client_uid}")
         return
-    if not future.done():
-        future.set_result((ok, result, error))
+    _clients[client_uid] = _ConnectedClient(
+        send_text=client.send_text,
+        conf_uid=conf_uid,
+    )
+
+
+def unregister_client_sender(client_uid: str) -> None:
+    """Remove a client and immediately fail requests that were routed to it."""
+    _clients.pop(client_uid, None)
+    for request_id, pending in list(_pending_requests.items()):
+        if pending.client_uid != client_uid:
+            continue
+        _pending_requests.pop(request_id, None)
+        if not pending.future.done():
+            pending.future.set_result(
+                (False, {}, "frontend client disconnected before responding")
+            )
+
+
+def resolve_action_result(
+    request_id: str,
+    ok: bool,
+    result: dict,
+    error: Optional[str] = None,
+    client_uid: str | None = None,
+) -> bool:
+    """Complete a pending request only when the replying client owns it."""
+    pending = _pending_requests.get(request_id)
+    if pending is None:
+        logger.warning(f"frontend_bridge: no pending request for id {request_id}")
+        return False
+    if client_uid is not None and pending.client_uid != client_uid:
+        logger.warning(
+            "frontend_bridge: ignored action result from non-owning client "
+            f"{client_uid} for request {request_id}"
+        )
+        return False
+
+    _pending_requests.pop(request_id, None)
+    if not pending.future.done():
+        pending.future.set_result((ok, result, error))
+    return True
+
+
+def owns_pending_request(request_id: str, client_uid: str) -> bool:
+    """Return whether a live frontend request belongs to ``client_uid``."""
+    pending = _pending_requests.get(request_id)
+    return pending is not None and pending.client_uid == client_uid
+
+
+def _select_client(
+    client_uid: str | None,
+    conf_uid: str | None,
+) -> tuple[str | None, str | None]:
+    if client_uid is not None:
+        client = _clients.get(client_uid)
+        if client is None:
+            return None, f"frontend client '{client_uid}' is not connected"
+        if conf_uid is not None and client.conf_uid != conf_uid:
+            return None, "frontend client is not using the requested character config"
+        return client_uid, None
+
+    candidates = [
+        uid
+        for uid, client in _clients.items()
+        if conf_uid is None or client.conf_uid == conf_uid
+    ]
+    if not candidates:
+        qualifier = f" for character config '{conf_uid}'" if conf_uid else ""
+        return None, f"no connected frontend client{qualifier}"
+    if len(candidates) > 1:
+        return None, "multiple frontend clients match; client_uid is required"
+    return candidates[0], None
 
 
 async def _send_action_request(
-    action: str, args: dict, timeout: float = _DEFAULT_TIMEOUT_SECONDS
+    action: str,
+    args: dict,
+    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    client_uid: str | None = None,
+    conf_uid: str | None = None,
 ) -> tuple[bool, dict, Optional[str]]:
     """Low-level: send a frontend-action-request and await its result."""
-    if _active_client_uid is None or _active_client_uid not in _client_senders:
-        return False, {}, "no connected frontend client to send the action to"
+    selected_client_uid, selection_error = _select_client(client_uid, conf_uid)
+    if selected_client_uid is None:
+        return False, {}, selection_error
 
     request_id = str(uuid.uuid4())
-    future: asyncio.Future = asyncio.get_event_loop().create_future()
-    _pending_requests[request_id] = future
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    _pending_requests[request_id] = _PendingRequest(
+        client_uid=selected_client_uid,
+        future=future,
+    )
 
     message = json.dumps(
         {
@@ -88,7 +168,7 @@ async def _send_action_request(
         }
     )
 
-    send_text = _client_senders[_active_client_uid]
+    send_text = _clients[selected_client_uid].send_text
     try:
         await send_text(message)
     except Exception as exc:  # noqa: BLE001
@@ -107,15 +187,33 @@ async def request_frontend_action(
     action: str,
     args: dict,
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
+    client_uid: str | None = None,
+    conf_uid: str | None = None,
 ) -> tuple[bool, dict, Optional[str]]:
-    """Ask the active frontend client to run an action and return its result."""
-    return await _send_action_request(action, args, timeout=timeout)
+    """Ask one unambiguously selected frontend to run an action."""
+    return await _send_action_request(
+        action,
+        args,
+        timeout=timeout,
+        client_uid=client_uid,
+        conf_uid=conf_uid,
+    )
 
 
-async def request_move_to(conf_uid: str, x: float, y: float) -> tuple[bool, Optional[str]]:
+async def request_move_to(
+    conf_uid: str,
+    x: float,
+    y: float,
+    client_uid: str | None = None,
+) -> tuple[bool, Optional[str]]:
     """Ask the frontend to move the avatar to (x, y); wait until it confirms.
 
     Returns (ok, error_message_or_None).
     """
-    ok, _result, error = await request_frontend_action("move_to", {"x": x, "y": y})
+    ok, _result, error = await request_frontend_action(
+        "move_to",
+        {"x": x, "y": y},
+        client_uid=client_uid,
+        conf_uid=conf_uid,
+    )
     return ok, error

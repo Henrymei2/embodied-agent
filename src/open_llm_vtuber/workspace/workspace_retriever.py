@@ -25,7 +25,6 @@ DEFAULT_RETRIEVAL_DIRS = [
 MAX_FILE_BYTES = 250_000
 
 STOP_WORDS = {
-    
     "the",
     "and",
     "for",
@@ -59,6 +58,7 @@ STOP_WORDS = {
     "from",
     "about",
 }
+
 
 @dataclass(frozen=True)
 class RetrievedWorkspaceDocument:
@@ -101,7 +101,9 @@ def read_text_file_safely(path: Path, max_chars: int) -> str:
         return ""
 
 
-def score_document(query_tokens: set[str], relative_path: str, content: str) -> tuple[int, str]:
+def score_document(
+    query_tokens: set[str], relative_path: str, content: str
+) -> tuple[int, str]:
     """
     Score a workspace file against the user query.
 

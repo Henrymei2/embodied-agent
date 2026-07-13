@@ -28,39 +28,23 @@ class CharacterConfig(I18nMixin):
     )
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
-        "conf_name": Description(
-            en="Name of the character configuration"
-        ),
+        "conf_name": Description(en="Name of the character configuration"),
         "conf_uid": Description(
             en="Unique identifier for the character configuration",
         ),
-        "character_name": Description(
-            en="Name of the AI character in conversation"
-        ),
+        "character_name": Description(en="Name of the AI character in conversation"),
         "persona_prompt": Description(
             en="Persona prompt. The persona of your character."
         ),
-        "agent_config": Description(
-            en="Configuration for the conversation agent"
-        ),
-        "asr_config": Description(
-            en="Configuration for Automatic Speech Recognition"
-        ),
-        "tts_config": Description(
-            en="Configuration for Text-to-Speech"
-        ),
-        "vad_config": Description(
-            en="Configuration for Voice Activity Detection"
-        ),
+        "agent_config": Description(en="Configuration for the conversation agent"),
+        "asr_config": Description(en="Configuration for Automatic Speech Recognition"),
+        "tts_config": Description(en="Configuration for Text-to-Speech"),
+        "vad_config": Description(en="Configuration for Voice Activity Detection"),
         "tts_preprocessor_config": Description(
             en="Configuration for Text-to-Speech Preprocessor",
         ),
-        "human_name": Description(
-            en="Name of the human user in conversation"
-        ),
-        "avatar": Description(
-            en="Avatar image path for the character"
-        ),
+        "human_name": Description(en="Name of the human user in conversation"),
+        "avatar": Description(en="Avatar image path for the character"),
     }
 
     @field_validator("persona_prompt")

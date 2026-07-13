@@ -48,23 +48,52 @@ class AutonomySettings:
     interruption_frequency: str = "medium"
     help_style: str = "proactive"
     confidence_threshold: str = "balanced"
+    # Refillable presence budget. Silent work costs 0.25, asking costs 1.25,
+    # and proactive speech costs 2 points.
+    attention_budget: float = 6.0
+    attention_refill_per_hour: float = 1.0
+    receipt_retention: int = 50
+    default_snooze_minutes: int = 60
 
     def __post_init__(self) -> None:
         # Normalize/validate; fall back to the sensible middle option rather
         # than raising, so a bad config value never crashes the loop.
         object.__setattr__(
-            self, "interruption_frequency",
-            self.interruption_frequency if self.interruption_frequency in _VALID_FREQUENCY else "medium",
+            self,
+            "interruption_frequency",
+            self.interruption_frequency
+            if self.interruption_frequency in _VALID_FREQUENCY
+            else "medium",
         )
         object.__setattr__(
-            self, "help_style",
+            self,
+            "help_style",
             self.help_style if self.help_style in _VALID_HELP_STYLE else "proactive",
         )
         object.__setattr__(
-            self, "confidence_threshold",
-            self.confidence_threshold if self.confidence_threshold in _VALID_CONFIDENCE else "balanced",
+            self,
+            "confidence_threshold",
+            self.confidence_threshold
+            if self.confidence_threshold in _VALID_CONFIDENCE
+            else "balanced",
         )
         object.__setattr__(self, "tick_seconds", max(30, int(self.tick_seconds)))
+        object.__setattr__(
+            self, "attention_budget", max(1.0, min(100.0, float(self.attention_budget)))
+        )
+        object.__setattr__(
+            self,
+            "attention_refill_per_hour",
+            max(0.0, min(100.0, float(self.attention_refill_per_hour))),
+        )
+        object.__setattr__(
+            self, "receipt_retention", max(5, min(500, int(self.receipt_retention)))
+        )
+        object.__setattr__(
+            self,
+            "default_snooze_minutes",
+            max(5, min(1440, int(self.default_snooze_minutes))),
+        )
 
     # --- derived numeric knobs ------------------------------------------- #
     @property
@@ -104,7 +133,15 @@ class AutonomySettings:
         return cls(
             enabled=bool(getattr(cfg, "enabled", True)),
             tick_seconds=int(getattr(cfg, "tick_seconds", 900)),
-            interruption_frequency=str(getattr(cfg, "interruption_frequency", "medium")),
+            interruption_frequency=str(
+                getattr(cfg, "interruption_frequency", "medium")
+            ),
             help_style=str(getattr(cfg, "help_style", "proactive")),
             confidence_threshold=str(getattr(cfg, "confidence_threshold", "balanced")),
+            attention_budget=float(getattr(cfg, "attention_budget", 6.0)),
+            attention_refill_per_hour=float(
+                getattr(cfg, "attention_refill_per_hour", 1.0)
+            ),
+            receipt_retention=int(getattr(cfg, "receipt_retention", 50)),
+            default_snooze_minutes=int(getattr(cfg, "default_snooze_minutes", 60)),
         )

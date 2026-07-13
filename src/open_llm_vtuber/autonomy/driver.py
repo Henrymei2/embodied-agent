@@ -10,13 +10,15 @@ preempts a live user request.
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from typing import Optional
 
 from loguru import logger
 
-from .observation import Observation
+from .observation import Observation, get_client_presence
 from .planner import AutonomyPlanner, PlannerDecision
+from .presence import PresenceLedger, get_or_create_presence_ledger
 from .settings import AutonomySettings
 from .state import AutonomyState
 
@@ -29,13 +31,15 @@ def _build_observation(client_uid: str, state: AutonomyState) -> Observation:
     """
     from ..client_registry import get_client_context
 
-    present = get_client_context(client_uid) is not None
+    connected = get_client_context(client_uid) is not None
+    presence = get_client_presence(client_uid)
     now = datetime.now()
     return Observation(
-        idle_seconds=None,  # richer activity tracking can fill this in later
-        user_present=present,
+        idle_seconds=presence.idle_seconds,
+        user_present=connected and presence.user_present,
         seconds_since_last_spoke=state.seconds_since_last_spoke(now),
         hour_of_day=now.hour,
+        focus_mode=presence.focus_mode,
     )
 
 
@@ -45,7 +49,12 @@ def _workspace_root() -> "object":
     return ensure_workspace().root
 
 
-async def _dispatch(client_uid: str, decision: PlannerDecision) -> None:
+async def _dispatch(
+    client_uid: str,
+    decision: PlannerDecision,
+    observation: Observation,
+    presence: PresenceLedger,
+) -> bool:
     """Enqueue the chosen autonomous action for the client (like the scheduler)."""
     from ..client_registry import get_client_context, get_client_send
     from ..conversations.llm_request_queue import (
@@ -58,7 +67,22 @@ async def _dispatch(client_uid: str, decision: PlannerDecision) -> None:
     send_text = get_client_send(client_uid)
     if context is None or send_text is None:
         logger.debug(f"autonomy: no live client {client_uid}; skipping dispatch")
-        return
+        return False
+
+    if decision.direction is None:
+        return False
+
+    try:
+        receipt = presence.record_action(
+            direction=decision.direction.value,
+            action=decision.action,
+            score=decision.score,
+            reason=decision.reason,
+            observation=observation,
+        )
+    except ValueError as exc:
+        logger.debug(f"autonomy: presence contract blocked dispatch: {exc}")
+        return False
 
     metadata = {
         "autonomous": True,
@@ -66,6 +90,7 @@ async def _dispatch(client_uid: str, decision: PlannerDecision) -> None:
         "report": decision.report,
         "skip_history": not decision.report,
         "skip_memory": False,
+        "presence_receipt_id": receipt.receipt_id,
     }
     priority = PRIORITY_PROACTIVE if decision.spoke else PRIORITY_PASSIVE
 
@@ -80,18 +105,34 @@ async def _dispatch(client_uid: str, decision: PlannerDecision) -> None:
             metadata=metadata,
         )
 
-    queue = get_queue(client_uid)
-    await queue.enqueue(
-        coro=_run(),
-        priority=priority,
-        label=f"autonomy:{decision.direction.value if decision.direction else 'n/a'}",
-    )
+    try:
+        await send_text(
+            json.dumps(
+                {
+                    "type": "autonomy-receipt",
+                    "receipt": receipt.to_dict(),
+                    "attention_budget_remaining": round(presence.budget_balance, 2),
+                },
+                ensure_ascii=False,
+            )
+        )
+        queue = get_queue(client_uid)
+        await queue.enqueue(
+            coro=_run(),
+            priority=priority,
+            label=f"autonomy:{decision.direction.value}",
+        )
+        return True
+    except Exception:
+        presence.cancel_action(receipt.receipt_id)
+        raise
 
 
 async def autonomy_loop(
     client_uid: str,
     settings: Optional[AutonomySettings] = None,
     planner: Optional[AutonomyPlanner] = None,
+    presence: Optional[PresenceLedger] = None,
 ) -> None:
     """Background loop: tick the planner and act on its decisions.
 
@@ -104,7 +145,11 @@ async def autonomy_loop(
         return
 
     planner = planner or AutonomyPlanner()
-    state = AutonomyState.load(_workspace_root())
+    workspace_root = _workspace_root()
+    state = AutonomyState.load(workspace_root)
+    presence = presence or get_or_create_presence_ledger(
+        client_uid, workspace_root, settings
+    )
     logger.info(
         f"autonomy: loop started for {client_uid} "
         f"(freq={settings.interruption_frequency}, style={settings.help_style}, "
@@ -117,9 +162,16 @@ async def autonomy_loop(
 
             observation = _build_observation(client_uid, state)
             if not observation.user_present:
-                continue  # nobody to be present for; skip this tick
+                from ..client_registry import get_client_context
 
-            decision = planner.propose_and_choose(observation, state, settings)
+                if get_client_context(client_uid) is None:
+                    logger.info(f"autonomy: client {client_uid} is gone; loop stopped")
+                    break
+                continue  # connected but marked away by the frontend
+
+            decision = planner.propose_and_choose(
+                observation, state, settings, presence=presence
+            )
             logger.debug(
                 f"autonomy: decision={decision.action} "
                 f"direction={decision.direction} score={decision.score:.3f} "
@@ -129,8 +181,8 @@ async def autonomy_loop(
             if not decision.is_act:
                 continue
 
-            await _dispatch(client_uid, decision)
-            if decision.direction is not None:
+            dispatched = await _dispatch(client_uid, decision, observation, presence)
+            if dispatched and decision.direction is not None:
                 state.record_action(decision.direction, spoke=decision.spoke)
 
         except asyncio.CancelledError:

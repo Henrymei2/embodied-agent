@@ -20,6 +20,7 @@ from typing import Optional
 
 from .directions import ASK, CANDIDATES, Candidate, Direction, SILENT, SPEAK
 from .observation import Observation
+from .presence import PresenceLedger, attention_cost
 from .settings import AutonomySettings
 from .state import AutonomyState
 
@@ -34,6 +35,7 @@ _W_USEFULNESS = 0.5
 _W_NOVELTY = 0.25
 _W_INTRUSIVENESS = 0.3
 _W_RISK = 0.2
+_W_FEEDBACK = 0.2
 
 # Chance of exploring a non-top candidate, for the scope's "random direction"
 # flavor. Kept small so behavior is mostly sensible.
@@ -49,6 +51,7 @@ class PlannerDecision:
     score: float = 0.0
     reason: str = ""
     scores: dict[str, float] = field(default_factory=dict)
+    attention_cost: float = 0.0
 
     @property
     def is_act(self) -> bool:
@@ -64,6 +67,7 @@ def _score_candidate(
     relevance: float,
     state: AutonomyState,
     settings: AutonomySettings,
+    presence: Optional[PresenceLedger] = None,
 ) -> float:
     novelty = state.novelty(candidate.direction)
     base = _W_USEFULNESS * candidate.usefulness + _W_NOVELTY * novelty
@@ -74,6 +78,8 @@ def _score_candidate(
     score = (base - penalty) * relevance
     if candidate.delivery in (SPEAK, ASK):
         score += settings.speak_bias
+    if presence is not None:
+        score += _W_FEEDBACK * presence.affinity(candidate.direction.value)
     return score
 
 
@@ -87,6 +93,7 @@ class AutonomyPlanner:
         settings: AutonomySettings,
         rng: Optional[random.Random] = None,
         now=None,
+        presence: Optional[PresenceLedger] = None,
     ) -> PlannerDecision:
         rng = rng or random.Random()
 
@@ -99,7 +106,9 @@ class AutonomyPlanner:
             relevance = max(0.0, min(1.0, candidate.relevance(observation)))
             if relevance <= 0.0:
                 continue
-            score = _score_candidate(candidate, relevance, state, settings)
+            score = _score_candidate(
+                candidate, relevance, state, settings, presence=presence
+            )
             scored.append((score, candidate))
 
         if not scored:
@@ -120,24 +129,57 @@ class AutonomyPlanner:
         # --- confidence + cadence gates -------------------------------------
         if best_score < settings.act_threshold:
             return PlannerDecision(
-                ACT_NOTHING, best.direction, best.prompt, score=best_score,
-                reason="below confidence threshold", scores=breakdown,
+                ACT_NOTHING,
+                best.direction,
+                best.prompt,
+                score=best_score,
+                reason="below confidence threshold",
+                scores=breakdown,
             )
 
         # Sometimes simply rest, so the agent isn't relentless.
         if rng.random() > settings.base_act_probability:
             return PlannerDecision(
-                ACT_NOTHING, best.direction, best.prompt, score=best_score,
-                reason="chose to rest this tick", scores=breakdown,
+                ACT_NOTHING,
+                best.direction,
+                best.prompt,
+                score=best_score,
+                reason="chose to rest this tick",
+                scores=breakdown,
             )
 
         # --- decide delivery ------------------------------------------------
-        action = self._decide_delivery(best, best_score, observation, state, settings, now)
+        action = self._decide_delivery(
+            best, best_score, observation, state, settings, now
+        )
         if action == ACT_NOTHING:
             return PlannerDecision(
-                ACT_NOTHING, best.direction, best.prompt, score=best_score,
-                reason="too soon to interrupt the user", scores=breakdown,
+                ACT_NOTHING,
+                best.direction,
+                best.prompt,
+                score=best_score,
+                reason="too soon to interrupt the user",
+                scores=breakdown,
             )
+
+        cost = attention_cost(action)
+        if presence is not None:
+            allowed, gate_reason = presence.can_afford(
+                cost,
+                user_facing=action in (ACT_ASK, ACT_SPEAK),
+                focus_mode=observation.focus_mode,
+                now=now,
+            )
+            if not allowed:
+                return PlannerDecision(
+                    ACT_NOTHING,
+                    best.direction,
+                    best.prompt,
+                    score=best_score,
+                    reason=gate_reason,
+                    scores=breakdown,
+                    attention_cost=cost,
+                )
 
         return PlannerDecision(
             action=action,
@@ -147,6 +189,7 @@ class AutonomyPlanner:
             score=best_score,
             reason=f"acting on {best.direction.value} via {action}",
             scores=breakdown,
+            attention_cost=cost,
         )
 
     @staticmethod

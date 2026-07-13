@@ -21,7 +21,6 @@ import { ProactiveSpeakProvider } from "./context/proactive-speak-context";
 import { ScreenCaptureProvider } from "./context/screen-capture-context";
 import { GroupProvider } from "./context/group-context";
 import { BrowserProvider } from "./context/browser-context";
-// eslint-disable-next-line import/no-extraneous-dependencies, import/newline-after-import
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
 import Background from "./components/canvas/background";
 import WebSocketStatus from "./components/canvas/ws-status";
@@ -29,6 +28,8 @@ import Subtitle from "./components/canvas/subtitle";
 import { ModeProvider, useMode } from "./context/mode-context";
 import DynamicStage from "./components/canvas/dynamic-stage";
 import { DynamicStageProvider } from "./context/dynamic-stage-context";
+import { PresenceProvider } from "./context/presence-context";
+import PresenceIndicator from "./components/canvas/presence-indicator";
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(true);
@@ -117,6 +118,9 @@ function AppContent(): JSX.Element {
               <Box position="absolute" top="20px" left="20px" zIndex={10}>
                 <WebSocketStatus />
               </Box>
+              <Box position="absolute" top="20px" right="20px" zIndex={11}>
+                <PresenceIndicator />
+              </Box>
               <Box
                 position="absolute"
                 bottom={isFooterCollapsed ? "39px" : "135px"}
@@ -175,10 +179,12 @@ function AppWithGlobalStyles(): JSX.Element {
                         <GroupProvider>
                           <BrowserProvider>
                             <DynamicStageProvider>
-                              <WebSocketHandler>
-                                <Toaster />
-                                <AppContent />
-                              </WebSocketHandler>
+                              <PresenceProvider>
+                                <WebSocketHandler>
+                                  <Toaster />
+                                  <AppContent />
+                                </WebSocketHandler>
+                              </PresenceProvider>
                             </DynamicStageProvider>
                           </BrowserProvider>
                         </GroupProvider>

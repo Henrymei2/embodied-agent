@@ -42,7 +42,9 @@ def _act_rng():
 
 
 def _idle_present():
-    return Observation(idle_seconds=1800, user_present=True, seconds_since_last_spoke=5000)
+    return Observation(
+        idle_seconds=1800, user_present=True, seconds_since_last_spoke=5000
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -66,7 +68,9 @@ def test_settings_confidence_and_style():
 
 def test_settings_invalid_values_fall_back():
     s = AutonomySettings(
-        interruption_frequency="bogus", help_style="???", confidence_threshold="nope",
+        interruption_frequency="bogus",
+        help_style="???",
+        confidence_threshold="nope",
         tick_seconds=1,
     )
     assert s.interruption_frequency == "medium"
@@ -152,17 +156,25 @@ def test_rest_gate_returns_nothing(tmp_path):
     st = AutonomyState.load(tmp_path)
     # No explore (0.99), then rest gate fails to act (0.99 > base prob).
     rng = FakeRng(randoms=[0.99, 0.99])
-    d = AutonomyPlanner().propose_and_choose(_idle_present(), st, AutonomySettings(), rng)
+    d = AutonomyPlanner().propose_and_choose(
+        _idle_present(), st, AutonomySettings(), rng
+    )
     assert d.action == ACT_NOTHING and "rest" in d.reason
 
 
 def test_idle_user_yields_silent_self_work(tmp_path):
     st = AutonomyState.load(tmp_path)
-    d = AutonomyPlanner().propose_and_choose(_idle_present(), st, AutonomySettings(), _act_rng())
+    d = AutonomyPlanner().propose_and_choose(
+        _idle_present(), st, AutonomySettings(), _act_rng()
+    )
     assert d.action == ACT_SILENT
     assert d.report is False
-    assert d.direction in {Direction.GROWTH, Direction.HOUSEKEEPING, Direction.WORK,
-                           Direction.CURIOSITY}
+    assert d.direction in {
+        Direction.GROWTH,
+        Direction.HOUSEKEEPING,
+        Direction.WORK,
+        Direction.CURIOSITY,
+    }
     assert d.prompt  # a concrete instruction to run
 
 
@@ -171,8 +183,12 @@ def test_idle_user_yields_silent_self_work(tmp_path):
 # --------------------------------------------------------------------------- #
 def _mk_candidate(delivery):
     return Candidate(
-        direction=Direction.SOCIAL, prompt="p",
-        usefulness=0.9, intrusiveness=0.4, risk=0.1, delivery=delivery,
+        direction=Direction.SOCIAL,
+        prompt="p",
+        usefulness=0.9,
+        intrusiveness=0.4,
+        risk=0.1,
+        delivery=delivery,
         relevance=lambda o: 1.0,
     )
 

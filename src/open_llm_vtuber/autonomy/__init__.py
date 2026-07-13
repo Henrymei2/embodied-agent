@@ -18,6 +18,14 @@ from .planner import (
     AutonomyPlanner,
     PlannerDecision,
 )
+from .presence import (
+    DISMISSED,
+    HELPFUL,
+    SNOOZED,
+    PresenceLedger,
+    PresenceReceipt,
+    attention_cost,
+)
 from .settings import AutonomySettings
 from .state import AutonomyState
 
@@ -32,5 +40,11 @@ __all__ = [
     "Direction",
     "Observation",
     "PlannerDecision",
+    "PresenceLedger",
+    "PresenceReceipt",
+    "HELPFUL",
+    "DISMISSED",
+    "SNOOZED",
+    "attention_cost",
     "autonomy_loop",
 ]

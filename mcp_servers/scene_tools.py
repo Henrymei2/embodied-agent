@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -33,14 +34,12 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
-from src.open_llm_vtuber.stage_state_manager import load_stage_state
+from src.open_llm_vtuber.stage_state_manager import load_stage_state, validate_stage
 
-# TODO: replace with however conf_uid actually gets resolved for the current
-# session once that's wired up end-to-end. Hardcoded to the default character
-# for now so this server is testable standalone.
 _DEFAULT_CONF_UID = "mao_pro_001"
 _DEFAULT_BACKEND_URL = "http://localhost:12393"
 _FRONTEND_ACTION_TIMEOUT_SECONDS = 15.0
+_OBJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 mcp = FastMCP("scene")
 
@@ -50,6 +49,11 @@ def _get_nodes(conf_uid: str) -> list[dict[str, Any]]:
     return stage.get("nodes", [])
 
 
+def _get_conf_uid() -> str:
+    """Return this MCP subprocess's session-bound character configuration."""
+    return os.environ.get("EMBODIED_AGENT_CONF_UID", _DEFAULT_CONF_UID)
+
+
 def _find_node(nodes: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
     for node in nodes:
         if node.get("id") == label or node.get("label") == label:
@@ -57,7 +61,9 @@ def _find_node(nodes: list[dict[str, Any]], label: str) -> dict[str, Any] | None
     return None
 
 
-def _post_frontend_action_sync(action: str, args: dict[str, Any]) -> tuple[bool, str | None]:
+def _post_frontend_action_sync(
+    action: str, args: dict[str, Any]
+) -> tuple[bool, str | None]:
     backend_url = os.environ.get("EMBODIED_AGENT_BACKEND_URL", _DEFAULT_BACKEND_URL)
     url = f"{backend_url.rstrip('/')}/internal/frontend-action"
     body = json.dumps(
@@ -65,6 +71,8 @@ def _post_frontend_action_sync(action: str, args: dict[str, Any]) -> tuple[bool,
             "action": action,
             "args": args,
             "timeout": _FRONTEND_ACTION_TIMEOUT_SECONDS,
+            "client_uid": os.environ.get("EMBODIED_AGENT_CLIENT_UID"),
+            "conf_uid": _get_conf_uid(),
         }
     ).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -99,7 +107,9 @@ def _post_frontend_action_sync(action: str, args: dict[str, Any]) -> tuple[bool,
     return False, payload.get("error") or "frontend action failed"
 
 
-async def _post_frontend_action(action: str, args: dict[str, Any]) -> tuple[bool, str | None]:
+async def _post_frontend_action(
+    action: str, args: dict[str, Any]
+) -> tuple[bool, str | None]:
     return await asyncio.to_thread(_post_frontend_action_sync, action, args)
 
 
@@ -113,7 +123,7 @@ def get_object_position(name: str) -> str:
     Returns:
         A string describing the object's position, or that it wasn't found.
     """
-    nodes = _get_nodes(_DEFAULT_CONF_UID)
+    nodes = _get_nodes(_get_conf_uid())
     node = _find_node(nodes, name)
     if node is None:
         return f"Error: no object found with label '{name}'."
@@ -131,7 +141,7 @@ def list_objects(distance: float | None = None) -> str:
     Returns:
         A string listing each object's label and position.
     """
-    nodes = _get_nodes(_DEFAULT_CONF_UID)
+    nodes = _get_nodes(_get_conf_uid())
     avatar = _find_node(nodes, "avatar")
     ax, ay = (avatar["x"], avatar["y"]) if avatar else (0, 0)
 
@@ -148,7 +158,11 @@ def list_objects(distance: float | None = None) -> str:
         results.append(f"{label} (x={x}, y={y})")
 
     if not results:
-        return "(no objects found)" if distance is None else f"(no objects within {distance})"
+        return (
+            "(no objects found)"
+            if distance is None
+            else f"(no objects within {distance})"
+        )
     return "\n".join(results)
 
 
@@ -161,7 +175,7 @@ def get_scene_status() -> str:
     Returns:
         A string with the agent's position and a list of reachable object labels.
     """
-    nodes = _get_nodes(_DEFAULT_CONF_UID)
+    nodes = _get_nodes(_get_conf_uid())
     avatar = _find_node(nodes, "avatar")
     if avatar is None:
         return "Error: no avatar node found in the current scene."
@@ -191,7 +205,7 @@ async def move_to(target: str) -> str:
     Returns:
         A string confirming arrival, or describing the error.
     """
-    nodes = _get_nodes(_DEFAULT_CONF_UID)
+    nodes = _get_nodes(_get_conf_uid())
     node = _find_node(nodes, target)
     if node is None:
         return f"Error: no object found with label '{target}'; cannot move there."
@@ -203,6 +217,102 @@ async def move_to(target: str) -> str:
     if not ok:
         return f"Error: move_to failed: {error}"
     return f"OK: arrived at {target} (x={node['x']}, y={node['y']})."
+
+
+@mcp.tool()
+async def place_object(
+    name: str,
+    x: float,
+    y: float,
+    width: float = 120.0,
+    height: float = 90.0,
+    image_url: str | None = None,
+) -> str:
+    """Place a validated furniture panel in the persistent room.
+
+    Args:
+        name: Unique object ID/label using letters, numbers, hyphens, or underscores.
+        x: Horizontal center coordinate within the stage canvas.
+        y: Vertical center coordinate within the stage canvas.
+        width: Object width in scene units (default 120).
+        height: Object height in scene units (default 90).
+        image_url: Optional safe http(s), data-image, or relative asset URL.
+    """
+    if not isinstance(name, str) or not _OBJECT_ID_RE.fullmatch(name):
+        return "Error: name must match [A-Za-z0-9_-] and contain 1-80 characters."
+    dimensions = (x, y, width, height)
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in dimensions
+    ):
+        return "Error: x, y, width, and height must be numeric."
+    if width < 1 or width > 4096 or height < 1 or height > 4096:
+        return "Error: width and height must each be between 1 and 4096."
+
+    stage = load_stage_state(_get_conf_uid())
+    if _find_node(stage.get("nodes", []), name) is not None:
+        return f"Error: an object named '{name}' already exists."
+    canvas = stage.get("canvas", {})
+    if not 0 <= x <= canvas.get("width", 0) or not 0 <= y <= canvas.get("height", 0):
+        return "Error: x and y must be inside the stage canvas."
+
+    node: dict[str, Any] = {
+        "id": name,
+        "type": "panel",
+        "label": name,
+        "x": float(x),
+        "y": float(y),
+        "width": float(width),
+        "height": float(height),
+        "zIndex": 2,
+        "text": name.replace("_", " "),
+        "style": {
+            "background": "#334155",
+            "borderColor": "#cbd5e1",
+            "color": "#ffffff",
+            "borderRadius": 12,
+        },
+    }
+    if image_url is not None:
+        node["texture"] = {"src": image_url, "fit": "contain", "alt": name}
+
+    candidate = {**stage, "nodes": [*stage.get("nodes", []), node]}
+    valid, errors = validate_stage(candidate)
+    if not valid:
+        return "Error: object was rejected: " + "; ".join(errors)
+
+    ok, error = await _post_frontend_action(
+        "stage_patch_state",
+        {"patch": {"nodes": [node], "metadata": {"updated_by": "place_object"}}},
+    )
+    if not ok:
+        return f"Error: place_object failed: {error}"
+    return f"OK: placed {name} at x={x}, y={y}."
+
+
+@mcp.tool()
+async def remove_object(name: str) -> str:
+    """Remove a named room object; the avatar itself is protected."""
+    nodes = _get_nodes(_get_conf_uid())
+    node = _find_node(nodes, name)
+    if node is None:
+        return f"Error: no object found with label '{name}'."
+    node_id = node.get("id")
+    if node_id == "avatar":
+        return "Error: the avatar cannot be removed from its own room."
+
+    ok, error = await _post_frontend_action(
+        "stage_patch_state",
+        {
+            "patch": {
+                "remove_node_ids": [node_id],
+                "metadata": {"updated_by": "remove_object"},
+            }
+        },
+    )
+    if not ok:
+        return f"Error: remove_object failed: {error}"
+    return f"OK: removed {node_id}."
 
 
 if __name__ == "__main__":

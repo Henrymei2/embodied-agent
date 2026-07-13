@@ -134,6 +134,7 @@ const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
 const STAGE_VERSION = 2;
 const DEFAULT_MOVE_DURATION_MS = 900;
+const REACHABLE_DISTANCE = 150;
 
 const nowIso = () => new Date().toISOString();
 
@@ -792,10 +793,16 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
           nodes: stageRef.current.nodes.map((node) => (
             node.id === "avatar"
               ? { ...node, x: destination.x, y: destination.y }
-              : node
+            : node
           )),
         });
-        return commitStage(nextStage, action, requestId);
+        const result = commitStage(nextStage, action, requestId);
+        if (result.ok) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, DEFAULT_MOVE_DURATION_MS);
+          });
+        }
+        return result;
       }
 
       case "list_objects": {
@@ -824,6 +831,9 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
           agent_position: avatar ? { x: avatar.x, y: avatar.y } : undefined,
           reachable_objects: stageRef.current.nodes
             .filter((node) => node.id !== "avatar")
+            .filter((node) => (
+              !avatar || distanceBetween(avatar, node) <= REACHABLE_DISTANCE
+            ))
             .map((node) => node.label || node.id),
         };
       }

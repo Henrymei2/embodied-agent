@@ -34,12 +34,8 @@ class StatelessLLMWithTemplate(StatelessLLMBaseConfig):
     _OPENAI_COMPATIBLE_DESCRIPTIONS: ClassVar[dict[str, Description]] = {
         "base_url": Description(en="Base URL for the API endpoint"),
         "llm_api_key": Description(en="API key for authentication"),
-        "organization_id": Description(
-            en="Organization ID for the API (Optional)"
-        ),
-        "project_id": Description(
-            en="Project ID for the API (Optional)"
-        ),
+        "organization_id": Description(en="Organization ID for the API (Optional)"),
+        "project_id": Description(en="Project ID for the API (Optional)"),
         "model": Description(en="Name of the LLM model to use"),
         "temperature": Description(
             en="What sampling temperature to use, between 0 and 2.",
@@ -65,12 +61,8 @@ class OpenAICompatibleConfig(StatelessLLMBaseConfig):
     _OPENAI_COMPATIBLE_DESCRIPTIONS: ClassVar[dict[str, Description]] = {
         "base_url": Description(en="Base URL for the API endpoint"),
         "llm_api_key": Description(en="API key for authentication"),
-        "organization_id": Description(
-            en="Organization ID for the API (Optional)"
-        ),
-        "project_id": Description(
-            en="Project ID for the API (Optional)"
-        ),
+        "organization_id": Description(en="Organization ID for the API (Optional)"),
+        "project_id": Description(en="Project ID for the API (Optional)"),
         "model": Description(en="Name of the LLM model to use"),
         "temperature": Description(
             en="What sampling temperature to use, between 0 and 2.",
@@ -187,13 +179,9 @@ class ClaudeConfig(StatelessLLMBaseConfig):
     )
 
     _CLAUDE_DESCRIPTIONS: ClassVar[dict[str, Description]] = {
-        "base_url": Description(
-            en="Base URL for Claude API"
-        ),
+        "base_url": Description(en="Base URL for Claude API"),
         "llm_api_key": Description(en="API key for authentication"),
-        "model": Description(
-            en="Name of the Claude model to use"
-        ),
+        "model": Description(en="Name of the Claude model to use"),
     }
 
     DESCRIPTIONS: ClassVar[dict[str, Description]] = {
@@ -211,9 +199,7 @@ class LlamaCppConfig(StatelessLLMBaseConfig):
     )
 
     _LLAMA_DESCRIPTIONS: ClassVar[dict[str, Description]] = {
-        "model_path": Description(
-            en="Path to the GGUF model file"
-        ),
+        "model_path": Description(en="Path to the GGUF model file"),
     }
 
     DESCRIPTIONS: ClassVar[dict[str, Description]] = {
@@ -244,34 +230,18 @@ class StatelessLLMConfigs(I18nMixin, BaseModel):
     mistral_llm: MistralConfig | None = Field(None, alias="mistral_llm")
 
     DESCRIPTIONS: ClassVar[dict[str, Description]] = {
-        "stateless_llm_with_template": Description(
-            en="Stateless LLM with Template"
-        ),
+        "stateless_llm_with_template": Description(en="Stateless LLM with Template"),
         "openai_compatible_llm": Description(
             en="Configuration for OpenAI-compatible LLM providers",
         ),
         "ollama_llm": Description(en="Configuration for Ollama"),
-        "lmstudio_llm": Description(
-            en="Configuration for LM Studio"
-        ),
-        "openai_llm": Description(
-            en="Configuration for Official OpenAI API"
-        ),
-        "gemini_llm": Description(
-            en="Configuration for Gemini API"
-        ),
-        "mistral_llm": Description(
-            en="Configuration for Mistral API"
-        ),
+        "lmstudio_llm": Description(en="Configuration for LM Studio"),
+        "openai_llm": Description(en="Configuration for Official OpenAI API"),
+        "gemini_llm": Description(en="Configuration for Gemini API"),
+        "mistral_llm": Description(en="Configuration for Mistral API"),
         "zhipu_llm": Description(en="Configuration for Zhipu API"),
-        "deepseek_llm": Description(
-            en="Configuration for Deepseek API"
-        ),
+        "deepseek_llm": Description(en="Configuration for Deepseek API"),
         "groq_llm": Description(en="Configuration for Groq API"),
-        "claude_llm": Description(
-            en="Configuration for Claude API"
-        ),
-        "llama_cpp_llm": Description(
-            en="Configuration for local Llama.cpp"
-        ),
+        "claude_llm": Description(en="Configuration for Claude API"),
+        "llama_cpp_llm": Description(en="Configuration for local Llama.cpp"),
     }

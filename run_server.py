@@ -113,20 +113,26 @@ def build_frontend() -> None:
             check=True,
         )
     except FileNotFoundError:
-        logger.critical("`npm` was not found. Install Node.js/npm before starting the server.")
+        logger.critical(
+            "`npm` was not found. Install Node.js/npm before starting the server."
+        )
         sys.exit(1)
     except subprocess.CalledProcessError as e:
         logger.critical(f"Frontend build failed with exit code {e.returncode}.")
         sys.exit(e.returncode)
 
     if not (FRONTEND_DIST_DIR / "index.html").exists():
-        logger.critical(f"Frontend build did not produce {FRONTEND_DIST_DIR / 'index.html'}.")
+        logger.critical(
+            f"Frontend build did not produce {FRONTEND_DIST_DIR / 'index.html'}."
+        )
         sys.exit(1)
 
     FRONTEND_SERVE_DIR.mkdir(parents=True, exist_ok=True)
     for item in FRONTEND_DIST_DIR.iterdir():
         if item.name in {"src", "frontend_api_doc.md"}:
-            logger.warning(f"Skipping preserved frontend path from build output: {item.name}")
+            logger.warning(
+                f"Skipping preserved frontend path from build output: {item.name}"
+            )
             continue
 
         destination = FRONTEND_SERVE_DIR / item.name
@@ -169,7 +175,9 @@ def run(console_log_level: str, skip_frontend_build: bool = False):
     lang = upgrade_manager.lang
 
     if skip_frontend_build:
-        logger.info("Skipping frontend build because --skip-frontend-build was provided.")
+        logger.info(
+            "Skipping frontend build because --skip-frontend-build was provided."
+        )
     else:
         build_frontend()
 

@@ -1,5 +1,4 @@
 /* eslint-disable no-sparse-arrays */
-/* eslint-disable react-hooks/exhaustive-deps */
 // eslint-disable-next-line object-curly-newline
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +20,7 @@ import { useGroup } from '@/context/group-context';
 import { useInterrupt } from '@/hooks/utils/use-interrupt';
 import { useBrowser } from '@/context/browser-context';
 import { useDynamicStage } from '@/context/dynamic-stage-context';
+import { PresenceState, usePresence } from '@/context/presence-context';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -45,6 +45,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { interrupt } = useInterrupt();
   const { setBrowserViewData } = useBrowser();
   const { handleFrontendAction, setStageFromServer } = useDynamicStage();
+  const { updateState: updatePresenceState, receiveReceipt } = usePresence();
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -131,6 +132,23 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
               duration: 3000,
             });
           }
+        }
+        break;
+      case 'presence-state':
+        updatePresenceState(message as PresenceState);
+        break;
+      case 'autonomy-receipt':
+        if (message.receipt) {
+          receiveReceipt(message.receipt, message.attention_budget_remaining);
+        }
+        break;
+      case 'autonomy-feedback-result':
+        if (message.ok === false) {
+          toaster.create({
+            title: message.message || t('presence.feedbackFailed'),
+            type: 'error',
+            duration: 2500,
+          });
         }
         break;
       case 'set-model-and-conf':
@@ -322,7 +340,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, appendAIMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, appendAIMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

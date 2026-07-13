@@ -22,15 +22,16 @@ from typing import Coroutine, Dict, Optional
 from loguru import logger
 
 # Priority constants — use these everywhere instead of magic numbers
-PRIORITY_USER = 0        # user typed or spoke something
-PRIORITY_PROACTIVE = 1   # agent-initiated speak
+PRIORITY_USER = 0  # user typed or spoke something
+PRIORITY_PROACTIVE = 1  # agent-initiated speak
 PRIORITY_SCHEDULED = 10  # scheduled background task
-PRIORITY_PASSIVE = 20    # memory compaction, housekeeping, etc.
+PRIORITY_PASSIVE = 20  # memory compaction, housekeeping, etc.
 
 
 @dataclass(order=True)
 class _QueueItem:
     """Wrapper that makes coroutines orderable by priority."""
+
     priority: int
     # Exclude the coroutine from ordering comparisons
     coro: Coroutine = field(compare=False)

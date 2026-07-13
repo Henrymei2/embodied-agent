@@ -55,14 +55,50 @@ _MOOD_LABELS: list[tuple[float, str]] = [
 # Tiny sentiment lexicon. Deterministic and offline - no LLM call needed for
 # something that runs every turn.
 _POSITIVE = {
-    "thanks", "thank", "thankyou", "love", "great", "awesome", "nice", "good",
-    "happy", "cool", "amazing", "appreciate", "please", "haha", "lol", "yay",
-    "wonderful", "perfect", "excellent", "brilliant", "sweet", "fun", "glad",
+    "thanks",
+    "thank",
+    "thankyou",
+    "love",
+    "great",
+    "awesome",
+    "nice",
+    "good",
+    "happy",
+    "cool",
+    "amazing",
+    "appreciate",
+    "please",
+    "haha",
+    "lol",
+    "yay",
+    "wonderful",
+    "perfect",
+    "excellent",
+    "brilliant",
+    "sweet",
+    "fun",
+    "glad",
 }
 _NEGATIVE = {
-    "hate", "stupid", "dumb", "bad", "terrible", "awful", "angry", "annoying",
-    "useless", "worst", "shut", "idiot", "ugly", "boring", "wrong", "broken",
-    "trash", "garbage", "sucks",
+    "hate",
+    "stupid",
+    "dumb",
+    "bad",
+    "terrible",
+    "awful",
+    "angry",
+    "annoying",
+    "useless",
+    "worst",
+    "shut",
+    "idiot",
+    "ugly",
+    "boring",
+    "wrong",
+    "broken",
+    "trash",
+    "garbage",
+    "sucks",
 }
 
 _STATE_FILENAME = "evolution.json"
@@ -151,7 +187,9 @@ class EvolutionState:
                 state._path = path
                 return state
             except Exception as exc:  # noqa: BLE001 - corrupt file shouldn't crash startup
-                logger.warning(f"evolution: could not read {path} ({exc}); starting fresh")
+                logger.warning(
+                    f"evolution: could not read {path} ({exc}); starting fresh"
+                )
 
         state = cls()
         state._path = path
@@ -216,14 +254,12 @@ class EvolutionState:
 
         sentiment = _score_sentiment(user_text) if user_text else 0
         # EMA toward the sentiment target (-1/0/+1).
-        self.mood = _clamp(
-            self.mood + _MOOD_ALPHA * (sentiment - self.mood), -1.0, 1.0
-        )
+        self.mood = _clamp(self.mood + _MOOD_ALPHA * (sentiment - self.mood), -1.0, 1.0)
 
         new_tier = self.familiarity_tier
         if new_tier > prev_tier:
             self._record_milestone(
-                f"reached \"{self.familiarity_label}\" on {date.today().isoformat()}"
+                f'reached "{self.familiarity_label}" on {date.today().isoformat()}'
             )
 
         self.save()
