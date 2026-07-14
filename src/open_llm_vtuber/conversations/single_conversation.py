@@ -149,7 +149,10 @@ async def process_single_conversation(
             client_uid=client_uid,
         )
 
-        if context.history_uid and full_response:  # Check full_response before storing
+        # Store the AI response too, unless this turn opted out of history
+        # (e.g. proactive/autonomous silent actions). Mirrors the user-message
+        # guard above so skip_history keeps both sides out of the chat log.
+        if context.history_uid and full_response and not skip_history:
             store_message(
                 conf_uid=context.character_config.conf_uid,
                 history_uid=context.history_uid,
