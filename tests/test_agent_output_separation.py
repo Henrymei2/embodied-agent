@@ -18,7 +18,11 @@ from src.open_llm_vtuber.config_manager.tts_preprocessor import (
     TranslatorConfig,
 )
 from src.open_llm_vtuber.mcpp.tool_manager import ToolManager
-from src.open_llm_vtuber.mcpp.types import ToolCallFunctionObject, ToolCallObject
+from src.open_llm_vtuber.mcpp.types import (
+    FormattedTool,
+    ToolCallFunctionObject,
+    ToolCallObject,
+)
 from src.open_llm_vtuber.workspace.workspace_manager import (
     LEGACY_SPEAK_OUTPUT_RULES,
     TTS_OUTPUT_RULES,
@@ -155,6 +159,35 @@ def test_system_prompt_has_concise_but_complete_tts_guidance():
     assert "Keep responses concise, conversational" in agent._system
     assert "Always answer the user's request completely" in agent._system
     assert "built-in tool named `speak`" not in agent._system
+
+
+def test_system_prompt_advertises_tools_hidden_by_location(monkeypatch):
+    manager = ToolManager(
+        initial_tools_dict={
+            "browser_navigate": FormattedTool(
+                input_schema={},
+                related_server="playwright",
+                description="Open a web page.",
+            )
+        },
+        conf_uid="character",
+    )
+    monkeypatch.setattr(manager, "get_reachable_objects", lambda: [])
+    agent = BasicMemoryAgent(
+        llm=_DummyLLM(),
+        system="base",
+        tool_manager=manager,
+    )
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.agent.agents.basic_memory_agent.build_workspace_prompt_context",
+        lambda **_kwargs: "",
+    )
+
+    prompt = agent._build_system_prompt_with_workspace_context([], agent._system)
+
+    assert "Additional configured tools may be hidden" in prompt
+    assert "`browser_navigate` (playwright): Open a web page." in prompt
+    assert "Access: near computer; currently unavailable" in prompt
 
 
 @pytest.mark.asyncio

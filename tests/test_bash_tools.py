@@ -12,6 +12,7 @@ import importlib
 import sys
 
 import pytest
+import requests
 
 
 @pytest.fixture
@@ -121,6 +122,109 @@ def test_execute_bash_insecure_optin_runs_on_host(bt, monkeypatch):
     assert "hello-host" in out
 
 
+class FakeDownloadResponse:
+    def __init__(self, chunks, headers=None, status_code=200):
+        self._chunks = chunks
+        self.headers = headers or {}
+        self.status_code = status_code
+        self.is_redirect = status_code in {301, 302, 303, 307, 308}
+        self.is_permanent_redirect = status_code in {301, 308}
+        self.closed = False
+
+    def iter_content(self, chunk_size):
+        del chunk_size
+        yield from self._chunks
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def close(self):
+        self.closed = True
+
+
+def _mock_download(bt, monkeypatch, responses):
+    calls = []
+
+    class FakeSession:
+        trust_env = True
+
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return responses.pop(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bt.requests, "Session", FakeSession)
+    monkeypatch.setattr(bt, "_validate_download_url", lambda url: url)
+    return calls
+
+
+def test_download_file_streams_to_workspace_without_returning_content(
+    bt, monkeypatch
+):
+    payload = b"%PDF-test-payload"
+    responses = [
+        FakeDownloadResponse(
+            [payload[:5], payload[5:]],
+            {
+                "Content-Type": "application/pdf",
+                "Content-Length": str(len(payload)),
+                "Content-Disposition": 'attachment; filename="paper.pdf"',
+            },
+        )
+    ]
+    calls = _mock_download(bt, monkeypatch, responses)
+
+    result = bt.download_file("https://example.com/file", path="downloads/")
+
+    target = bt._workspace_root() / "downloads" / "paper.pdf"
+    assert target.read_bytes() == payload
+    assert "OK: downloaded downloads/paper.pdf" in result
+    assert "SHA-256:" in result
+    assert payload.decode() not in result
+    assert calls[0][1]["stream"] is True
+    assert calls[0][1]["allow_redirects"] is False
+
+
+def test_download_file_enforces_streaming_size_limit_and_cleans_partial(
+    bt, monkeypatch
+):
+    responses = [FakeDownloadResponse([b"1234", b"5678"])]
+    _mock_download(bt, monkeypatch, responses)
+
+    result = bt.download_file(
+        "https://example.com/file.bin", path="tmp/file.bin", max_bytes=6
+    )
+
+    assert "exceeded the 6-byte limit" in result
+    assert not (bt._workspace_root() / "tmp" / "file.bin").exists()
+    assert not list((bt._workspace_root() / "tmp").glob("*.part"))
+
+
+def test_download_file_rejects_private_network_url(bt):
+    result = bt.download_file("http://127.0.0.1/private")
+    assert "non-public address" in result
+
+
+def test_download_file_rejects_destination_outside_workspace_before_network(
+    bt, monkeypatch
+):
+    called = False
+
+    class UnexpectedSession:
+        def __init__(self):
+            nonlocal called
+            called = True
+
+    monkeypatch.setattr(bt.requests, "Session", UnexpectedSession)
+    result = bt.download_file("https://example.com/file", path="../escape.bin")
+
+    assert "Access denied" in result
+    assert called is False
+
+
 def test_insecure_optin_still_blocks_outside_paths(bt, monkeypatch):
     from mcp_servers.docker_sandbox import SandboxUnavailableError
 
@@ -140,6 +244,7 @@ def test_insecure_optin_still_blocks_outside_paths(bt, monkeypatch):
     "func,args",
     [
         ("read_file", ("../../../etc/passwd",)),
+        ("download_file", ("https://example.com/file", "../escape.bin")),
         ("write_file", ("../escape.txt", "x")),
         ("append_to_file", ("../escape.txt", "x")),
         ("edit_file", ("../escape.txt", "a", "b")),

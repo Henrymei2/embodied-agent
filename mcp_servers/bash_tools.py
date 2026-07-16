@@ -10,9 +10,10 @@ that resolve outside the workspace, and `execute_bash` always runs with its
 working directory pinned to the workspace root. None of these tools will
 succeed against arbitrary locations on the user's machine.
 
-Intentionally NOT implemented (per design): send, memory, web_fetch,
-scheduler, and other optional tools. Memory is handled by the backend memory
-system; scheduling and messaging are owned by other components.
+Intentionally NOT implemented (per design): send, memory, general web_fetch,
+scheduler, and other optional tools. The dedicated download tool saves bytes
+to disk but never returns remote content. Memory is handled by the backend
+memory system; scheduling and messaging are owned by other components.
 
 Run standalone for a quick sanity check:
     uv run python mcp_servers/bash_tools.py
@@ -20,11 +21,20 @@ Run standalone for a quick sanity check:
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
+import mimetypes
 import os
 import re
+import socket
 import subprocess
 import sys
+import tempfile
+from email.message import Message
 from pathlib import Path
+from urllib.parse import unquote, urljoin, urlsplit
+
+import requests
 
 # This file is launched as a script (`python mcp_servers/bash_tools.py`), which
 # puts `mcp_servers/` on sys.path rather than the project root. Add the project
@@ -54,6 +64,11 @@ _WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or None
 _MAX_OUTPUT_CHARS = 20_000
 _DEFAULT_BASH_TIMEOUT = 30
 _MAX_BASH_TIMEOUT = 120
+_DEFAULT_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024
+_ABSOLUTE_DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024
+_MAX_DOWNLOAD_REDIRECTS = 5
+_DOWNLOAD_CHUNK_SIZE = 64 * 1024
+_DOWNLOAD_TIMEOUT = (10, 30)
 
 # execute_bash runs in a Docker sandbox and fails closed when Docker is absent.
 # An operator who is ALREADY inside a disposable, isolated environment (e.g. a
@@ -211,6 +226,213 @@ def _truncate(text: str) -> str:
             + f"\n... [truncated {len(text) - _MAX_OUTPUT_CHARS} chars]"
         )
     return text
+
+
+def _validate_download_url(url: str) -> str:
+    """Validate a public HTTP(S) URL and reject common SSRF targets."""
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("only http:// and https:// URLs are allowed")
+    if not parsed.hostname:
+        raise ValueError("URL must include a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URLs containing credentials are not allowed")
+
+    try:
+        addresses = {
+            info[4][0]
+            for info in socket.getaddrinfo(
+                parsed.hostname,
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        }
+    except OSError as exc:
+        raise ValueError(f"could not resolve hostname: {parsed.hostname}") from exc
+
+    if not addresses:
+        raise ValueError(f"hostname resolved to no addresses: {parsed.hostname}")
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:
+            raise ValueError(
+                f"URL resolves to a non-public address ({address}); download refused"
+            )
+    return url
+
+
+def _filename_from_response(response: requests.Response, url: str) -> str:
+    disposition = response.headers.get("Content-Disposition", "")
+    if disposition:
+        message = Message()
+        message["Content-Disposition"] = disposition
+        filename = message.get_filename()
+        if filename:
+            filename = Path(unquote(filename)).name
+        else:
+            filename = ""
+    else:
+        filename = ""
+
+    if not filename:
+        filename = Path(unquote(urlsplit(url).path)).name
+    if not filename:
+        extension = mimetypes.guess_extension(
+            response.headers.get("Content-Type", "").split(";", 1)[0].strip()
+        )
+        filename = f"download{extension or ''}"
+
+    filename = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "_", filename).strip(". ")
+    return filename or "download"
+
+
+def _download_response(
+    session: requests.Session,
+    url: str,
+) -> tuple[requests.Response, str]:
+    current_url = url
+    for redirect_count in range(_MAX_DOWNLOAD_REDIRECTS + 1):
+        _validate_download_url(current_url)
+        response = session.get(
+            current_url,
+            stream=True,
+            allow_redirects=False,
+            timeout=_DOWNLOAD_TIMEOUT,
+            headers={"Accept-Encoding": "identity", "User-Agent": "Open-LLM-VTuber"},
+        )
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ValueError("redirect response did not include a Location header")
+            if redirect_count >= _MAX_DOWNLOAD_REDIRECTS:
+                raise ValueError("too many redirects")
+            current_url = urljoin(current_url, location)
+            continue
+        try:
+            response.raise_for_status()
+        except requests.RequestException:
+            response.close()
+            raise
+        return response, current_url
+    raise ValueError("too many redirects")
+
+
+@mcp.tool()
+def download_file(
+    url: str,
+    path: str = "",
+    max_bytes: int = _DEFAULT_DOWNLOAD_MAX_BYTES,
+    overwrite: bool = False,
+) -> str:
+    """Download a public HTTP(S) URL directly into the agent workspace.
+
+    The response body is streamed to disk and is never returned to the model.
+    Use this for PDFs, images, archives, and other files instead of fetching or
+    encoding their raw content. When path is omitted, the server-selected file
+    name is saved under ``tmp/``.
+
+    Args:
+        url: Public http:// or https:// URL to download. Local and private
+            network addresses are refused.
+        path: Optional destination path inside the workspace. A trailing slash
+            means "use the server-provided filename in this directory".
+        max_bytes: Maximum accepted download size. Defaults to 100 MiB and is
+            capped at 500 MiB.
+        overwrite: Replace an existing destination when true. Defaults to false.
+
+    Returns:
+        A short confirmation containing only path, size, media type, SHA-256,
+        and final URL. File contents are never included.
+    """
+    try:
+        max_bytes = int(max_bytes)
+    except (TypeError, ValueError):
+        return "Error: max_bytes must be an integer."
+    if max_bytes < 1:
+        return "Error: max_bytes must be at least 1."
+    max_bytes = min(max_bytes, _ABSOLUTE_DOWNLOAD_MAX_BYTES)
+
+    # Validate a caller-supplied path before making any network request.
+    target: Path | None = None
+    path_is_directory = not path or path.endswith(("/", "\\"))
+    if path:
+        try:
+            target = _safe_path(path)
+        except WorkspaceAccessError as exc:
+            return f"Error: {exc}"
+
+    session = requests.Session()
+    session.trust_env = False
+    response: requests.Response | None = None
+    temporary_path: Path | None = None
+    try:
+        response, final_url = _download_response(session, url)
+        filename = _filename_from_response(response, final_url)
+        if target is None:
+            target = _safe_path(f"tmp/{filename}")
+        elif path_is_directory or target.is_dir():
+            target = _safe_path(target / filename)
+
+        if target.exists() and not overwrite:
+            return f"Error: destination already exists: {_rel(target)}"
+        if target.exists() and not target.is_file():
+            return f"Error: destination is not a file: {_rel(target)}"
+
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = None
+            if declared_size is not None and declared_size > max_bytes:
+                return (
+                    f"Error: download declares {declared_size} bytes, exceeding "
+                    f"the {max_bytes}-byte limit."
+                )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        downloaded = 0
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".part",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            for chunk in response.iter_content(chunk_size=_DOWNLOAD_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                downloaded += len(chunk)
+                if downloaded > max_bytes:
+                    raise ValueError(
+                        f"download exceeded the {max_bytes}-byte limit"
+                    )
+                handle.write(chunk)
+                digest.update(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.replace(temporary_path, target)
+        temporary_path = None
+        media_type = response.headers.get("Content-Type", "unknown").split(";", 1)[0]
+        return (
+            f"OK: downloaded {_rel(target)} ({downloaded} bytes, {media_type})\n"
+            f"SHA-256: {digest.hexdigest()}\nFinal URL: {final_url}"
+        )
+    except (requests.RequestException, ValueError, OSError) as exc:
+        return f"Error: download failed: {exc}"
+    finally:
+        if response is not None:
+            response.close()
+        session.close()
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 @mcp.tool()

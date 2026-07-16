@@ -141,6 +141,7 @@ When using browser tools:
 - Use `browser_snapshot` to inspect page structure.
 - Use `browser_click`, `browser_type`, `browser_fill_form`, `browser_select_option`, and `browser_press_key` for interaction.
 - Use `browser_take_screenshot` when visual confirmation is helpful.
+- Use `download_file` to save PDFs, images, archives, or other files directly to the workspace. Never return binary content or base64 data through browser or content-fetching tools.
 - Do not claim a page action succeeded unless the browser result confirms it.
 
 If a CAPTCHA, login challenge, two-factor authentication, payment page, private account page, or sensitive form appears:

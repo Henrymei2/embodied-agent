@@ -279,6 +279,14 @@ class BasicMemoryAgent(AgentInterface):
         base_system_prompt: str,
         include_core_files: bool = False,
     ) -> str:
+        tool_manager = getattr(self, "_tool_manager", None)
+        if tool_manager:
+            tool_access_prompt = tool_manager.build_tool_access_prompt()
+            if tool_access_prompt:
+                base_system_prompt = (
+                    f"{base_system_prompt}\n\n{tool_access_prompt}"
+                )
+
         latest_user_message = ""
 
         for message in reversed(messages):
@@ -476,6 +484,11 @@ class BasicMemoryAgent(AgentInterface):
         base_system = self._active_system or self._system
 
         while True:
+            tools_for_api = (
+                self._tool_manager.get_formatted_tools("Claude")
+                if getattr(self, "_tool_manager", None)
+                else tools
+            )
             current_system_prompt = self._build_system_prompt_with_workspace_context(
                 messages,
                 base_system,
@@ -484,7 +497,7 @@ class BasicMemoryAgent(AgentInterface):
             stream = self._llm.chat_completion(
                 messages,
                 current_system_prompt,
-                tools=tools,
+                tools=tools_for_api,
             )
             pending_tool_calls.clear()
             current_assistant_message_content.clear()
@@ -607,7 +620,11 @@ class BasicMemoryAgent(AgentInterface):
                 tools_for_api = None
             else:
                 current_system_prompt = base_system
-                tools_for_api = tools
+                tools_for_api = (
+                    self._tool_manager.get_formatted_tools("OpenAI")
+                    if getattr(self, "_tool_manager", None)
+                    else tools
+                )
 
             current_system_prompt = self._build_system_prompt_with_workspace_context(
                 messages,

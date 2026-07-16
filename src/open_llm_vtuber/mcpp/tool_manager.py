@@ -8,6 +8,7 @@ from .types import FormattedTool
 # Key = tool name, value = object label the agent must be near.
 PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "execute_bash": "computer",
+    "download_file": "computer",
     "read_file": "computer",
     "write_file": "computer",
     "append_to_file": "computer",
@@ -22,7 +23,16 @@ PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "remove_calendar_event": "calendar",
 }
 
+# Every tool exposed by these MCP servers shares the same spatial requirement.
+# This keeps dynamically discovered server tools gated without maintaining a
+# separate list of tool names.
+SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
+    "playwright": "computer",
+    "ddg-search": "computer"
+}
+
 PROXIMITY_THRESHOLD = 150.0
+TOOL_DESCRIPTION_LIMIT = 140
 
 
 class ToolManager:
@@ -81,6 +91,60 @@ class ToolManager:
             )
             return []
 
+    def get_required_object(self, tool_name: str) -> str | None:
+        """Return the object required by a tool or its providing MCP server."""
+        required_object = PROXIMITY_REQUIREMENTS.get(tool_name)
+        if required_object is not None:
+            return required_object
+
+        tool = self.tools.get(tool_name)
+        if isinstance(tool, FormattedTool):
+            return SERVER_PROXIMITY_REQUIREMENTS.get(tool.related_server)
+        return None
+
+    def build_tool_access_prompt(self) -> str:
+        """Describe every configured tool, including currently hidden tools."""
+        if not self.tools:
+            return ""
+
+        reachable_objects = set(self.get_reachable_objects())
+        entries = []
+        for tool_name, tool in sorted(
+            self.tools.items(),
+            key=lambda item: (item[1].related_server, item[0]),
+        ):
+            description = " ".join(
+                str(tool.description or "No description available.").split()
+            )
+            if len(description) > TOOL_DESCRIPTION_LIMIT:
+                description = (
+                    description[: TOOL_DESCRIPTION_LIMIT - 1].rsplit(" ", 1)[0]
+                    + "…"
+                )
+
+            required_object = self.get_required_object(tool_name)
+            if required_object is None:
+                access = "anywhere; available now"
+            elif required_object in reachable_objects:
+                access = f"near {required_object}; available now"
+            else:
+                access = f"near {required_object}; currently unavailable"
+
+            entries.append(
+                f"- `{tool_name}` ({tool.related_server}): {description} "
+                f"Access: {access}."
+            )
+
+        return (
+            "## Tool Access Map\n\n"
+            "The tools supplied to you right now are only the tools accessible at "
+            "your current position. Additional configured tools may be hidden until "
+            "you move near their related object. Use scene/navigation tools to move "
+            "there proactively when a hidden tool would help complete the user's "
+            "request; after moving, the newly accessible tools will be supplied.\n\n"
+            + "\n".join(entries)
+        )
+
     def get_formatted_tools(
         self,
         mode: Literal["OpenAI", "Claude"],
@@ -105,7 +169,7 @@ class ToolManager:
             else:
                 tool_name = tool.get("name", "")
 
-            required_object = PROXIMITY_REQUIREMENTS.get(tool_name)
+            required_object = self.get_required_object(tool_name)
             if required_object is None or required_object in reachable_objects:
                 filtered.append(tool)
             else:
@@ -120,7 +184,7 @@ class ToolManager:
 
     def authorize_tool(self, tool_name: str) -> tuple[bool, str | None]:
         """Enforce an object gate immediately before tool execution."""
-        required_object = PROXIMITY_REQUIREMENTS.get(tool_name)
+        required_object = self.get_required_object(tool_name)
         if required_object is None:
             return True, None
         if required_object in self.get_reachable_objects():
