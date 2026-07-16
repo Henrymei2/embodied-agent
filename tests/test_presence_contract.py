@@ -92,6 +92,7 @@ def test_receipt_spends_budget_and_only_keeps_coarse_signals(tmp_path):
         "focus_mode": False,
         "quiet_minutes": 83.3,
         "hour_of_day": 14,
+        "habit_id": None,
     }
     assert set(receipt.signals) == {
         "user_present",
@@ -99,6 +100,7 @@ def test_receipt_spends_budget_and_only_keeps_coarse_signals(tmp_path):
         "focus_mode",
         "quiet_minutes",
         "hour_of_day",
+        "habit_id",
     }
 
 

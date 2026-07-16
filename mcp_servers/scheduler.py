@@ -63,12 +63,24 @@ def _load_tasks() -> dict[str, dict[str, Any]]:
 
 
 def _save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
-    """Persist tasks to disk."""
+    """Persist tasks to disk atomically.
+
+    The tasks file is written by both this in-process loop and the scheduler
+    MCP subprocess, so a plain truncate-then-write can be observed (or collide)
+    mid-write and corrupt the JSON — which _load_tasks would then treat as an
+    empty task set, silently wiping every scheduled task. Writing to a unique
+    temp file and atomically replacing avoids partial/torn writes.
+    """
     try:
         _TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _TASKS_FILE.write_text(
-            json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        temporary = _TASKS_FILE.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            temporary.replace(_TASKS_FILE)
+        finally:
+            temporary.unlink(missing_ok=True)
     except Exception as e:
         logger.error(f"Scheduler: could not save tasks file: {e}")
 

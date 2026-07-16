@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Callable, Optional
 
 from .observation import Observation
 
@@ -47,6 +47,9 @@ class Candidate:
     delivery: str
     # relevance(observation) -> multiplier in [0, 1]; 0 removes the candidate.
     relevance: Callable[[Observation], float]
+    # Set when this candidate was compiled from a learned habit (Habit Engine),
+    # so dispatches and receipts can be traced back to the habit that drove them.
+    habit_id: Optional[str] = None
 
 
 def _idle_boost(obs: Observation) -> float:

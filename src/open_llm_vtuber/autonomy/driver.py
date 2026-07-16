@@ -16,11 +16,18 @@ from typing import Optional
 
 from loguru import logger
 
+from .habits import HabitStore, get_or_create_habit_store, reflect_and_propose
 from .observation import Observation, get_client_presence
 from .planner import AutonomyPlanner, PlannerDecision
 from .presence import PresenceLedger, get_or_create_presence_ledger
 from .settings import AutonomySettings
 from .state import AutonomyState
+
+# How many ticks between habit-reflection passes (16 ticks = 4h at the default
+# 900s tick). Reflection is cheap to skip: it only runs when an LLM is
+# reachable and there is fresh receipt evidence to reason over.
+_REFLECTION_INTERVAL_TICKS = 16
+_REFLECTION_MIN_RECEIPTS = 3
 
 
 def _build_observation(client_uid: str, state: AutonomyState) -> Observation:
@@ -49,11 +56,83 @@ def _workspace_root() -> "object":
     return ensure_workspace().root
 
 
+def _get_llm_complete(client_uid: str):
+    """Best-effort handle on the client's LLM for habit reflection.
+
+    Mirrors how the memory system rides the agent's own stateless LLM; when
+    the agent type doesn't expose one, reflection is silently skipped and the
+    habit engine keeps running with its current repertoire.
+    """
+    from ..client_registry import get_client_context
+    from ..memory import make_llm_complete
+
+    context = get_client_context(client_uid)
+    llm = getattr(getattr(context, "agent_engine", None), "_llm", None)
+    if llm is None:
+        return None
+    try:
+        return make_llm_complete(llm)
+    except Exception:  # noqa: BLE001 - reflection is strictly optional
+        return None
+
+
+def _memory_excerpt() -> str:
+    """Short long-term + today's memory excerpt as reflection evidence."""
+    from datetime import date
+
+    from ..workspace import ensure_workspace
+
+    workspace = ensure_workspace()
+    parts: list[str] = []
+    for path in (
+        workspace.memory_file,
+        workspace.daily_memory_dir / f"{date.today().isoformat()}.md",
+    ):
+        try:
+            if path.exists():
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    parts.append(content)
+        except Exception:  # noqa: BLE001 - excerpt is best effort
+            continue
+    return "\n\n".join(parts)[:3000]
+
+
+async def _maybe_reflect(
+    client_uid: str, presence: PresenceLedger, habits: HabitStore
+) -> None:
+    """Enqueue one habit-reflection pass behind live user requests."""
+    from ..conversations.llm_request_queue import PRIORITY_PASSIVE, get_queue
+
+    llm_complete = _get_llm_complete(client_uid)
+    if llm_complete is None:
+        logger.debug("autonomy: no LLM reachable for habit reflection; skipping")
+        return
+
+    receipts = [receipt.to_dict() for receipt in presence.receipts]
+    if len(receipts) < _REFLECTION_MIN_RECEIPTS:
+        logger.debug("autonomy: not enough receipt evidence for habit reflection")
+        return
+
+    async def _run() -> None:
+        habit = await reflect_and_propose(
+            llm_complete, habits, receipts, _memory_excerpt()
+        )
+        if habit is not None:
+            logger.info(f"autonomy: reflection adopted new trial habit '{habit.name}'")
+
+    queue = get_queue(client_uid)
+    await queue.enqueue(
+        coro=_run(), priority=PRIORITY_PASSIVE, label="autonomy:reflection"
+    )
+
+
 async def _dispatch(
     client_uid: str,
     decision: PlannerDecision,
     observation: Observation,
     presence: PresenceLedger,
+    habits: Optional[HabitStore] = None,
 ) -> bool:
     """Enqueue the chosen autonomous action for the client (like the scheduler)."""
     from ..client_registry import get_client_context, get_client_send
@@ -79,6 +158,7 @@ async def _dispatch(
             score=decision.score,
             reason=decision.reason,
             observation=observation,
+            habit_id=decision.habit_id,
         )
     except ValueError as exc:
         logger.debug(f"autonomy: presence contract blocked dispatch: {exc}")
@@ -91,6 +171,7 @@ async def _dispatch(
         "skip_history": not decision.report,
         "skip_memory": False,
         "presence_receipt_id": receipt.receipt_id,
+        "habit_id": decision.habit_id,
     }
     priority = PRIORITY_PROACTIVE if decision.spoke else PRIORITY_PASSIVE
 
@@ -122,6 +203,8 @@ async def _dispatch(
             priority=priority,
             label=f"autonomy:{decision.direction.value}",
         )
+        if habits is not None and decision.habit_id:
+            habits.record_run(decision.habit_id)
         return True
     except Exception:
         presence.cancel_action(receipt.receipt_id)
@@ -150,10 +233,15 @@ async def autonomy_loop(
     presence = presence or get_or_create_presence_ledger(
         client_uid, workspace_root, settings
     )
+    # Habit Engine: learned behaviors join the planner's candidate pool and
+    # a periodic reflection pass may grow the repertoire.
+    habits = get_or_create_habit_store(workspace_root)
+    ticks_since_reflection = 0
     logger.info(
         f"autonomy: loop started for {client_uid} "
         f"(freq={settings.interruption_frequency}, style={settings.help_style}, "
-        f"confidence={settings.confidence_threshold}, tick={settings.tick_seconds}s)"
+        f"confidence={settings.confidence_threshold}, tick={settings.tick_seconds}s, "
+        f"learned_habits={len(habits.active_habits())})"
     )
 
     while True:
@@ -169,19 +257,34 @@ async def autonomy_loop(
                     break
                 continue  # connected but marked away by the frontend
 
+            # Periodic habit reflection: consider growing the repertoire.
+            ticks_since_reflection += 1
+            if ticks_since_reflection >= _REFLECTION_INTERVAL_TICKS:
+                ticks_since_reflection = 0
+                try:
+                    await _maybe_reflect(client_uid, presence, habits)
+                except Exception as exc:  # noqa: BLE001 - never break the loop
+                    logger.error(f"autonomy: habit reflection failed: {exc}")
+
             decision = planner.propose_and_choose(
-                observation, state, settings, presence=presence
+                observation,
+                state,
+                settings,
+                presence=presence,
+                extra_candidates=habits.active_candidates(),
             )
             logger.debug(
                 f"autonomy: decision={decision.action} "
                 f"direction={decision.direction} score={decision.score:.3f} "
-                f"({decision.reason})"
+                f"habit={decision.habit_id or '-'} ({decision.reason})"
             )
 
             if not decision.is_act:
                 continue
 
-            dispatched = await _dispatch(client_uid, decision, observation, presence)
+            dispatched = await _dispatch(
+                client_uid, decision, observation, presence, habits=habits
+            )
             if dispatched and decision.direction is not None:
                 state.record_action(decision.direction, spoke=decision.spoke)
 

@@ -9,6 +9,14 @@ subject to configurable interruption controls.
 
 from .directions import Direction
 from .driver import autonomy_loop
+from .habits import (
+    HabitStore,
+    LearnedHabit,
+    RelevanceGates,
+    get_or_create_habit_store,
+    parse_habit_proposal,
+    reflect_and_propose,
+)
 from .observation import Observation
 from .planner import (
     ACT_ASK,
@@ -38,13 +46,19 @@ __all__ = [
     "AutonomySettings",
     "AutonomyState",
     "Direction",
+    "HabitStore",
+    "LearnedHabit",
     "Observation",
     "PlannerDecision",
     "PresenceLedger",
     "PresenceReceipt",
+    "RelevanceGates",
     "HELPFUL",
     "DISMISSED",
     "SNOOZED",
     "attention_cost",
     "autonomy_loop",
+    "get_or_create_habit_store",
+    "parse_habit_proposal",
+    "reflect_and_propose",
 ]

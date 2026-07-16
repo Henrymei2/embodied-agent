@@ -75,10 +75,62 @@ def test_move(bt):
     assert "does not exist" in bt.read_file("src.txt")
 
 
-def test_execute_bash_runs_in_workspace(bt):
+def test_execute_bash_uses_container_sandbox(bt, monkeypatch):
+    # execute_bash must route through the container sandbox, not the host.
+    from mcp_servers.docker_sandbox import SandboxResult
+
+    calls = {}
+
+    def fake_run(command, root, timeout):
+        calls["command"] = command
+        return SandboxResult(exit_code=0, stdout="hello-sandbox\n", stderr="")
+
+    monkeypatch.setattr(bt, "run_in_sandbox", fake_run)
     out = bt.execute_bash("echo hello-sandbox")
+    assert calls["command"] == "echo hello-sandbox"
     assert "exit_code: 0" in out
     assert "hello-sandbox" in out
+
+
+def test_execute_bash_fails_closed_without_docker(bt, monkeypatch):
+    # When the sandbox is unavailable and host execution is NOT opted into,
+    # execute_bash must refuse rather than run on the host.
+    from mcp_servers.docker_sandbox import SandboxUnavailableError
+
+    def unavailable(command, root, timeout):
+        raise SandboxUnavailableError("Docker is not available")
+
+    monkeypatch.setattr(bt, "run_in_sandbox", unavailable)
+    monkeypatch.setattr(bt, "_ALLOW_INSECURE_HOST", False)
+    out = bt.execute_bash("echo hi")
+    assert "refused" in out
+    assert "sandbox" in out.lower()
+
+
+def test_execute_bash_insecure_optin_runs_on_host(bt, monkeypatch):
+    # With the explicit opt-in, the host fallback runs (and its firewall applies).
+    from mcp_servers.docker_sandbox import SandboxUnavailableError
+
+    def unavailable(command, root, timeout):
+        raise SandboxUnavailableError("Docker is not available")
+
+    monkeypatch.setattr(bt, "run_in_sandbox", unavailable)
+    monkeypatch.setattr(bt, "_ALLOW_INSECURE_HOST", True)
+    out = bt.execute_bash("echo hello-host")
+    assert "exit_code: 0" in out
+    assert "hello-host" in out
+
+
+def test_insecure_optin_still_blocks_outside_paths(bt, monkeypatch):
+    from mcp_servers.docker_sandbox import SandboxUnavailableError
+
+    def unavailable(command, root, timeout):
+        raise SandboxUnavailableError("Docker is not available")
+
+    monkeypatch.setattr(bt, "run_in_sandbox", unavailable)
+    monkeypatch.setattr(bt, "_ALLOW_INSECURE_HOST", True)
+    out = bt.execute_bash("cat /etc/passwd")
+    assert "refused" in out
 
 
 # --------------------------------------------------------------------------- #
@@ -112,7 +164,9 @@ def test_cannot_delete_workspace_root(bt):
 
 
 # --------------------------------------------------------------------------- #
-# execute_bash command firewall: commands may not reference outside the workspace
+# Host-fallback command firewall (only applied on the opt-in insecure host path).
+# This is best-effort defense-in-depth, NOT the primary boundary; the container
+# sandbox is. These tests pin the firewall's behavior as a unit.
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "command",
@@ -131,10 +185,9 @@ def test_cannot_delete_workspace_root(bt):
         "echo hi > /etc/pwned.txt",  # redirect to outside path
     ],
 )
-def test_execute_bash_refuses_outside_references(bt, command):
+def test_command_firewall_refuses_outside_references(bt, command):
     reason = bt._command_reaches_outside_workspace(command, bt._workspace_root())
     assert reason is not None, f"should have been refused: {command!r}"
-    assert "refused" in bt.execute_bash(command)
 
 
 @pytest.mark.parametrize(
@@ -151,19 +204,6 @@ def test_execute_bash_refuses_outside_references(bt, command):
         "sort data.txt",
     ],
 )
-def test_execute_bash_allows_in_workspace_commands(bt, command):
-    # The firewall must not refuse legitimate in-workspace commands. (They may
-    # still fail for unrelated reasons like a missing file, but never "refused".)
+def test_command_firewall_allows_in_workspace_commands(bt, command):
+    # The firewall must not refuse legitimate in-workspace commands.
     assert bt._command_reaches_outside_workspace(command, bt._workspace_root()) is None
-    assert "refused" not in bt.execute_bash(command)
-
-
-def test_execute_bash_absolute_outside_is_blocked_end_to_end(bt, tmp_path):
-    # Write a secret OUTSIDE the workspace and confirm a shell command can't read
-    # it (the exact escape that was demonstrated before the firewall).
-    secret = tmp_path / "outside_secret.txt"
-    secret.write_text("TOP_SECRET", encoding="utf-8")
-    cmd = f'type "{secret}"' if sys.platform == "win32" else f'cat "{secret}"'
-    out = bt.execute_bash(cmd)
-    assert "refused" in out
-    assert "TOP_SECRET" not in out

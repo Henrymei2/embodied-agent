@@ -52,6 +52,8 @@ class PlannerDecision:
     reason: str = ""
     scores: dict[str, float] = field(default_factory=dict)
     attention_cost: float = 0.0
+    # Which learned habit (if any) the chosen candidate was compiled from.
+    habit_id: Optional[str] = None
 
     @property
     def is_act(self) -> bool:
@@ -94,6 +96,7 @@ class AutonomyPlanner:
         rng: Optional[random.Random] = None,
         now=None,
         presence: Optional[PresenceLedger] = None,
+        extra_candidates: Optional[list[Candidate]] = None,
     ) -> PlannerDecision:
         rng = rng or random.Random()
 
@@ -101,8 +104,11 @@ class AutonomyPlanner:
             return PlannerDecision(ACT_NOTHING, reason="autonomy disabled")
 
         # --- observe + propose: keep only context-relevant candidates -------
+        # Learned habits (Habit Engine) compete on equal footing with the
+        # built-in candidates: same scoring, same gates, no extra privilege.
+        pool = list(CANDIDATES) + list(extra_candidates or [])
         scored: list[tuple[float, Candidate]] = []
-        for candidate in CANDIDATES:
+        for candidate in pool:
             relevance = max(0.0, min(1.0, candidate.relevance(observation)))
             if relevance <= 0.0:
                 continue
@@ -135,6 +141,7 @@ class AutonomyPlanner:
                 score=best_score,
                 reason="below confidence threshold",
                 scores=breakdown,
+                habit_id=best.habit_id,
             )
 
         # Sometimes simply rest, so the agent isn't relentless.
@@ -146,6 +153,7 @@ class AutonomyPlanner:
                 score=best_score,
                 reason="chose to rest this tick",
                 scores=breakdown,
+                habit_id=best.habit_id,
             )
 
         # --- decide delivery ------------------------------------------------
@@ -160,6 +168,7 @@ class AutonomyPlanner:
                 score=best_score,
                 reason="too soon to interrupt the user",
                 scores=breakdown,
+                habit_id=best.habit_id,
             )
 
         cost = attention_cost(action)
@@ -179,6 +188,7 @@ class AutonomyPlanner:
                     reason=gate_reason,
                     scores=breakdown,
                     attention_cost=cost,
+                    habit_id=best.habit_id,
                 )
 
         return PlannerDecision(
@@ -190,6 +200,7 @@ class AutonomyPlanner:
             reason=f"acting on {best.direction.value} via {action}",
             scores=breakdown,
             attention_cost=cost,
+            habit_id=best.habit_id,
         )
 
     @staticmethod

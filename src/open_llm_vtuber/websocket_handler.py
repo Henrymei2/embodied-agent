@@ -70,6 +70,7 @@ class WebSocketHandler:
         self.default_context_cache = default_context_cache
         self.received_data_buffers: Dict[str, np.ndarray] = {}
         self.autonomy_tasks: Dict[str, asyncio.Task] = {}
+        self.scheduler_tasks: Dict[str, asyncio.Task] = {}
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -100,6 +101,8 @@ class WebSocketHandler:
             "presence-context": self._handle_presence_context,
             "autonomy-feedback": self._handle_autonomy_feedback,
             "request-presence-state": self._handle_presence_state_request,
+            "request-habit-state": self._handle_habit_state_request,
+            "habit-action": self._handle_habit_action,
         }
 
     async def handle_new_connection(
@@ -160,7 +163,13 @@ class WebSocketHandler:
         register_client(client_uid, session_service_context, websocket.send_text)
         from mcp_servers.scheduler import _scheduler_loop
 
-        asyncio.create_task(_scheduler_loop(client_uid))
+        # Track the scheduler loop so it is cancelled on disconnect. Leaving it
+        # fire-and-forget leaks a loop on every reconnect; the stale loops race
+        # on the shared scheduler_tasks.json and can advance a recurring task's
+        # next_run before the live loop fires it.
+        self.scheduler_tasks[client_uid] = asyncio.create_task(
+            _scheduler_loop(client_uid)
+        )
 
         # Autonomous behavior loop (curiosity/care/housekeeping/growth/social/
         # work), gated by the configurable interruption controls.
@@ -365,6 +374,10 @@ class WebSocketHandler:
         if autonomy_task and not autonomy_task.done():
             autonomy_task.cancel()
 
+        scheduler_task = self.scheduler_tasks.pop(client_uid, None)
+        if scheduler_task and not scheduler_task.done():
+            scheduler_task.cancel()
+
         from .frontend_bridge import unregister_client_sender
 
         unregister_client_sender(client_uid)
@@ -404,11 +417,29 @@ class WebSocketHandler:
         if autonomy_task and not autonomy_task.done():
             autonomy_task.cancel()
 
+        scheduler_task = self.scheduler_tasks.pop(client_uid, None)
+        if scheduler_task and not scheduler_task.done():
+            scheduler_task.cancel()
+
+        # Mirror handle_disconnect so a connection that fails mid-setup doesn't
+        # leak the queue/worker, bridge sender, client registry, or context.
+        from .frontend_bridge import unregister_client_sender
+        from .client_registry import unregister_client
         from .autonomy.observation import clear_client_presence
         from .autonomy.presence import unregister_presence_ledger
+        from .conversations.llm_request_queue import remove_queue
 
+        unregister_client_sender(client_uid)
+        unregister_client(client_uid)
         clear_client_presence(client_uid)
         unregister_presence_ledger(client_uid)
+        remove_queue(client_uid)
+
+        if context:
+            try:
+                await context.close()
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+                logger.warning(f"Error closing context for failed {client_uid}: {exc}")
 
         from .client_registry import unregister_client
         from .conversations.llm_request_queue import remove_queue
@@ -850,6 +881,10 @@ class WebSocketHandler:
                         int(snooze_minutes) if snooze_minutes is not None else None
                     ),
                 )
+                if ok:
+                    # Habit Engine: if a learned habit drove this action, the
+                    # verdict is evidence for its promotion/retirement too.
+                    self._forward_feedback_to_habit(presence, receipt_id, feedback)
 
         await websocket.send_text(
             json.dumps(
@@ -883,3 +918,61 @@ class WebSocketHandler:
             )
             return
         await websocket.send_text(json.dumps(presence.snapshot()))
+
+    @staticmethod
+    def _forward_feedback_to_habit(presence, receipt_id: str, feedback: str) -> None:
+        """Route a receipt verdict to the learned habit that drove the action."""
+        from .autonomy.habits import get_or_create_habit_store
+        from .workspace import ensure_workspace
+
+        receipt = next(
+            (item for item in presence.receipts if item.receipt_id == receipt_id),
+            None,
+        )
+        habit_id = receipt.signals.get("habit_id") if receipt is not None else None
+        if not habit_id:
+            return
+        try:
+            store = get_or_create_habit_store(ensure_workspace().root)
+            store.apply_feedback(habit_id, feedback)
+        except Exception as exc:  # noqa: BLE001 - habit learning is best effort
+            logger.warning(f"Failed to forward feedback to habit {habit_id}: {exc}")
+
+    async def _handle_habit_state_request(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Return the agent's learned habits (Habit Engine transparency panel)."""
+        from .autonomy.habits import get_or_create_habit_store
+        from .workspace import ensure_workspace
+
+        store = get_or_create_habit_store(ensure_workspace().root)
+        await websocket.send_text(json.dumps(store.snapshot(), ensure_ascii=False))
+
+    async def _handle_habit_action(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Let the user manage learned habits; currently supports retiring one."""
+        from .autonomy.habits import get_or_create_habit_store
+        from .workspace import ensure_workspace
+
+        action = data.get("action")
+        habit_id = data.get("habit_id")
+        if action != "retire" or not isinstance(habit_id, str):
+            ok, message = False, "supported action: retire (with habit_id)"
+        else:
+            store = get_or_create_habit_store(ensure_workspace().root)
+            ok = store.retire(habit_id)
+            message = "habit retired" if ok else "habit not found or already retired"
+
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "habit-action-result",
+                    "ok": ok,
+                    "habit_id": habit_id,
+                    "message": message,
+                }
+            )
+        )
+        store = get_or_create_habit_store(ensure_workspace().root)
+        await websocket.send_text(json.dumps(store.snapshot(), ensure_ascii=False))

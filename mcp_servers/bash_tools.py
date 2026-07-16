@@ -42,6 +42,10 @@ from src.open_llm_vtuber.workspace import (
     ensure_workspace,
     resolve_workspace_path,
 )
+from mcp_servers.docker_sandbox import (
+    SandboxUnavailableError,
+    run_in_sandbox,
+)
 
 # Allow overriding the workspace location for tests / alternative deployments.
 _WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or None
@@ -50,6 +54,12 @@ _WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or None
 _MAX_OUTPUT_CHARS = 20_000
 _DEFAULT_BASH_TIMEOUT = 30
 _MAX_BASH_TIMEOUT = 120
+
+# execute_bash runs in a Docker sandbox and fails closed when Docker is absent.
+# An operator who is ALREADY inside a disposable, isolated environment (e.g. a
+# throwaway VM) can opt back into running on the host by setting this to "1".
+# This is never the default because host execution cannot be securely confined.
+_ALLOW_INSECURE_HOST = os.environ.get("EMBODIED_AGENT_ALLOW_INSECURE_HOST_BASH") == "1"
 
 # Env vars whose names match these fragments are stripped from the environment
 # given to `execute_bash` children, so agent-run commands can't trivially
@@ -205,14 +215,19 @@ def _truncate(text: str) -> str:
 
 @mcp.tool()
 def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
-    """Run a shell command inside the agent workspace.
+    """Run a shell command inside an isolated container sandbox.
 
-    The command's working directory is always the workspace root
-    (`~/embodied-agent/`); it cannot be changed, and the command may only
-    reference locations inside the workspace. Commands that reference an
-    absolute/network/parent path outside the workspace, or that use variable
-    expansion or command substitution, are refused. Use this for things the
+    The command runs inside a locked-down Docker container whose only view of
+    the host filesystem is the agent workspace (`~/embodied-agent/`), mounted at
+    /workspace with the working directory pinned there. The container has no
+    network access, a read-only root filesystem, dropped Linux capabilities, and
+    memory/PID/CPU ceilings. Because the host filesystem is not mounted, the
+    command cannot read or write anything outside the workspace regardless of
+    what paths, quoting, or interpreters it uses. Use this for things the
     dedicated file tools don't cover (running scripts, grep, etc.).
+
+    If Docker is unavailable the command is refused: the sandbox fails closed
+    rather than running on the host.
 
     Args:
         command: The shell command to execute.
@@ -223,15 +238,48 @@ def execute_bash(command: str, timeout: int = _DEFAULT_BASH_TIMEOUT) -> str:
         Combined exit code, stdout and stderr.
     """
     root = _workspace_root()
+    timeout = max(1, min(int(timeout), _MAX_BASH_TIMEOUT))
 
+    try:
+        result = run_in_sandbox(command, root, timeout)
+    except SandboxUnavailableError as exc:
+        if _ALLOW_INSECURE_HOST:
+            return _execute_bash_on_host_insecure(command, root, timeout)
+        return (
+            f"Error: refused: {exc}\nexecute_bash requires a container sandbox. "
+            "Set EMBODIED_AGENT_ALLOW_INSECURE_HOST_BASH=1 only if this process "
+            "already runs inside a disposable, isolated environment."
+        )
+    except subprocess.TimeoutExpired:
+        return f"Error: command timed out after {timeout}s (sandbox container killed)."
+    except Exception as exc:  # noqa: BLE001 - surface any launch failure to the agent
+        return f"Error: failed to run command in sandbox: {exc}"
+
+    parts = [f"exit_code: {result.exit_code}"]
+    if result.stdout:
+        parts.append(f"stdout:\n{result.stdout}")
+    if result.stderr:
+        parts.append(f"stderr:\n{result.stderr}")
+    if not result.stdout and not result.stderr:
+        parts.append("(no output)")
+    return _truncate("\n".join(parts))
+
+
+def _execute_bash_on_host_insecure(command: str, root: Path, timeout: int) -> str:
+    """Run a command directly on the host (NO container isolation).
+
+    Only reachable when EMBODIED_AGENT_ALLOW_INSECURE_HOST_BASH=1. The static
+    path firewall below is best-effort defense-in-depth and is known to be
+    bypassable (quote-splitting, indirect execution). It is NOT a substitute for
+    the container sandbox; it merely reduces casual escapes for operators who
+    have accepted host execution inside an already-isolated environment.
+    """
     reason = _command_reaches_outside_workspace(command, root)
     if reason is not None:
         return (
             f"Error: refused: command {reason}. execute_bash may only operate "
             "inside the workspace."
         )
-
-    timeout = max(1, min(int(timeout), _MAX_BASH_TIMEOUT))
 
     popen_kwargs: dict = {
         "shell": True,

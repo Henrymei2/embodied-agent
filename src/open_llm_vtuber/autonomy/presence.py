@@ -250,6 +250,7 @@ class PresenceLedger:
         reason: str,
         observation: Observation,
         now: Optional[datetime] = None,
+        habit_id: Optional[str] = None,
     ) -> PresenceReceipt:
         """Consume budget and persist a privacy-preserving action receipt."""
         now = _as_utc(now)
@@ -283,6 +284,9 @@ class PresenceLedger:
                     else None
                 ),
                 "hour_of_day": observation.hour_of_day,
+                # Traceability back to the learned habit that drove this
+                # action (Habit Engine); None for built-in behaviors.
+                "habit_id": habit_id,
             },
         )
         self.receipts.append(receipt)
