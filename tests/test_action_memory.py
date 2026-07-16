@@ -59,10 +59,11 @@ def test_describe_openai_toolcallobject_shape():
     assert agent._describe_tool_action(call) == "moved to computer"
 
 
-def test_speak_tool_is_not_recorded_as_action():
+def test_external_tool_named_speak_gets_generic_description():
     agent = _bare_agent()
     assert (
-        agent._describe_tool_action({"name": "speak", "input": {"text": "hi"}}) is None
+        agent._describe_tool_action({"name": "speak", "input": {"text": "hi"}})
+        == "used the speak tool"
     )
 
 
@@ -82,14 +83,14 @@ def test_record_tool_actions_writes_into_memory(tmp_path):
         [
             {"name": "move_to", "input": {"target": "calendar"}},
             {"name": "get_scene_status", "input": {}},
-            {"name": "speak", "input": {"text": "hello"}},  # ignored
+            {"name": "read_file", "input": {"path": "notes.txt"}},
         ]
     )
 
     rendered = mm.render_context()
     assert "[action] moved to calendar" in rendered
     assert "[action] checked its own position in the scene" in rendered
-    assert "hello" not in rendered  # speak is not an embodied action
+    assert "[action] used the read_file tool" in rendered
 
 
 def test_record_tool_actions_no_memory_is_safe():

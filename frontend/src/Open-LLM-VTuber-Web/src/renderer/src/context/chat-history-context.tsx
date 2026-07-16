@@ -14,7 +14,7 @@ interface ChatHistoryState {
   historyList: HistoryInfo[];
   currentHistoryUid: string | null;
   appendHumanMessage: (content: string) => void;
-  appendAIMessage: (content: string, name?: string, avatar?: string, spoken?: boolean) => void;
+  appendAIMessage: (content: string, name?: string, avatar?: string) => void;
   appendOrUpdateToolCallMessage: (toolMessageData: Partial<Message>) => void; // Accept partial data
   setMessages: (messages: Message[]) => void; // Use the unified Message type
   setHistoryList: (
@@ -80,7 +80,7 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
    * Append or update an AI message in the chat history
    * @param content - Message content
    */
-  const appendAIMessage = useCallback((content: string, name?: string, avatar?: string, spoken = false) => {
+  const appendAIMessage = useCallback((content: string, name?: string, avatar?: string) => {
     setMessages((prevMessages) => {
       const lastMessage = prevMessages[prevMessages.length - 1];
 
@@ -90,7 +90,6 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
         || !lastMessage
         || lastMessage.role !== 'ai'
         || lastMessage.type !== 'text'
-        || lastMessage.spoken !== spoken
       ) {
         setForceNewMessage(false); // Reset the flag
         return [...prevMessages, {
@@ -101,7 +100,6 @@ export function ChatHistoryProvider({ children }: { children: React.ReactNode })
           timestamp: new Date().toISOString(),
           name,
           avatar,
-          spoken,
         }];
       }
 

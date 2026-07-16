@@ -7,6 +7,24 @@ from pathlib import Path
 
 DEFAULT_WORKSPACE_DIR = Path.home() / "embodied-agent"
 
+LEGACY_SPEAK_OUTPUT_RULES = """## Agent Output Rules
+- The agent can speak directly to the user only by using the reserved `speak` tool.
+- Use `speak(text: str)` for brief plain text that should be heard by the user.
+- Do not use Markdown, code blocks, tables, bullet lists, or multiline formatting in `speak`.
+- Use `speak` only when user-facing speech is necessary or helpful.
+- Do not speak during every intermediate step or routine tool operation.
+- Keep tool progress, reasoning, status updates, and non-spoken assistant text outside `speak`.
+- Text output and spoken output must remain clearly separated in the conversation UI.
+- Text-to-speech must only use text supplied through `speak`."""
+
+TTS_OUTPUT_RULES = """## Agent Output Rules
+- Normal assistant responses are displayed and spoken aloud through text-to-speech.
+- Keep responses concise, conversational, and easy to understand when heard.
+- Prefer short sentences and plain prose.
+- Avoid unnecessary Markdown, symbol-heavy formatting, and narration of routine steps.
+- Always answer the user's request completely.
+- Use necessary detail, lists, code, or exact text when the task requires them."""
+
 ROOT_FILES = {
     "AGENT.md": """# AGENT.md
 
@@ -42,7 +60,7 @@ Core memory for the agent.
 
 Use this for important long-term memories, preferences, and decisions.
 """,
-    "RULE.md": """# RULE.md
+    "RULE.md": f"""# RULE.md
 
 Rules for the agent.
 
@@ -53,15 +71,7 @@ Rules for the agent.
 - Do not claim a task is complete unless it has actually been completed.
 - Do not invent observations, file contents, tool results, or environment state.
 
-## Agent Output Rules
-- The agent can speak directly to the user only by using the reserved `speak` tool.
-- Use `speak(text: str)` for brief plain text that should be heard by the user.
-- Do not use Markdown, code blocks, tables, bullet lists, or multiline formatting in `speak`.
-- Use `speak` only when user-facing speech is necessary or helpful.
-- Do not speak during every intermediate step or routine tool operation.
-- Keep tool progress, reasoning, status updates, and non-spoken assistant text outside `speak`.
-- Text output and spoken output must remain clearly separated in the conversation UI.
-- Text-to-speech must only use text supplied through `speak`.
+{TTS_OUTPUT_RULES}
 
 ## Filesystem Rule
 The agent may only read, write, create, edit, delete, or execute files inside the workspace directory.
@@ -205,6 +215,14 @@ def ensure_workspace(workspace_dir: str | Path | None = None) -> Workspace:
         file_path = root / filename
         if not file_path.exists():
             file_path.write_text(content, encoding="utf-8")
+
+    rule_file = root / "RULE.md"
+    rule_text = rule_file.read_text(encoding="utf-8")
+    if LEGACY_SPEAK_OUTPUT_RULES in rule_text:
+        rule_file.write_text(
+            rule_text.replace(LEGACY_SPEAK_OUTPUT_RULES, TTS_OUTPUT_RULES, 1),
+            encoding="utf-8",
+        )
 
     today_file = root / "memory" / f"{date.today().isoformat()}.md"
     if not today_file.exists():

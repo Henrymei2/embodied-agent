@@ -33,7 +33,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
     clearResponse,
     setForceNewMessage,
     appendHumanMessage,
-    appendAIMessage,
     appendOrUpdateToolCallMessage,
   } = useChatHistory();
   const { addAudioTask } = useAudioTask();
@@ -260,16 +259,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           appendHumanMessage(message.text);
         }
         break;
-      case 'agent_text':
-        if (message.content) {
-          appendAIMessage(
-            message.content,
-            message.display_text?.name,
-            message.display_text?.avatar,
-            false,
-          );
-        }
-        break;
       case 'error':
         toaster.create({
           title: message.message,
@@ -340,7 +329,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, appendAIMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

@@ -8,7 +8,7 @@ from loguru import logger
 from ..message_handler import message_handler
 from .types import WebSocketSend, BroadcastContext
 from .tts_manager import TTSTaskManager
-from ..agent.output_types import AgentTextOutput, SentenceOutput, AudioOutput
+from ..agent.output_types import SentenceOutput, AudioOutput
 from ..agent.input_types import BatchInput, TextData, ImageData, TextSource, ImageSource
 from ..asr.asr_interface import ASRInterface
 from ..tts.tts_interface import TTSInterface
@@ -42,7 +42,7 @@ def create_batch_input(
 
 
 async def process_agent_output(
-    output: Union[AgentTextOutput, AudioOutput, SentenceOutput],
+    output: Union[AudioOutput, SentenceOutput],
     character_config: Any,
     tts_engine: TTSInterface,
     websocket_send: WebSocketSend,
@@ -55,9 +55,7 @@ async def process_agent_output(
 
     full_response = ""
     try:
-        if isinstance(output, AgentTextOutput):
-            full_response = await handle_agent_text_output(output, websocket_send)
-        elif isinstance(output, SentenceOutput):
+        if isinstance(output, SentenceOutput):
             full_response = await handle_sentence_output(
                 output,
                 tts_engine,
@@ -77,27 +75,6 @@ async def process_agent_output(
             )
         )
 
-    return full_response
-
-
-async def handle_agent_text_output(
-    output: AgentTextOutput,
-    websocket_send: WebSocketSend,
-) -> str:
-    """Handle display-only assistant text without TTS synthesis."""
-    full_response = ""
-    async for display_text in output:
-        full_response += display_text.text
-        await websocket_send(
-            json.dumps(
-                {
-                    "type": "agent_text",
-                    "content": display_text.text,
-                    "display_text": display_text.to_dict(),
-                    "spoken": False,
-                }
-            )
-        )
     return full_response
 
 
