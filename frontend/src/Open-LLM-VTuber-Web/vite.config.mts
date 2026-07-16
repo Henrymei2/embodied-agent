@@ -50,45 +50,15 @@ const createConfig = async (outDir: string) => ({
     outDir: path.join(__dirname, outDir),
     emptyOutDir: true,
     assetsDir: "assets",
-    // ONNX Runtime ships as one pre-minified module (~545 kB). First-party and
-    // other vendor code is split below, so keep the warning threshold narrowly
-    // above that indivisible dependency instead of masking larger regressions.
-    chunkSizeWarningLimit: 560,
+    // This application eagerly imports several CommonJS packages which refer
+    // back to one another (notably VAD, ONNX Runtime, React, and UI helpers).
+    // Forcing package-based manual chunks turns those references into browser
+    // ESM initialization cycles and leaves the page blank. Let Rollup preserve
+    // a safe evaluation order in the entry bundle instead.
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       input: {
         main: path.join(__dirname, "src/renderer/index.html"),
-      },
-      output: {
-        manualChunks(id: string) {
-          const moduleId = normalizePath(id);
-          if (!moduleId.includes('/node_modules/')) return undefined;
-          if (moduleId.includes('/onnxruntime-web/')) return 'onnx-runtime';
-          if (moduleId.includes('/@ricky0123/vad-web/')) return 'voice-activity';
-          if (
-            moduleId.includes('/@chakra-ui/') ||
-            moduleId.includes('/@emotion/') ||
-            moduleId.includes('/framer-motion/') ||
-            moduleId.includes('/react-icons/') ||
-            moduleId.includes('/next-themes/')
-          ) {
-            return 'ui';
-          }
-          if (moduleId.includes('/@chatscope/')) return 'chat';
-          if (
-            moduleId.includes('/react/') ||
-            moduleId.includes('/react-dom/') ||
-            moduleId.includes('/scheduler/')
-          ) {
-            return 'react';
-          }
-          if (
-            moduleId.includes('/i18next/') ||
-            moduleId.includes('/react-i18next/')
-          ) {
-            return 'i18n';
-          }
-          return 'vendor';
-        },
       },
     },
   },
