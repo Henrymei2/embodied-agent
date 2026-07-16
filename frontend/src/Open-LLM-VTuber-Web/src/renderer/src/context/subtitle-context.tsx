@@ -24,8 +24,7 @@ interface SubtitleState {
  * Default values and constants
  */
 const DEFAULT_SUBTITLE = {
-  text: "Hi, I'm some random AI VTuber. Who the hell are ya? "
-        + 'Ahh, you must be amazed by my awesomeness, right? right?',
+  text: ""
 };
 
 /**
