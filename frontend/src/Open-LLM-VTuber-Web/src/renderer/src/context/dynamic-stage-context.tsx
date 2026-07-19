@@ -35,7 +35,14 @@ export interface StageNode {
   alt?: string;
   texture?: StageTexture;
   spritesheet?: StageSpritesheet;
+  uiWindow?: FurnitureWindowConfig;
   style?: StageNodeStyle;
+}
+
+export interface FurnitureWindowConfig {
+  title: string;
+  body?: string;
+  provider?: "google_calendar_status";
 }
 
 export interface StageTexture {
@@ -69,7 +76,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 2;
+  version: 3;
   canvas: {
     width: number;
     height: number;
@@ -116,6 +123,7 @@ export interface FrontendActionResult {
     version: number;
     texture: string;
     spritesheet: string;
+    furniture_window: string;
     move_duration_ms: number;
     patch_shape: string;
   };
@@ -132,7 +140,7 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 2;
+const STAGE_VERSION = 3;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
 
@@ -188,6 +196,11 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
         src: "./stage-assets/calendar.png",
         fit: "contain",
         alt: "calendar",
+      },
+      uiWindow: {
+        title: "Google Calendar",
+        body: "Connection status for the primary calendar.",
+        provider: "google_calendar_status",
       },
       style: {
         background: "rgba(13, 148, 136, 0.9)",
@@ -341,6 +354,27 @@ const validateTexture = (texture: unknown, nodeId: string, errors: string[]) => 
   }
 };
 
+const validateUiWindow = (uiWindow: unknown, nodeId: string, errors: string[]) => {
+  if (uiWindow === undefined) return;
+  if (!isRecord(uiWindow)) {
+    errors.push(`Node ${nodeId} uiWindow must be an object.`);
+    return;
+  }
+  const allowedKeys = new Set(["title", "body", "provider"]);
+  Object.keys(uiWindow).forEach((key) => {
+    if (!allowedKeys.has(key)) errors.push(`Node ${nodeId} uiWindow.${key} is not allowed.`);
+  });
+  if (typeof uiWindow.title !== "string" || uiWindow.title.trim().length === 0 || uiWindow.title.length > 120 || /[<>]/.test(uiWindow.title)) {
+    errors.push(`Node ${nodeId} uiWindow.title must contain 1-120 characters.`);
+  }
+  if (!isSafeText(uiWindow.body, 500) || (typeof uiWindow.body === "string" && /[<>]/.test(uiWindow.body))) {
+    errors.push(`Node ${nodeId} uiWindow.body contains unsafe text.`);
+  }
+  if (uiWindow.provider !== undefined && uiWindow.provider !== "google_calendar_status") {
+    errors.push(`Node ${nodeId} uiWindow.provider is not supported.`);
+  }
+};
+
 const validateSpritesheet = (spritesheet: unknown, nodeId: string, errors: string[]) => {
   if (spritesheet === undefined) {
     return;
@@ -421,7 +455,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (candidate.version !== 1) {
+  if (candidate.version !== 1 && candidate.version !== 2) {
     return candidate;
   }
 
@@ -445,6 +479,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
         ...node,
         texture: node.texture ?? defaultNode.texture,
         spritesheet: node.spritesheet ?? defaultNode.spritesheet,
+        uiWindow: node.uiWindow ?? defaultNode.uiWindow,
         style: {
           ...(defaultNode.style || {}),
           ...(isRecord(node.style) ? node.style : {}),
@@ -536,7 +571,7 @@ export const validateStageDocument = (candidate: unknown): {
   }
 
   if (candidate.version !== STAGE_VERSION) {
-    errors.push("Stage version must be 2.");
+    errors.push("Stage version must be 3.");
   }
 
   if (!isRecord(candidate.canvas)) {
@@ -597,6 +632,7 @@ export const validateStageDocument = (candidate: unknown): {
       }
       validateTexture(node.texture, String(id || index), errors);
       validateSpritesheet(node.spritesheet, String(id || index), errors);
+      validateUiWindow(node.uiWindow, String(id || index), errors);
       validateNodeStyle(node.style, String(id || index), errors);
     });
   }
@@ -751,6 +787,7 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
             version: STAGE_VERSION,
             texture: "nodes may include texture: { src, fit, alt }.",
             spritesheet: "avatar nodes may include spritesheet: { src, frameWidth, frameHeight, fps, animations, defaultAnimations }.",
+            furniture_window: "nodes may include uiWindow: { title, body?, provider? }; providers are allowlisted.",
             move_duration_ms: DEFAULT_MOVE_DURATION_MS,
             patch_shape: "args.patch may include canvas, nodes, remove_node_ids, metadata. Node assets use safe URL/data-image/relative src strings.",
           },

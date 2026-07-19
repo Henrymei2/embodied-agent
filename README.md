@@ -6,14 +6,16 @@ scheduling, and consent-aware autonomous behavior.
 
 ## Current capabilities
 
-- **Embodied room:** persistent stage v2 with an animated avatar, bed, computer,
+- **Embodied room:** persistent stage v3 with an animated avatar, bed, computer,
   calendar, validated textures, and safe object placement/removal.
 - **Spatial tools:** `get_object_position`, `list_objects`, `get_scene_status`,
   `move_to`, `place_object`, and `remove_object` through the scene MCP server.
 - **Hard proximity gates:** computer and calendar tools are hidden when the
   avatar is far away and re-authorized immediately before execution.
-- **Private calendar:** persistent local event list/add/update/remove tools tied
-  to the calendar object; no cloud account or network service is required.
+- **Google Calendar:** OAuth-backed event list/add/update/remove tools tied to
+  the calendar object, with connection status in its furniture window.
+- **Furniture windows:** safe declarative hover/focus panels with allowlisted
+  providers for live integration status.
 - **Persistent context:** contextual, daily, and long-term memory plus workspace
   knowledge retrieval and embodied-action recording.
 - **Agent runtime:** priority-queued user, scheduled, and autonomous work with
@@ -22,7 +24,7 @@ scheduling, and consent-aware autonomous behavior.
   respect focus/snooze state, produce why-I-acted receipts, and learn bounded
   preferences from explicit feedback.
 - **Multi-client-safe routing:** live frontend actions are bound to the exact
-  client and character configuration that initiated them.
+  client and the single configured character identity that initiated them.
 
 ## Quick start
 
@@ -35,7 +37,8 @@ Copy-Item config_templates/conf.default.yaml conf.yaml
 uv run run_server.py
 ```
 
-The server uses `conf.yaml`; character alternatives live under `characters/`.
+The server uses one character from `conf.yaml`; alternate-character switching
+is not part of the runtime.
 The default MCP set includes scene, calendar, scheduler, sandboxed workspace,
 time, and search tools.
 
@@ -65,14 +68,13 @@ npm run build:web
 - [Project status and architecture](doc/PROJECT_STATUS.md)
 - [Frontend action protocol](frontend/frontend_api_doc.md)
 - [Presence Contract](doc/PRESENCE_CONTRACT.md)
-- [Local calendar tools](doc/CALENDAR_TOOLS.md)
+- [Google Calendar tools and OAuth setup](doc/CALENDAR_TOOLS.md)
 - [Configuration templates](config_templates/README.md)
 
 ## Deliberate boundaries
 
-- The bundled calendar is local-first. Google Calendar requires a separate
-  OAuth adapter and user credentials; the project does not pretend that
-  integration is configured.
+- Google Calendar remains unavailable until the operator explicitly supplies
+  an external OAuth client JSON and completes consent from the calendar window.
 - Browser UI plumbing is present, but a third-party browser MCP provider and
   its credentials/runtime must be configured separately.
 - Presence signals contain idle/present/focus values only. Window titles,

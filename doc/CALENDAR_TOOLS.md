@@ -1,49 +1,59 @@
-# Local Calendar Tools
+# Google Calendar Tools
 
-## Feature description
+## Google Cloud setup
 
-The calendar object now owns a private, persistent calendar MCP server. Events
-are stored locally in `~/embodied-agent/calendar/events.json`; no account,
-network request, or cloud synchronization is required.
+1. Enable the Google Calendar API and Gmail API in a Google Cloud project.
+2. Configure the OAuth consent screen and add test users while the app remains
+   in testing. The requested Calendar and Gmail scopes can require Google
+   verification before broader distribution.
+3. Create a **Web application** OAuth client and register this exact callback:
+   `http://localhost:12393/api/integrations/google/oauth/callback`.
+4. Download the client JSON to a private location outside this repository.
+5. Rotate any client secret that has appeared in source, chat, logs, or issue
+   text, then put the fixed file path directly in `conf.yaml`:
+
+   ```yaml
+   system_config:
+     google_integration:
+       enabled: true
+       client_secrets_file: '/private/google-client.json'
+       redirect_uri: 'http://localhost:12393/api/integrations/google/oauth/callback'
+   ```
+
+If the server origin or port changes, update both `conf.yaml` and the OAuth
+client's registered redirect URI. The values must match exactly.
+
+## Authorization and storage
+
+Hover, focus, or tap the calendar furniture. The panel reports whether the
+server is configured and connected. When authorization is required, its button
+opens Google consent in the system browser. The flow requests offline access
+and these application-wide scopes:
+
+- Calendar list read-only
+- Calendar event free/busy
+- Calendar event read/write
+- Gmail compose
+- Gmail read-only
+
+Gmail data is not accessed by this version. Tokens are stored app-wide in the
+platform user-data directory, outside the repository and agent workspace, with
+restrictive file permissions where the operating system supports them. Never
+commit the downloaded client JSON or token file.
 
 ## Tools
 
 | Tool | Purpose |
 | --- | --- |
-| `list_calendar_events` | List events overlapping a range; defaults to the next seven days |
-| `add_calendar_event` | Create an event with title, start, end, and optional notes |
-| `update_calendar_event` | Update selected fields by event ID |
-| `remove_calendar_event` | Remove an event by event ID |
+| `list_calendar_events` | List expanded primary-calendar events over a range |
+| `add_calendar_event` | Create a timed primary-calendar event |
+| `update_calendar_event` | Update selected fields by Google event ID |
+| `remove_calendar_event` | Delete an event by Google event ID |
 
-All timestamps must be ISO 8601 values with an explicit UTC offset, for example
-`2026-07-14T14:00:00-04:00`. Events are normalized to UTC, event IDs are stable,
-writes are atomic, query results are bounded, and the store is capped at 5,000
-events.
+Input timestamps require ISO 8601 offsets. Listed all-day events use date-valued
+`start`/`end` fields and `all_day: true`. Calendar tools return an authorization
+error until Google is connected; the legacy workspace `events.json` is neither
+read nor modified.
 
-## Embodiment rule
-
-Calendar tools are exposed only when the avatar is within 150 stage units of
-the calendar. The same check runs again immediately before every call, so a
-stale schema or injected tool call cannot bypass the spatial rule.
-
-## Configuration
-
-The default configuration enables the `calendar` MCP server:
-
-```yaml
-mcp_enabled_servers:
-  - bash
-  - scene
-  - calendar
-  - scheduler
-  - time
-  - ddg-search
-```
-
-## Cloud calendar boundary
-
-Google Calendar and other providers require OAuth consent, token storage, API
-credentials, and provider-specific revocation handling. Those are intentionally
-not impersonated by the local tool. A future cloud adapter should preserve the
-same tool contract and add an explicit connected-account indicator and consent
-flow.
+Calendar tools remain exposed only when the avatar is within 150 stage units of
+the calendar, and proximity is checked again immediately before execution.

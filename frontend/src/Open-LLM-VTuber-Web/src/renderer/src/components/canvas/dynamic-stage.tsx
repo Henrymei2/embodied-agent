@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Image, Text } from "@chakra-ui/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Box, Button, Image, Spinner, Text } from "@chakra-ui/react";
 import {
   StageDirection,
   StageNode,
@@ -7,9 +8,200 @@ import {
   StageSpritesheet,
   useDynamicStage,
 } from "@/context/dynamic-stage-context";
+import { useWebSocket } from "@/context/websocket-context";
 
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
 const MOVE_DURATION_MS = 900;
+const HOVER_DELAY_MS = 250;
+const CLOSE_DELAY_MS = 140;
+
+interface GoogleStatus {
+  configured: boolean;
+  connected: boolean;
+  status: "connected" | "authorization_required" | "unconfigured" | "error";
+  message: string;
+}
+
+const statusCache = new Map<string, { expires: number; value: GoogleStatus }>();
+
+function FurnitureWindow({
+  node,
+  anchor,
+  open,
+  onEnter,
+  onLeave,
+}: {
+  node: StageNode;
+  anchor: HTMLElement | null;
+  open: boolean;
+  onEnter: () => void;
+  onLeave: () => void;
+}) {
+  const { baseUrl } = useWebSocket();
+  const [status, setStatus] = useState<GoogleStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const config = node.uiWindow;
+  const provider = config?.provider;
+
+  const loadStatus = useCallback(async (force = false) => {
+    if (provider !== "google_calendar_status") return;
+    const cacheKey = `${baseUrl}:${provider}`;
+    const cached = statusCache.get(cacheKey);
+    if (!force && cached && cached.expires > Date.now()) {
+      setStatus(cached.value);
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch(`${baseUrl}/api/integrations/google/status`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("status request failed");
+      const value = await response.json() as GoogleStatus;
+      statusCache.set(cacheKey, { expires: Date.now() + 15_000, value });
+      setStatus(value);
+    } catch (_error) {
+      setStatus({
+        configured: true,
+        connected: false,
+        status: "error",
+        message: "Connection status is unavailable.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [baseUrl, provider]);
+
+  useEffect(() => {
+    if (open) void loadStatus();
+  }, [loadStatus, open]);
+
+  useEffect(() => {
+    if (!open || provider !== "google_calendar_status") return undefined;
+    const refresh = () => void loadStatus(true);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [loadStatus, open, provider]);
+
+  if (!open || !anchor || !config) return null;
+  const rect = anchor.getBoundingClientRect();
+  const width = 288;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
+  const showBelow = rect.top < 190;
+  const position = showBelow
+    ? { top: rect.bottom + 10 }
+    : { bottom: window.innerHeight - rect.top + 10 };
+
+  const authorize = () => {
+    const url = new URL(
+      "/api/integrations/google/authorize",
+      baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`,
+    ).toString();
+    if (window.api?.openGoogleAuthorization) {
+      void window.api.openGoogleAuthorization(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  return createPortal(
+    <Box
+      role="dialog"
+      aria-label={config.title}
+      position="fixed"
+      left={`${left}px`}
+      {...position}
+      width={`${width}px`}
+      maxHeight="min(320px, calc(100vh - 24px))"
+      overflowY="auto"
+      bg="rgba(15, 23, 42, 0.97)"
+      color="white"
+      border="1px solid rgba(148, 163, 184, 0.5)"
+      borderRadius="12px"
+      boxShadow="0 20px 50px rgba(0, 0, 0, 0.38)"
+      p="16px"
+      zIndex={10000}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <Text fontWeight="700" fontSize="md">{config.title}</Text>
+      {config.body && <Text mt="6px" fontSize="sm" color="gray.300">{config.body}</Text>}
+      {provider === "google_calendar_status" && (
+        <Box mt="12px" aria-live="polite">
+          {!status ? (
+            <Spinner size="sm" aria-label="Loading Google Calendar status" />
+          ) : (
+            <>
+              <Text fontSize="sm" color={status?.connected ? "green.300" : "orange.200"}>
+                {status?.message || "Connection status is unavailable."}
+              </Text>
+              {loading && <Spinner mt="8px" size="xs" aria-label="Refreshing Google Calendar status" />}
+              <Button mt="12px" size="sm" onClick={authorize}>
+                {status.connected ? "Reauthenticate with Google" : "Authenticate with Google"}
+              </Button>
+            </>
+          )}
+        </Box>
+      )}
+    </Box>,
+    document.body,
+  );
+}
+
+function useFurnitureWindow(node: StageNode) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const setElectronInteractive = useCallback((interactive: boolean) => {
+    window.api?.updateComponentHover?.(`furniture-${node.id}`, interactive);
+  }, [node.id]);
+
+  const clearTimers = useCallback(() => {
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    openTimer.current = null;
+    closeTimer.current = null;
+  }, []);
+  const enter = useCallback((immediate = false) => {
+    if (!node.uiWindow) return;
+    setElectronInteractive(true);
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    if (immediate) setOpen(true);
+    else openTimer.current = window.setTimeout(() => setOpen(true), HOVER_DELAY_MS);
+  }, [node.uiWindow, setElectronInteractive]);
+  const leave = useCallback(() => {
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    closeTimer.current = window.setTimeout(() => {
+      setOpen(false);
+      setElectronInteractive(false);
+    }, CLOSE_DELAY_MS);
+  }, [setElectronInteractive]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setElectronInteractive(false);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      clearTimers();
+      setElectronInteractive(false);
+    };
+  }, [clearTimers, setElectronInteractive]);
+
+  return {
+    anchorRef,
+    open,
+    enter,
+    leave,
+    toggle: () => node.uiWindow && setOpen((current) => !current),
+  };
+}
 
 const getAnimation = (
   spritesheet: StageSpritesheet,
@@ -263,6 +455,26 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
   canvasHeight: number;
 }) {
   const style = node.style || {};
+  const furniture = useFurnitureWindow(node);
+  const interactionProps = node.uiWindow ? {
+    ref: furniture.anchorRef,
+    tabIndex: 0,
+    onMouseEnter: () => furniture.enter(false),
+    onMouseLeave: furniture.leave,
+    onFocus: () => furniture.enter(true),
+    onBlur: furniture.leave,
+    onClick: furniture.toggle,
+    cursor: "pointer",
+  } : {};
+  const popup = (
+    <FurnitureWindow
+      node={node}
+      anchor={furniture.anchorRef.current}
+      open={furniture.open}
+      onEnter={() => furniture.enter(true)}
+      onLeave={furniture.leave}
+    />
+  );
   const commonProps = {
     position: "absolute" as const,
     left: toPercent(node.x, canvasWidth),
@@ -276,15 +488,23 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
 
   if (node.type === "image") {
     return (
-      <Image
+      <Box
         {...commonProps}
-        src={node.src}
-        alt={node.alt || node.label || node.id}
-        objectFit="cover"
+        {...interactionProps}
+        aria-label={node.label || node.id}
         borderRadius={`${style.borderRadius ?? 8}px`}
         border={style.borderColor ? "2px solid" : undefined}
         borderColor={style.borderColor}
-      />
+      >
+        <Image
+          width="100%"
+          height="100%"
+          src={node.src}
+          alt={node.alt || node.label || node.id}
+          objectFit="cover"
+        />
+        {popup}
+      </Box>
     );
   }
 
@@ -292,6 +512,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
     return (
       <Box
         {...commonProps}
+        {...interactionProps}
         aria-label={node.label || node.id}
         minWidth="46px"
         minHeight="68px"
@@ -302,6 +523,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
         justifyContent="flex-end"
       >
         <AvatarNodeContent node={node} />
+        {popup}
       </Box>
     );
   }
@@ -309,6 +531,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
   return (
     <Box
       {...commonProps}
+      {...interactionProps}
       aria-label={node.label || node.id}
       minWidth={node.type === "text" ? undefined : "32px"}
       minHeight={node.type === "text" ? undefined : "24px"}
@@ -324,6 +547,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
       padding={node.type === "text" ? "0" : "8px"}
     >
       <StageBoxContent node={node} />
+      {popup}
     </Box>
   );
 }

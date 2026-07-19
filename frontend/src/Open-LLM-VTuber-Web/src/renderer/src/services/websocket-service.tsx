@@ -3,7 +3,6 @@
 /* eslint-disable no-use-before-define */
 import { Subject } from 'rxjs';
 import { HistoryInfo } from '@/context/websocket-context';
-import { ConfigFile } from '@/context/character-config-context';
 import { DynamicStageDocument } from '@/context/dynamic-stage-context';
 import { toaster } from '@/components/ui/toaster';
 import type { PresenceReceipt } from '@/context/presence-context';
@@ -75,7 +74,6 @@ export interface MessageEvent {
   history_uid?: string;
   success?: boolean;
   histories?: HistoryInfo[];
-  configs?: ConfigFile[];
   message?: string;
   members?: string[];
   is_owner?: boolean;
@@ -174,9 +172,6 @@ class WebSocketService {
   private initializeConnection() {
     this.sendMessage({
       type: 'fetch-backgrounds',
-    });
-    this.sendMessage({
-      type: 'fetch-configs',
     });
     this.sendMessage({
       type: 'fetch-history-list',

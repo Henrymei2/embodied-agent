@@ -34,17 +34,17 @@ reversible?
 
 ### Embodiment
 
-- Persistent 960x540 stage v2 with avatar, computer, calendar, and bed.
+- Persistent 960x540 stage v3 with avatar, computer, calendar, and bed.
 - Sprite walk/idle animation, textures, validated external/relative assets,
   movement, object queries, and reachability.
 - Safe room modification through `place_object` and `remove_object` templates.
-- Stage state synchronizes on connection/config switch and persists after live
+- Stage state synchronizes on connection and persists after live
   frontend actions.
 
 ### Spatial safety
 
 - Computer tools require proximity to the computer.
-- Local calendar tools require proximity to the calendar.
+- Google Calendar tools require proximity to the calendar.
 - Gating occurs at schema exposure and again at execution time.
 - Missing/invalid scene identity fails closed for object-gated tools.
 - Frontend actions are routed by exact client and character; replies from a
@@ -89,12 +89,12 @@ Persistent stage <---- validated result ---+
 
 | Original deliverable | Status | Evidence |
 | --- | --- | --- |
-| 2D room and navigation | Complete | stage v2, sprite transition, scene MCP, persistence |
+| 2D room and navigation | Complete | stage v3, furniture windows, sprite transition, scene MCP, persistence |
 | Memory and personality | Complete | contextual/daily/long-term memory, retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
 | Autonomous behavior MVP | Complete | scored planner, directions, cadence, Presence Contract |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |
-| Calendar object/tool | Complete locally | private calendar CRUD with dual proximity enforcement |
+| Calendar object/tool | Complete | Google OAuth, primary-calendar CRUD, connection window, dual proximity enforcement |
 | Just-in-time contextual help | Privacy-bounded | idle/present/focus context is implemented; raw app titles and screen content are excluded |
 | Browser | Integration-ready | visible browser panel/result plumbing exists; external browser MCP runtime is not bundled |
 | Self-evolution | Safe subset complete | memory, affinities, mood/familiarity; unattended executable self-rewrite is excluded |
@@ -105,8 +105,8 @@ Persistent stage <---- validated result ---+
 The remaining partial items require authority or infrastructure outside this
 repository rather than unfinished local code:
 
-- Google Calendar needs an OAuth client, user consent, token storage, refresh,
-  and revocation. The bundled calendar is intentionally local-only.
+- Google Calendar requires an operator-supplied OAuth client and explicit user
+  consent; the application implements token storage, refresh, and reauthorization.
 - A browser provider needs its own MCP process/runtime and any required account
   credentials. The frontend can display provider live-view metadata.
 - Raw screen/application awareness would materially expand privacy scope. The

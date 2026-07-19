@@ -1,5 +1,5 @@
 /* eslint-disable no-shadow */
-import { app, ipcMain, globalShortcut, desktopCapturer } from "electron";
+import { app, ipcMain, globalShortcut, desktopCapturer, shell } from "electron";
 import { electronApp, optimizer } from "@electron-toolkit/utils";
 import { WindowManager } from "./window-manager";
 import { MenuManager } from "./menu-manager";
@@ -10,6 +10,23 @@ let isQuitting = false;
 
 function setupIPC(): void {
   ipcMain.handle("get-platform", () => process.platform);
+
+  ipcMain.handle("open-google-authorization", async (_event, rawUrl: string) => {
+    try {
+      const target = new URL(rawUrl);
+      const isLoopback = ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
+      const isAllowed = ["http:", "https:"].includes(target.protocol)
+        && isLoopback
+        && target.pathname === "/api/integrations/google/authorize"
+        && !target.username
+        && !target.password;
+      if (!isAllowed) return false;
+      await shell.openExternal(target.toString());
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  });
 
   ipcMain.on("set-ignore-mouse-events", (_event, ignore: boolean) => {
     const window = windowManager.getWindow();
@@ -56,16 +73,6 @@ function setupIPC(): void {
       windowManager.updateComponentHover(componentId, isHovering);
     },
   );
-
-  ipcMain.handle("get-config-files", () => {
-    const configFiles = JSON.parse(localStorage.getItem("configFiles") || "[]");
-    menuManager.updateConfigFiles(configFiles);
-    return configFiles;
-  });
-
-  ipcMain.on("update-config-files", (_event, files) => {
-    menuManager.updateConfigFiles(files);
-  });
 
   ipcMain.handle('get-screen-capture', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen'] });

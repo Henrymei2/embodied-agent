@@ -1,11 +1,9 @@
-"""Private, workspace-local calendar tools for the embodied companion."""
+"""Google Calendar tools for the embodied companion."""
 
 from __future__ import annotations
 
 import json
-import os
 import sys
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -14,52 +12,26 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from googleapiclient.errors import HttpError
 from mcp.server.fastmcp import FastMCP
 
-from src.open_llm_vtuber.workspace import ensure_workspace
+from src.open_llm_vtuber.google_integration import (
+    GoogleAuthorizationRequired,
+    GoogleIntegrationError,
+    GoogleIntegrationService,
+    calendar_subprocess_settings,
+)
 
-_WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or None
-_MAX_EVENTS = 5_000
 _MAX_RESULTS = 200
-
 mcp = FastMCP("calendar")
+_calendar_service: GoogleIntegrationService | None = None
 
 
-def _events_path() -> Path:
-    workspace = ensure_workspace(_WORKSPACE_DIR)
-    workspace.calendar_dir.mkdir(parents=True, exist_ok=True)
-    return workspace.calendar_dir / "events.json"
-
-
-def _load_events() -> list[dict[str, Any]]:
-    path = _events_path()
-    if not path.exists():
-        return []
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"calendar store is unreadable: {exc}") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("events"), list):
-        raise ValueError("calendar store has an invalid format")
-    return [event for event in payload["events"] if isinstance(event, dict)]
-
-
-def _save_events(events: list[dict[str, Any]]) -> None:
-    path = _events_path()
-    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
-    payload = {
-        "version": 1,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "events": events,
-    }
-    try:
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
+def _get_calendar_service() -> GoogleIntegrationService:
+    global _calendar_service
+    if _calendar_service is None:
+        _calendar_service = GoogleIntegrationService(calendar_subprocess_settings())
+    return _calendar_service
 
 
 def _parse_time(value: str, field: str) -> datetime:
@@ -71,7 +43,7 @@ def _parse_time(value: str, field: str) -> datetime:
         raise ValueError(f"{field} must be a valid ISO 8601 timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field} must include a UTC offset")
-    return parsed.astimezone(timezone.utc)
+    return parsed
 
 
 def _validate_text(value: str, field: str, maximum: int) -> str:
@@ -85,28 +57,57 @@ def _validate_text(value: str, field: str, maximum: int) -> str:
     return cleaned
 
 
-def _serialize_event(
-    title: str,
-    start: datetime,
-    end: datetime,
-    notes: str,
-    event_id: str | None = None,
-    created_at: str | None = None,
+def _event_time(value: Any) -> tuple[str, bool]:
+    if not isinstance(value, dict):
+        return "", False
+    if isinstance(value.get("dateTime"), str):
+        return value["dateTime"], False
+    if isinstance(value.get("date"), str):
+        return value["date"], True
+    return "", False
+
+
+def _serialize_google_event(event: dict[str, Any]) -> dict[str, Any]:
+    start, start_all_day = _event_time(event.get("start"))
+    end, end_all_day = _event_time(event.get("end"))
+    return {
+        "event_id": event.get("id", ""),
+        "title": event.get("summary") or "(untitled)",
+        "start": start,
+        "end": end,
+        "all_day": start_all_day and end_all_day,
+        "notes": event.get("description") or "",
+        "created_at": event.get("created"),
+        "updated_at": event.get("updated"),
+        "html_link": event.get("htmlLink"),
+    }
+
+
+def _timed_event_body(
+    title: str, start: datetime, end: datetime, notes: str
 ) -> dict[str, Any]:
     if end <= start:
         raise ValueError("end must be later than start")
     if not isinstance(notes, str):
         raise ValueError("notes must be a string")
-    now = datetime.now(timezone.utc).isoformat()
     return {
-        "event_id": event_id or uuid.uuid4().hex,
-        "title": _validate_text(title, "title", 200),
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "notes": notes.strip()[:2_000],
-        "created_at": created_at or now,
-        "updated_at": now,
+        "summary": _validate_text(title, "title", 200),
+        "start": {"dateTime": start.isoformat()},
+        "end": {"dateTime": end.isoformat()},
+        "description": notes.strip()[:2_000],
     }
+
+
+def _error(exc: Exception) -> str:
+    if isinstance(exc, GoogleAuthorizationRequired):
+        return f"Error: {exc}"
+    if isinstance(exc, HttpError) and exc.resp.status == 401:
+        return "Error: Google authorization is invalid. Please authorize again."
+    if isinstance(exc, HttpError) and exc.resp.status == 404:
+        return "Error: calendar event was not found"
+    if isinstance(exc, (HttpError, OSError)):
+        return "Error: Google Calendar request failed"
+    return f"Error: {exc}"
 
 
 @mcp.tool()
@@ -115,7 +116,7 @@ def list_calendar_events(
     end: str | None = None,
     limit: int = 50,
 ) -> str:
-    """List local events overlapping a time range (defaults to the next 7 days)."""
+    """List Google Calendar events overlapping a range (defaults to 7 days)."""
     try:
         start_at = _parse_time(start, "start") if start else datetime.now(timezone.utc)
         end_at = _parse_time(end, "end") if end else start_at + timedelta(days=7)
@@ -124,42 +125,49 @@ def list_calendar_events(
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ValueError("limit must be an integer")
         limit = max(1, min(limit, _MAX_RESULTS))
-        matches = [
-            event
-            for event in _load_events()
-            if _parse_time(event["start"], "stored start") < end_at
-            and _parse_time(event["end"], "stored end") > start_at
+        response = (
+            _get_calendar_service()
+            .calendar()
+            .events()
+            .list(
+                calendarId="primary",
+                timeMin=start_at.isoformat(),
+                timeMax=end_at.isoformat(),
+                maxResults=limit,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        events = [
+            _serialize_google_event(item)
+            for item in response.get("items", [])
+            if isinstance(item, dict)
         ]
-        matches.sort(key=lambda event: event["start"])
-        return json.dumps({"events": matches[:limit]}, ensure_ascii=False)
-    except (KeyError, TypeError, ValueError) as exc:
-        return f"Error: {exc}"
+        return json.dumps({"events": events}, ensure_ascii=False)
+    except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
+        return _error(exc)
 
 
 @mcp.tool()
-def add_calendar_event(
-    title: str,
-    start: str,
-    end: str,
-    notes: str = "",
-) -> str:
-    """Add an event to the private local calendar using offset-aware ISO times."""
+def add_calendar_event(title: str, start: str, end: str, notes: str = "") -> str:
+    """Create a timed event on the primary Google Calendar."""
     try:
-        events = _load_events()
-        if len(events) >= _MAX_EVENTS:
-            raise ValueError(f"calendar is limited to {_MAX_EVENTS} events")
-        event = _serialize_event(
-            title,
-            _parse_time(start, "start"),
-            _parse_time(end, "end"),
-            notes,
+        body = _timed_event_body(
+            title, _parse_time(start, "start"), _parse_time(end, "end"), notes
         )
-        events.append(event)
-        events.sort(key=lambda item: item["start"])
-        _save_events(events)
-        return json.dumps({"ok": True, "event": event}, ensure_ascii=False)
-    except (KeyError, OSError, TypeError, ValueError) as exc:
-        return f"Error: {exc}"
+        event = (
+            _get_calendar_service()
+            .calendar()
+            .events()
+            .insert(calendarId="primary", body=body)
+            .execute()
+        )
+        return json.dumps(
+            {"ok": True, "event": _serialize_google_event(event)}, ensure_ascii=False
+        )
+    except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
+        return _error(exc)
 
 
 @mcp.tool()
@@ -170,48 +178,57 @@ def update_calendar_event(
     end: str | None = None,
     notes: str | None = None,
 ) -> str:
-    """Update selected fields of an existing local calendar event."""
+    """Update selected fields of a primary Google Calendar event."""
     try:
-        if not isinstance(event_id, str) or not event_id or len(event_id) > 80:
+        if not isinstance(event_id, str) or not event_id or len(event_id) > 1024:
             raise ValueError("event_id must be a non-empty string")
-        events = _load_events()
-        index = next(
-            (i for i, event in enumerate(events) if event.get("event_id") == event_id),
-            None,
+        events_api = _get_calendar_service().calendar().events()
+        current = events_api.get(calendarId="primary", eventId=event_id).execute()
+        current_start, current_all_day = _event_time(current.get("start"))
+        current_end, _ = _event_time(current.get("end"))
+        if current_all_day and (start is None) != (end is None):
+            raise ValueError(
+                "start and end must both be provided when converting an all-day event"
+            )
+        if current_all_day and start is None and end is None:
+            if title is not None:
+                current["summary"] = _validate_text(title, "title", 200)
+            if notes is not None:
+                current["description"] = notes.strip()[:2_000]
+            body = current
+        else:
+            body = _timed_event_body(
+                title if title is not None else current.get("summary", "(untitled)"),
+                _parse_time(start if start is not None else current_start, "start"),
+                _parse_time(end if end is not None else current_end, "end"),
+                notes if notes is not None else current.get("description", ""),
+            )
+        event = events_api.patch(
+            calendarId="primary", eventId=event_id, body=body
+        ).execute()
+        return json.dumps(
+            {"ok": True, "event": _serialize_google_event(event)}, ensure_ascii=False
         )
-        if index is None:
-            raise ValueError(f"calendar event '{event_id}' was not found")
-        current = events[index]
-        event = _serialize_event(
-            title if title is not None else current["title"],
-            _parse_time(start if start is not None else current["start"], "start"),
-            _parse_time(end if end is not None else current["end"], "end"),
-            notes if notes is not None else current.get("notes", ""),
-            event_id=current["event_id"],
-            created_at=current.get("created_at"),
-        )
-        events[index] = event
-        events.sort(key=lambda item: item["start"])
-        _save_events(events)
-        return json.dumps({"ok": True, "event": event}, ensure_ascii=False)
-    except (KeyError, OSError, TypeError, ValueError) as exc:
-        return f"Error: {exc}"
+    except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
+        return _error(exc)
 
 
 @mcp.tool()
 def remove_calendar_event(event_id: str) -> str:
-    """Remove an event from the private local calendar by ID."""
+    """Delete an event from the primary Google Calendar."""
     try:
-        if not isinstance(event_id, str) or not event_id or len(event_id) > 80:
+        if not isinstance(event_id, str) or not event_id or len(event_id) > 1024:
             raise ValueError("event_id must be a non-empty string")
-        events = _load_events()
-        remaining = [event for event in events if event.get("event_id") != event_id]
-        if len(remaining) == len(events):
-            raise ValueError(f"calendar event '{event_id}' was not found")
-        _save_events(remaining)
+        (
+            _get_calendar_service()
+            .calendar()
+            .events()
+            .delete(calendarId="primary", eventId=event_id)
+            .execute()
+        )
         return json.dumps({"ok": True, "event_id": event_id})
-    except (OSError, ValueError) as exc:
-        return f"Error: {exc}"
+    except (GoogleIntegrationError, HttpError, OSError, ValueError) as exc:
+        return _error(exc)
 
 
 if __name__ == "__main__":

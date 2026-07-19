@@ -9,7 +9,7 @@ from typing import Any
 from loguru import logger
 
 
-STAGE_VERSION = 2
+STAGE_VERSION = 3
 STAGE_BASE_DIR = "stage_state"
 
 
@@ -103,6 +103,11 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                     "src": "./stage-assets/calendar.png",
                     "fit": "contain",
                     "alt": "calendar",
+                },
+                "uiWindow": {
+                    "title": "Google Calendar",
+                    "body": "Connection status for the primary calendar.",
+                    "provider": "google_calendar_status",
                 },
                 "style": {
                     "background": "rgba(13, 148, 136, 0.9)",
@@ -226,10 +231,10 @@ def _is_safe_asset_src(value: Any) -> bool:
 
 
 def migrate_stage(stage: Any) -> Any:
-    """Return a v2 stage document, adding default asset metadata to v1 stages."""
+    """Return a v3 stage document, preserving existing layout and assets."""
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") != 1:
+    if stage.get("version") not in {1, 2}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
@@ -311,6 +316,34 @@ def _validate_texture(texture: Any, node_id: str, errors: list[str]) -> None:
         errors.append(f"Node {node_id} texture.fit must be contain or cover.")
     if not _is_safe_text(texture.get("alt"), 160):
         errors.append(f"Node {node_id} texture.alt contains unsafe text length.")
+
+
+def _validate_ui_window(ui_window: Any, node_id: str, errors: list[str]) -> None:
+    if ui_window is None:
+        return
+    if not isinstance(ui_window, dict):
+        errors.append(f"Node {node_id} uiWindow must be an object.")
+        return
+    allowed_keys = {"title", "body", "provider"}
+    for key in ui_window:
+        if key not in allowed_keys:
+            errors.append(f"Node {node_id} uiWindow.{key} is not allowed.")
+    title = ui_window.get("title")
+    if (
+        not isinstance(title, str)
+        or not title.strip()
+        or len(title) > 120
+        or re.search(r"[<>]", title)
+    ):
+        errors.append(f"Node {node_id} uiWindow.title must contain 1-120 characters.")
+    body = ui_window.get("body")
+    if not _is_safe_text(body, 500) or (
+        isinstance(body, str) and re.search(r"[<>]", body)
+    ):
+        errors.append(f"Node {node_id} uiWindow.body contains unsafe text.")
+    provider = ui_window.get("provider")
+    if provider not in (None, "google_calendar_status"):
+        errors.append(f"Node {node_id} uiWindow.provider is not supported.")
 
 
 def _validate_spritesheet(spritesheet: Any, node_id: str, errors: list[str]) -> None:
@@ -412,7 +445,7 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
         return False, ["Stage document must be an object."]
 
     if stage.get("version") != STAGE_VERSION:
-        errors.append("Stage version must be 2.")
+        errors.append("Stage version must be 3.")
 
     canvas = stage.get("canvas")
     if not isinstance(canvas, dict):
@@ -466,6 +499,7 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             if node.get("src") is not None and not _is_safe_asset_src(node.get("src")):
                 errors.append(f"Node {node_id or index} src is invalid.")
             _validate_texture(node.get("texture"), str(node_id or index), errors)
+            _validate_ui_window(node.get("uiWindow"), str(node_id or index), errors)
             _validate_spritesheet(
                 node.get("spritesheet"), str(node_id or index), errors
             )

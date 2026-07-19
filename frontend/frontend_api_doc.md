@@ -134,11 +134,11 @@ Patch shape:
 }
 ```
 
-## 5. Stage document v2
+## 5. Stage document v3
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "canvas": {
     "width": 960,
     "height": 540,
@@ -155,8 +155,8 @@ Patch shape:
 
 Supported node types: `shape`, `text`, `image`, `avatar`, and `panel`. A node
 requires a unique safe ID, numeric `x`, `y`, `width`, and `height`, and may have
-label/text/style, a safe image source, a furniture texture, or an avatar
-spritesheet. The stage is capped at 80 nodes.
+label/text/style, a safe image source, a furniture texture, an avatar
+spritesheet, or a declarative `uiWindow`. The stage is capped at 80 nodes.
 
 Asset sources may be `http(s)` URLs, `data:image` base64 URLs, or relative
 public paths such as `./stage-assets/chair.png`. `javascript:` URLs and unknown
@@ -179,13 +179,22 @@ Furniture example:
     "src": "./stage-assets/chair.png",
     "fit": "contain",
     "alt": "reading chair"
+  },
+  "uiWindow": {
+    "title": "Reading chair",
+    "body": "A comfortable place to read."
   }
 }
 ```
 
+`uiWindow` accepts `title`, optional `body`, and an optional allowlisted
+`provider`. The currently supported dynamic provider is
+`google_calendar_status`; arbitrary HTML, URLs, scripts, and provider names are
+rejected by both validators.
+
 ## 6. Connection synchronization
 
-On connection and after a character switch, the backend sends:
+On connection, the backend sends:
 
 ```json
 {

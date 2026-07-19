@@ -21,7 +21,6 @@
       "backgroundImage": "Background Image",
       "customBgUrlPlaceholder": "Enter image URL",
       "customBgUrl": "Or enter a custom background URL",
-      "characterPreset": "Character Preset",
       "wsUrl": "WebSocket URL",
       "baseUrl": "Base URL",
       "imageCompressionQuality": "Image Compression Quality",
@@ -94,8 +93,6 @@
     "noMessages": "No messages"
   },
   "notification": {
-    "characterLoaded": "New Character Loaded",
-    "characterSwitched": "Character switched",
     "historyLoaded": "History loaded",
     "newConversation": "New Conversation Started",
     "newChatHistory": "New chat history created",

@@ -3,8 +3,12 @@ system_config:
   conf_version: 'v1.2.1'
   host: 'localhost' # use 0.0.0.0 if you want other devices to access this page
   port: 12393
-  # New setting for alternative configurations
-  config_alts_dir: 'characters'
+  # App-wide Google integration. Set this fixed path to a downloaded OAuth
+  # client JSON outside the repository.
+  google_integration:
+    enabled: true
+    client_secrets_file: '~/.config/open-llm-vtuber/google-client.json'
+    redirect_uri: 'http://localhost:12393/api/integrations/google/oauth/callback'
   # Tool prompts that will be appended to the persona prompt
   tool_prompts:
     # Enable think_tag_prompt to let LLMs without thinking output show inner thoughts, mental activities and actions (in parentheses format) without voice synthesis. See think_tag_prompt for more details.

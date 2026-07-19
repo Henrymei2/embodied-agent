@@ -21,7 +21,7 @@ from .chat_history_manager import (
     delete_history,
     get_history_list,
 )
-from .config_manager.utils import scan_config_alts_directory, scan_bg_directory
+from .config_manager.utils import scan_bg_directory
 from .conversations.conversation_handler import (
     handle_conversation_trigger,
     handle_group_interrupt,
@@ -40,7 +40,6 @@ class MessageType(Enum):
         "delete-history",
     ]
     CONVERSATION = ["mic-audio-end", "text-input", "ai-speak-signal"]
-    CONFIG = ["fetch-configs", "switch-config"]
     CONTROL = ["interrupt-signal", "audio-play-start"]
     DATA = ["mic-audio-data"]
 
@@ -91,8 +90,6 @@ class WebSocketHandler:
             "raw-audio-data": self._handle_raw_audio_data,
             "text-input": self._handle_conversation_trigger,
             "ai-speak-signal": self._handle_conversation_trigger,
-            "fetch-configs": self._handle_fetch_configs,
-            "switch-config": self._handle_config_switch,
             "fetch-backgrounds": self._handle_fetch_backgrounds,
             "audio-play-start": self._handle_audio_play_start,
             "request-init-config": self._handle_init_config_request,
@@ -656,41 +653,6 @@ class WebSocketHandler:
             current_conversation_tasks=self.current_conversation_tasks,
             broadcast_to_group=self.broadcast_to_group,
         )
-
-    async def _handle_fetch_configs(
-        self, websocket: WebSocket, client_uid: str, data: WSMessage
-    ) -> None:
-        """Handle fetching available configurations"""
-        context = self.client_contexts[client_uid]
-        config_files = scan_config_alts_directory(context.system_config.config_alts_dir)
-        await websocket.send_text(
-            json.dumps({"type": "config-files", "configs": config_files})
-        )
-
-    async def _handle_config_switch(
-        self, websocket: WebSocket, client_uid: str, data: dict
-    ):
-        """Handle switching to a different configuration"""
-        config_file_name = data.get("file")
-        if config_file_name:
-            context = self.client_contexts[client_uid]
-            await context.handle_config_switch(websocket, config_file_name)
-            from .frontend_bridge import update_client_configuration
-
-            update_client_configuration(
-                client_uid,
-                context.character_config.conf_uid,
-            )
-            from .stage_state_manager import load_stage_state
-
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "stage-state",
-                        "stage": load_stage_state(context.character_config.conf_uid),
-                    }
-                )
-            )
 
     async def _handle_fetch_backgrounds(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

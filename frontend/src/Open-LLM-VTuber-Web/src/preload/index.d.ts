@@ -14,10 +14,8 @@ declare global {
       updateComponentHover: (componentId: string, isHovering: boolean) => void
       onToggleInputSubtitle: (callback: () => void) => void
       onToggleScrollToResize: (callback: () => void) => void
-      onSwitchCharacter: (callback: (filename: string) => void) => void
+      openGoogleAuthorization: (url: string) => Promise<boolean>
       setMode: (mode: 'window' | 'pet') => void
-      getConfigFiles: () => Promise<any>
-      updateConfigFiles: (files: any[]) => void
     }
   }
 }

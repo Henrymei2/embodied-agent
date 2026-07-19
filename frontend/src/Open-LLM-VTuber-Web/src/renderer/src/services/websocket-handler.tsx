@@ -37,7 +37,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   } = useChatHistory();
   const { addAudioTask } = useAudioTask();
   const bgUrlContext = useBgUrl();
-  const { setConfName, setConfUid, setConfigFiles } = useConfig();
+  const { setConfName, setConfUid } = useConfig();
   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
   const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
@@ -168,24 +168,6 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         if (message.text) {
           setSubtitleText(message.text);
         }
-        break;
-      case 'config-files':
-        if (message.configs) {
-          setConfigFiles(message.configs);
-        }
-        break;
-      case 'config-switched':
-        setAiState('idle');
-        setSubtitleText(t('notification.characterLoaded'));
-
-        toaster.create({
-          title: t('notification.characterSwitched'),
-          type: 'success',
-          duration: 2000,
-        });
-
-        wsService.sendMessage({ type: 'fetch-history-list' });
-        wsService.sendMessage({ type: 'create-new-history' });
         break;
       case 'background-files':
         if (message.files) {
@@ -329,7 +311,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setConfigFiles, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

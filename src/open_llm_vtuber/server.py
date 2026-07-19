@@ -17,11 +17,13 @@ from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 from .routes import (
     init_client_ws_route,
     init_frontend_action_routes,
+    init_google_integration_routes,
     init_webtool_routes,
     init_proxy_route,
 )
 from .service_context import ServiceContext
 from .config_manager.utils import Config
+from .google_integration import GoogleIntegrationService
 
 
 # Create a custom StaticFiles class that adds CORS headers
@@ -102,6 +104,10 @@ class WebSocketServer:
             init_webtool_routes(default_context_cache=self.default_context_cache),
         )
         self.app.include_router(init_frontend_action_routes())
+        self.google_integration = GoogleIntegrationService.from_config(
+            config.system_config.google_integration
+        )
+        self.app.include_router(init_google_integration_routes(self.google_integration))
 
         # Initialize and include proxy routes if proxy is enabled
         system_config = config.system_config

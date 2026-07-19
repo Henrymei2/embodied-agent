@@ -3,13 +3,56 @@ from uuid import uuid4
 import numpy as np
 from datetime import datetime
 from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body, Request
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
+from .google_integration import GoogleIntegrationError, GoogleIntegrationService
+
+
+def init_google_integration_routes(service: GoogleIntegrationService) -> APIRouter:
+    """Expose the local, application-wide Google OAuth flow."""
+    router = APIRouter(prefix="/api/integrations/google")
+
+    @router.get("/status")
+    async def google_status():
+        return JSONResponse(await run_in_threadpool(service.status))
+
+    @router.get("/authorize")
+    async def google_authorize():
+        try:
+            url = await run_in_threadpool(service.authorization_url)
+            return RedirectResponse(url, status_code=302)
+        except GoogleIntegrationError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+
+    @router.get("/oauth/callback")
+    async def google_callback(state: str = "", code: str = "", error: str = ""):
+        if error:
+            message = "Google authorization was cancelled or denied."
+            status_code = 400
+        else:
+            try:
+                await run_in_threadpool(service.exchange_code, state, code)
+                message = "Google Calendar is connected. You may close this window."
+                status_code = 200
+            except GoogleIntegrationError as exc:
+                message = str(exc)
+                status_code = 400
+        # This intentionally contains no external resources, scripts, or callback data.
+        return HTMLResponse(
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<title>Google Calendar authorization</title></head>"
+            f"<body><main><h1>{message}</h1></main></body></html>",
+            status_code=status_code,
+            headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"},
+        )
+
+    return router
 
 
 def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:

@@ -237,6 +237,43 @@ def test_mcp_subprocess_environment_is_session_bound(monkeypatch, tmp_path):
     }
 
 
+def test_calendar_subprocess_receives_only_google_token_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path / "workspace"))
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.bridge_auth.get_bridge_token", lambda: "bridge-secret"
+    )
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.google_integration.default_token_file",
+        lambda: tmp_path / "app-data" / "google_token.json",
+    )
+    context = ServiceContext()
+    calendar_server = SimpleNamespace(env={})
+    context.mcp_server_registery = SimpleNamespace(
+        servers={"calendar": calendar_server}
+    )
+    context.system_config = SimpleNamespace(
+        host="localhost",
+        port=12393,
+        google_integration=SimpleNamespace(
+            enabled=True,
+            client_secrets_file="/private/google-client.json",
+            redirect_uri=(
+                "http://localhost:12393/api/integrations/google/oauth/callback"
+            ),
+        ),
+    )
+    context.character_config = SimpleNamespace(conf_uid="single-character")
+    context.client_uid = "client"
+
+    context._configure_mcp_server_environment()
+
+    assert calendar_server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"].endswith(
+        "app-data/google_token.json"
+    )
+    assert "EMBODIED_AGENT_GOOGLE_CLIENT_SECRETS_FILE" not in calendar_server.env
+    assert "EMBODIED_AGENT_GOOGLE_REDIRECT_URI" not in calendar_server.env
+
+
 @pytest.mark.asyncio
 async def test_accepted_frontend_state_is_persisted_for_owning_client(
     monkeypatch,

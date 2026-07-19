@@ -124,53 +124,6 @@ def save_config(config: BaseModel, config_path: Union[str, Path]):
         raise yaml.YAMLError(f"Error writing YAML file: {e}")
 
 
-def scan_config_alts_directory(config_alts_dir: str) -> list[dict]:
-    """
-    Scan the config_alts directory and return a list of config information.
-    Each config info contains the filename and its display name from the config.
-
-    Parameters:
-    - config_alts_dir (str): The path to the config_alts directory.
-
-    Returns:
-    - list[dict]: A list of dicts containing config info:
-        - filename: The actual config file name
-        - name: Display name from config, falls back to filename if not specified
-    """
-    config_files = []
-
-    # Add default config first
-    default_config = read_yaml("conf.yaml")
-    config_files.append(
-        {
-            "filename": "conf.yaml",
-            "name": default_config.get("character_config", {}).get(
-                "conf_name", "conf.yaml"
-            )
-            if default_config
-            else "conf.yaml",
-        }
-    )
-
-    # Scan other configs
-    for root, _, files in os.walk(config_alts_dir):
-        for file in files:
-            if file.endswith(".yaml"):
-                config: dict = read_yaml(os.path.join(root, file))
-                config_files.append(
-                    {
-                        "filename": file,
-                        "name": config.get("character_config", {}).get(
-                            "conf_name", file
-                        )
-                        if config
-                        else file,
-                    }
-                )
-    logger.debug(f"Found config files: {config_files}")
-    return config_files
-
-
 def scan_bg_directory() -> list[str]:
     bg_files = []
     bg_dir = "backgrounds"

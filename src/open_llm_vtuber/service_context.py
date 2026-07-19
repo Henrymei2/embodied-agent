@@ -2,7 +2,6 @@ import os
 import json
 from typing import Callable
 from loguru import logger
-from fastapi import WebSocket
 
 from .workspace import build_workspace_prompt_context
 from prompts import prompt_loader
@@ -33,8 +32,6 @@ from .config_manager import (
     TTSConfig,
     VADConfig,
     TranslatorConfig,
-    read_yaml,
-    validate_config,
 )
 
 
@@ -214,7 +211,7 @@ class ServiceContext:
             os.environ.get("EMBODIED_AGENT_WORKSPACE")
         ).root
 
-        for server in self.mcp_server_registery.servers.values():
+        for server_name, server in self.mcp_server_registery.servers.items():
             server.env = {
                 **(server.env or {}),
                 "EMBODIED_AGENT_BACKEND_URL": backend_url,
@@ -230,6 +227,12 @@ class ServiceContext:
             )
             if resolved_conf_uid:
                 server.env["EMBODIED_AGENT_CONF_UID"] = resolved_conf_uid
+            if server_name == "calendar":
+                from .google_integration import default_token_file
+
+                server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"] = str(
+                    default_token_file()
+                )
         logger.info(f"MCP subprocess backend URL: {backend_url}")
 
     async def close(self):
@@ -523,104 +526,3 @@ class ServiceContext:
         logger.debug(persona_prompt)
 
         return persona_prompt
-
-    async def handle_config_switch(
-        self,
-        websocket: WebSocket,
-        config_file_name: str,
-    ) -> None:
-        """
-        Handle the configuration switch request.
-        Change the configuration to a new config and notify the client.
-
-        Parameters:
-        - websocket (WebSocket): The WebSocket connection.
-        - config_file_name (str): The name of the configuration file.
-        """
-        try:
-            new_character_config_data = None
-
-            if config_file_name == "conf.yaml":
-                # Load base config
-                new_character_config_data = read_yaml("conf.yaml").get(
-                    "character_config"
-                )
-            else:
-                # Load alternative config and merge with base config
-                characters_dir = self.system_config.config_alts_dir
-                file_path = os.path.normpath(
-                    os.path.join(characters_dir, config_file_name)
-                )
-                if not file_path.startswith(characters_dir):
-                    raise ValueError("Invalid configuration file path")
-
-                alt_config_data = read_yaml(file_path).get("character_config")
-
-                # Start with original config data and perform a deep merge
-                new_character_config_data = deep_merge(
-                    self.config.character_config.model_dump(), alt_config_data
-                )
-
-            if new_character_config_data:
-                new_config = {
-                    "system_config": self.system_config.model_dump(),
-                    "character_config": new_character_config_data,
-                }
-                new_config = validate_config(new_config)
-                await self.load_from_config(new_config)  # Await the async load
-                logger.debug(f"New config: {self}")
-                logger.debug(
-                    f"New character config: {self.character_config.model_dump()}"
-                )
-
-                # Send responses to client
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "set-model-and-conf",
-                            "conf_name": self.character_config.conf_name,
-                            "conf_uid": self.character_config.conf_uid,
-                        }
-                    )
-                )
-
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "config-switched",
-                            "message": f"Switched to config: {config_file_name}",
-                        }
-                    )
-                )
-
-                logger.info(f"Configuration switched to {config_file_name}")
-            else:
-                raise ValueError(
-                    f"Failed to load configuration from {config_file_name}"
-                )
-
-        except Exception as e:
-            logger.error(f"Error switching configuration: {e}")
-            logger.debug(self)
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "message": f"Error switching configuration: {str(e)}",
-                    }
-                )
-            )
-            raise e
-
-
-def deep_merge(dict1, dict2):
-    """
-    Recursively merges dict2 into dict1, prioritizing values from dict2.
-    """
-    result = dict1.copy()
-    for key, value in dict2.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = deep_merge(result[key], value)
-        else:
-            result[key] = value
-    return result
