@@ -134,11 +134,11 @@ Patch shape:
 }
 ```
 
-## 5. Stage document v3
+## 5. Stage document v4
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "canvas": {
     "width": 960,
     "height": 540,
@@ -188,9 +188,23 @@ Furniture example:
 ```
 
 `uiWindow` accepts `title`, optional `body`, and an optional allowlisted
-`provider`. The currently supported dynamic provider is
-`google_calendar_status`; arbitrary HTML, URLs, scripts, and provider names are
-rejected by both validators.
+`provider`. Arbitrary HTML, URLs, scripts, and provider names are rejected by
+both validators. Supported dynamic providers:
+
+| Provider | Object | Route polled while open | Shows |
+| --- | --- | --- | --- |
+| `google_calendar_status` | `calendar` | `/api/integrations/google/status` | Connection state and an authorize button |
+| `todo_list` | `todo_list` | `/api/furniture/todo` | Open items by priority, plus an overflow count |
+| `timer_status` | `hourglass` | `/api/furniture/timers` | Pending timers with a live countdown |
+
+The `/api/furniture/*` routes are read-only projections of the same stores the
+agent edits through proximity-gated MCP tools. They return only what the panel
+renders — no identifiers or paths — and expose no way to mutate state.
+
+Migration: a stored v1, v2, or v3 stage is upgraded on load. Older documents also
+gain any furniture added by newer default rooms, because a tool stays hidden
+while the object it is bound to is missing from the scene. A custom layout,
+including moved or removed objects, is otherwise preserved.
 
 ## 6. Connection synchronization
 

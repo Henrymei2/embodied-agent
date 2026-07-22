@@ -92,6 +92,7 @@ Every filesystem operation must resolve paths through the workspace path validat
 - tmp/: temporary files
 - memory/: daily memory files
 - calendar/: local calendar events
+- todo/: the todo list kept on the todo_list object
 
 ## Embodied Environment Rules
 - The agent exists in a spatial environment.
@@ -114,6 +115,9 @@ Examples:
 - Calendar tools are only available when the agent is close to the calendar.
 - Computer tools are only available when the agent is close to the computer.
 - Bed-related tools are only available when the agent is close to the bed.
+- Todo tools are only available when the agent is close to the todo_list.
+- Timer tools are only available when the agent is close to the hourglass.
+- Weather tools are only available when the agent is close to the window.
 
 If a user asks for a calendar task and the agent is not near the calendar:
 1. Use `list_objects` or `get_object_position` to find the calendar.
@@ -175,6 +179,7 @@ ROOT_DIRECTORIES = [
     "tmp",
     "memory",
     "calendar",
+    "todo",
 ]
 
 
@@ -191,6 +196,7 @@ class Workspace:
     tmp_dir: Path
     daily_memory_dir: Path
     calendar_dir: Path
+    todo_dir: Path
 
 
 class WorkspaceAccessError(ValueError):
@@ -244,6 +250,7 @@ def ensure_workspace(workspace_dir: str | Path | None = None) -> Workspace:
         tmp_dir=root / "tmp",
         daily_memory_dir=root / "memory",
         calendar_dir=root / "calendar",
+        todo_dir=root / "todo",
     )
 
 

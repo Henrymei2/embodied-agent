@@ -39,10 +39,21 @@ export interface StageNode {
   style?: StageNodeStyle;
 }
 
+// Live data sources a furniture hover window may render. Each one is backed by
+// a read-only backend route the window polls while it is open. Keep in sync
+// with UI_WINDOW_PROVIDERS in stage_state_manager.py.
+export const UI_WINDOW_PROVIDERS = [
+  "google_calendar_status",
+  "todo_list",
+  "timer_status",
+] as const;
+
+export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];
+
 export interface FurnitureWindowConfig {
   title: string;
   body?: string;
-  provider?: "google_calendar_status";
+  provider?: FurnitureWindowProvider;
 }
 
 export interface StageTexture {
@@ -76,7 +87,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 3;
+  version: 4;
   canvas: {
     width: number;
     height: number;
@@ -140,7 +151,7 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 3;
+const STAGE_VERSION = 4;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
 
@@ -229,6 +240,77 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       style: {
         background: "rgba(225, 29, 72, 0.86)",
         borderColor: "rgba(254, 205, 211, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 14,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "todo_list",
+      type: "panel",
+      label: "todo_list",
+      x: 110,
+      y: 420,
+      width: 112,
+      height: 132,
+      zIndex: 2,
+      text: "todo list",
+      uiWindow: {
+        title: "Todo list",
+        body: "Open items the agent is tracking.",
+        provider: "todo_list",
+      },
+      style: {
+        background: "rgba(217, 119, 6, 0.9)",
+        borderColor: "rgba(253, 230, 138, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 14,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "hourglass",
+      type: "panel",
+      label: "hourglass",
+      x: 860,
+      y: 150,
+      width: 72,
+      height: 100,
+      zIndex: 2,
+      text: "hourglass",
+      uiWindow: {
+        title: "Timers",
+        body: "Timers the agent has set.",
+        provider: "timer_status",
+      },
+      style: {
+        background: "rgba(124, 58, 237, 0.88)",
+        borderColor: "rgba(221, 214, 254, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "window",
+      type: "panel",
+      label: "window",
+      x: 110,
+      y: 140,
+      width: 140,
+      height: 96,
+      zIndex: 2,
+      text: "window",
+      uiWindow: {
+        title: "Window",
+        body: "The agent checks the weather from here, using a public forecast service that needs no account.",
+      },
+      style: {
+        background: "rgba(56, 189, 248, 0.85)",
+        borderColor: "rgba(224, 242, 254, 0.9)",
         color: "#ffffff",
         borderRadius: 8,
         fontSize: 14,
@@ -370,7 +452,10 @@ const validateUiWindow = (uiWindow: unknown, nodeId: string, errors: string[]) =
   if (!isSafeText(uiWindow.body, 500) || (typeof uiWindow.body === "string" && /[<>]/.test(uiWindow.body))) {
     errors.push(`Node ${nodeId} uiWindow.body contains unsafe text.`);
   }
-  if (uiWindow.provider !== undefined && uiWindow.provider !== "google_calendar_status") {
+  if (
+    uiWindow.provider !== undefined &&
+    !UI_WINDOW_PROVIDERS.includes(uiWindow.provider as FurnitureWindowProvider)
+  ) {
     errors.push(`Node ${nodeId} uiWindow.provider is not supported.`);
   }
 };
@@ -455,7 +540,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (candidate.version !== 1 && candidate.version !== 2) {
+  if (candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3) {
     return candidate;
   }
 
@@ -571,7 +656,7 @@ export const validateStageDocument = (candidate: unknown): {
   }
 
   if (candidate.version !== STAGE_VERSION) {
-    errors.push("Stage version must be 3.");
+    errors.push(`Stage version must be ${STAGE_VERSION}.`);
   }
 
   if (!isRecord(candidate.canvas)) {

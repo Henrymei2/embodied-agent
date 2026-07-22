@@ -16,6 +16,18 @@
         "command": "uv",
         "args": ["run", "python", "mcp_servers/scheduler.py"]
       },
+      "todo": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/todo_tools.py"]
+      },
+      "timer": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/timer_tools.py"]
+      },
+      "weather": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/weather_tools.py"]
+      },
       "time": {
         "command": "uvx",
         "args": ["mcp-server-time", "--local-timezone=America/Chicago"]

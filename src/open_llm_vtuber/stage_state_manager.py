@@ -9,8 +9,16 @@ from typing import Any
 from loguru import logger
 
 
-STAGE_VERSION = 3
+STAGE_VERSION = 4
 STAGE_BASE_DIR = "stage_state"
+
+# Live data sources a furniture hover window may render. Each one is backed by a
+# read-only backend route the frontend polls while the window is open.
+UI_WINDOW_PROVIDERS = (
+    "google_calendar_status",
+    "todo_list",
+    "timer_status",
+)
 
 
 def _is_safe_filename(filename: str) -> bool:
@@ -143,6 +151,80 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 },
             },
             {
+                "id": "todo_list",
+                "type": "panel",
+                "label": "todo_list",
+                "x": 110,
+                "y": 420,
+                "width": 112,
+                "height": 132,
+                "zIndex": 2,
+                "text": "todo list",
+                "uiWindow": {
+                    "title": "Todo list",
+                    "body": "Open items the agent is tracking.",
+                    "provider": "todo_list",
+                },
+                "style": {
+                    "background": "rgba(217, 119, 6, 0.9)",
+                    "borderColor": "rgba(253, 230, 138, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 14,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "hourglass",
+                "type": "panel",
+                "label": "hourglass",
+                "x": 860,
+                "y": 150,
+                "width": 72,
+                "height": 100,
+                "zIndex": 2,
+                "text": "hourglass",
+                "uiWindow": {
+                    "title": "Timers",
+                    "body": "Timers the agent has set.",
+                    "provider": "timer_status",
+                },
+                "style": {
+                    "background": "rgba(124, 58, 237, 0.88)",
+                    "borderColor": "rgba(221, 214, 254, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "window",
+                "type": "panel",
+                "label": "window",
+                "x": 110,
+                "y": 140,
+                "width": 140,
+                "height": 96,
+                "zIndex": 2,
+                "text": "window",
+                "uiWindow": {
+                    "title": "Window",
+                    "body": (
+                        "The agent checks the weather from here, using a public "
+                        "forecast service that needs no account."
+                    ),
+                },
+                "style": {
+                    "background": "rgba(56, 189, 248, 0.85)",
+                    "borderColor": "rgba(224, 242, 254, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 14,
+                    "fontWeight": "700",
+                },
+            },
+            {
                 "id": "avatar",
                 "type": "avatar",
                 "label": "avatar",
@@ -231,10 +313,16 @@ def _is_safe_asset_src(value: Any) -> bool:
 
 
 def migrate_stage(stage: Any) -> Any:
-    """Return a v3 stage document, preserving existing layout and assets."""
+    """Return a v4 stage document, preserving existing layout and assets.
+
+    Every supported older version also gains the furniture introduced by newer
+    default rooms: a tool stays hidden while the object it is bound to is absent
+    from the scene, so a room saved before the object shipped would permanently
+    lock the agent out of those tools.
+    """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2}:
+    if stage.get("version") not in {1, 2, 3}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
@@ -342,7 +430,7 @@ def _validate_ui_window(ui_window: Any, node_id: str, errors: list[str]) -> None
     ):
         errors.append(f"Node {node_id} uiWindow.body contains unsafe text.")
     provider = ui_window.get("provider")
-    if provider not in (None, "google_calendar_status"):
+    if provider not in (None, *UI_WINDOW_PROVIDERS):
         errors.append(f"Node {node_id} uiWindow.provider is not supported.")
 
 

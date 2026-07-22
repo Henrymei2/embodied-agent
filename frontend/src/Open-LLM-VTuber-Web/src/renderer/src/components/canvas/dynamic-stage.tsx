@@ -24,6 +24,124 @@ interface GoogleStatus {
 
 const statusCache = new Map<string, { expires: number; value: GoogleStatus }>();
 
+interface TodoWindowItem {
+  text: string;
+  priority: "high" | "normal" | "low";
+  due?: string | null;
+}
+
+interface TodoWindowData {
+  available: boolean;
+  message?: string;
+  open_count: number;
+  items: TodoWindowItem[];
+  remaining: number;
+}
+
+interface TimerWindowItem {
+  label: string;
+  due_at?: string | null;
+  remaining_seconds: number;
+}
+
+interface TimerWindowData {
+  available: boolean;
+  count: number;
+  timers: TimerWindowItem[];
+  remaining: number;
+}
+
+// Read-only routes backing the furniture hover windows.
+const FURNITURE_FEED_ROUTES: Record<string, string> = {
+  todo_list: "/api/furniture/todo",
+  timer_status: "/api/furniture/timers",
+};
+
+const TODO_PRIORITY_COLORS: Record<string, string> = {
+  high: "red.300",
+  normal: "blue.200",
+  low: "gray.400",
+};
+
+/** Poll a furniture feed while its window is open. */
+function useFurnitureFeed<T>(
+  baseUrl: string,
+  provider: string | undefined,
+  open: boolean,
+  refreshMs: number,
+) {
+  const [data, setData] = useState<T | null>(null);
+  const [failed, setFailed] = useState(false);
+  const route = provider ? FURNITURE_FEED_ROUTES[provider] : undefined;
+
+  useEffect(() => {
+    if (!open || !route) return undefined;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const response = await fetch(`${baseUrl}${route}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error("furniture feed request failed");
+        const value = await response.json() as T;
+        if (!cancelled) {
+          setData(value);
+          setFailed(false);
+        }
+      } catch (_error) {
+        if (!cancelled) setFailed(true);
+      }
+    };
+
+    void load();
+    const interval = window.setInterval(() => void load(), refreshMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [baseUrl, open, refreshMs, route]);
+
+  return { data, failed };
+}
+
+/** Re-render once a second so a countdown stays live between fetches. */
+function useSecondTick(active: boolean) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return undefined;
+    const interval = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [active]);
+}
+
+const timerRemainingSeconds = (timer: TimerWindowItem): number => {
+  // due_at is the authoritative moment; remaining_seconds is only a fallback so
+  // the countdown keeps moving between polls.
+  if (timer.due_at) {
+    const due = new Date(timer.due_at).getTime();
+    if (Number.isFinite(due)) {
+      return Math.max(0, Math.round((due - Date.now()) / 1000));
+    }
+  }
+  return Math.max(0, timer.remaining_seconds);
+};
+
+const formatRemaining = (seconds: number): string => {
+  if (seconds <= 0) return "due now";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds % 60}s`;
+};
+
+const formatDue = (due?: string | null): string | null => {
+  if (!due) return null;
+  const parsed = new Date(due);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
 function FurnitureWindow({
   node,
   anchor,
@@ -42,6 +160,9 @@ function FurnitureWindow({
   const [loading, setLoading] = useState(false);
   const config = node.uiWindow;
   const provider = config?.provider;
+  const todoFeed = useFurnitureFeed<TodoWindowData>(baseUrl, provider === "todo_list" ? provider : undefined, open, 15_000);
+  const timerFeed = useFurnitureFeed<TimerWindowData>(baseUrl, provider === "timer_status" ? provider : undefined, open, 20_000);
+  useSecondTick(open && provider === "timer_status");
 
   const loadStatus = useCallback(async (force = false) => {
     if (provider !== "google_calendar_status") return;
@@ -140,6 +261,75 @@ function FurnitureWindow({
               <Button mt="12px" size="sm" onClick={authorize}>
                 {status.connected ? "Reauthenticate with Google" : "Authenticate with Google"}
               </Button>
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "todo_list" && (
+        <Box mt="12px" aria-live="polite">
+          {todoFeed.failed || todoFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {todoFeed.data?.message || "The todo list is unavailable."}
+            </Text>
+          ) : !todoFeed.data ? (
+            <Spinner size="sm" aria-label="Loading todo list" />
+          ) : todoFeed.data.items.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">Nothing on the list.</Text>
+          ) : (
+            <>
+              {todoFeed.data.items.map((item, index) => {
+                const due = formatDue(item.due);
+                return (
+                  <Box key={`${item.text}-${index}`} display="flex" gap="8px" alignItems="baseline" mb="6px">
+                    <Box
+                      width="7px"
+                      height="7px"
+                      mt="5px"
+                      flexShrink={0}
+                      borderRadius="50%"
+                      bg={TODO_PRIORITY_COLORS[item.priority] || TODO_PRIORITY_COLORS.normal}
+                    />
+                    <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                      {item.text}
+                      {due && <Text as="span" color="gray.400"> · {due}</Text>}
+                    </Text>
+                  </Box>
+                );
+              })}
+              {todoFeed.data.remaining > 0 && (
+                <Text fontSize="xs" color="gray.400" mt="8px">
+                  +{todoFeed.data.remaining} more open
+                </Text>
+              )}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "timer_status" && (
+        <Box mt="12px" aria-live="polite">
+          {timerFeed.failed ? (
+            <Text fontSize="sm" color="orange.200">Timers are unavailable.</Text>
+          ) : !timerFeed.data ? (
+            <Spinner size="sm" aria-label="Loading timers" />
+          ) : timerFeed.data.timers.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">No timers running.</Text>
+          ) : (
+            <>
+              {timerFeed.data.timers.map((timer, index) => (
+                <Box key={`${timer.due_at}-${index}`} display="flex" justifyContent="space-between" gap="12px" mb="6px">
+                  <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                    {timer.label || "timer"}
+                  </Text>
+                  <Text fontSize="sm" color="purple.200" flexShrink={0} fontVariantNumeric="tabular-nums">
+                    {formatRemaining(timerRemainingSeconds(timer))}
+                  </Text>
+                </Box>
+              ))}
+              {timerFeed.data.remaining > 0 && (
+                <Text fontSize="xs" color="gray.400" mt="8px">
+                  +{timerFeed.data.remaining} more
+                </Text>
+              )}
             </>
           )}
         </Box>

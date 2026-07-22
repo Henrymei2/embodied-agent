@@ -23,13 +23,11 @@ Run standalone for a quick sanity check:
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import sys
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -38,51 +36,18 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 from loguru import logger
 
-mcp = FastMCP("scheduler")
-
-# Where tasks are persisted — inside the agent workspace
-_WORKSPACE_DIR = os.environ.get("EMBODIED_AGENT_WORKSPACE") or str(
-    Path.home() / "embodied-agent"
+# The task file is shared with the timer tools and with the read-only routes
+# behind the furniture hover windows, so its location, format, and atomic
+# writer live in one place.
+from src.open_llm_vtuber.furniture_state import (
+    load_tasks as _load_tasks,
+    save_tasks as _save_tasks,
 )
-_TASKS_FILE = Path(_WORKSPACE_DIR) / "scheduler_tasks.json"
+
+mcp = FastMCP("scheduler")
 
 # How often the background loop checks for due tasks (seconds)
 _TICK_INTERVAL = 30
-
-# ── Persistence helpers ────────────────────────────────────────────────────────
-
-
-def _load_tasks() -> dict[str, dict[str, Any]]:
-    """Load tasks from disk. Returns empty dict if file missing or corrupt."""
-    try:
-        if _TASKS_FILE.exists():
-            return json.loads(_TASKS_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"Scheduler: could not load tasks file: {e}")
-    return {}
-
-
-def _save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
-    """Persist tasks to disk atomically.
-
-    The tasks file is written by both this in-process loop and the scheduler
-    MCP subprocess, so a plain truncate-then-write can be observed (or collide)
-    mid-write and corrupt the JSON — which _load_tasks would then treat as an
-    empty task set, silently wiping every scheduled task. Writing to a unique
-    temp file and atomically replacing avoids partial/torn writes.
-    """
-    try:
-        _TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        temporary = _TASKS_FILE.with_suffix(f".{uuid.uuid4().hex}.tmp")
-        try:
-            temporary.write_text(
-                json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-            temporary.replace(_TASKS_FILE)
-        finally:
-            temporary.unlink(missing_ok=True)
-    except Exception as e:
-        logger.error(f"Scheduler: could not save tasks file: {e}")
 
 
 def _now_iso() -> str:

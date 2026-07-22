@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
+from .furniture_state import timer_snapshot, todo_snapshot
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
@@ -51,6 +52,27 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
             status_code=status_code,
             headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"},
         )
+
+    return router
+
+
+def init_furniture_routes() -> APIRouter:
+    """Read-only views of the state behind furniture hover windows.
+
+    The frontend polls these while a hover window is open. They expose only what
+    the panel renders — no identifiers, no file paths, and no way to mutate the
+    stores, which stay reachable to the agent only through proximity-gated MCP
+    tools.
+    """
+    router = APIRouter(prefix="/api/furniture")
+
+    @router.get("/todo")
+    async def todo_window():
+        return JSONResponse(await run_in_threadpool(todo_snapshot))
+
+    @router.get("/timers")
+    async def timer_window():
+        return JSONResponse(await run_in_threadpool(timer_snapshot))
 
     return router
 

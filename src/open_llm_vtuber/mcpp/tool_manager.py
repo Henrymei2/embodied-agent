@@ -28,7 +28,10 @@ PROXIMITY_REQUIREMENTS: Dict[str, str] = {
 # separate list of tool names.
 SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "playwright": "computer",
-    "ddg-search": "computer"
+    "ddg-search": "computer",
+    "todo": "todo_list",
+    "timer": "hourglass",
+    "weather": "window",
 }
 
 PROXIMITY_THRESHOLD = 150.0
