@@ -1,9 +1,10 @@
 /* eslint-disable react/require-default-props */
 import { Box, Button, Menu } from '@chakra-ui/react';
 import {
-  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers
+  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers, FiCalendar
 } from 'react-icons/fi';
 import { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { sidebarStyles } from './sidebar-styles';
 import SettingUI from './setting/setting-ui';
 import ChatHistoryPanel from './chat-history-panel';
@@ -11,6 +12,7 @@ import BottomTab from './bottom-tab';
 import HistoryDrawer from './history-drawer';
 import { useSidebar } from '@/hooks/sidebar/use-sidebar';
 import GroupDrawer from './group-drawer';
+import ScheduledEventsDrawer from './scheduled-events-drawer';
 import { ModeType } from '@/context/mode-context';
 
 // Type definitions
@@ -82,31 +84,40 @@ const ModeMenu = memo(({ setMode, currentMode, isElectron }: {
 
 ModeMenu.displayName = 'ModeMenu';
 
-const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode, isElectron }: HeaderButtonsProps) => (
-  <Box display="flex" gap={1}>
-    <Button onClick={onSettingsOpen}>
-      <FiSettings />
-    </Button>
-
-    <GroupDrawer>
-      <Button>
-        <FiUsers />
+const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode, isElectron }: HeaderButtonsProps) => {
+  const { t } = useTranslation();
+  return (
+    <Box display="flex" gap={1}>
+      <Button onClick={onSettingsOpen}>
+        <FiSettings />
       </Button>
-    </GroupDrawer>
 
-    <HistoryDrawer>
-      <Button>
-        <FiClock />
+      <GroupDrawer>
+        <Button>
+          <FiUsers />
+        </Button>
+      </GroupDrawer>
+
+      <HistoryDrawer>
+        <Button>
+          <FiClock />
+        </Button>
+      </HistoryDrawer>
+
+      <ScheduledEventsDrawer>
+        <Button aria-label={t('scheduler.title')} title={t('scheduler.title')}>
+          <FiCalendar />
+        </Button>
+      </ScheduledEventsDrawer>
+
+      <Button onClick={onNewHistory}>
+        <FiPlus />
       </Button>
-    </HistoryDrawer>
 
-    <Button onClick={onNewHistory}>
-      <FiPlus />
-    </Button>
-
-    <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
-  </Box>
-));
+      <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
+    </Box>
+  );
+});
 
 HeaderButtons.displayName = 'HeaderButtons';
 

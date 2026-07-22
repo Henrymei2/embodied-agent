@@ -8,7 +8,12 @@ from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
-from .furniture_state import timer_snapshot, todo_snapshot
+from .furniture_state import (
+    delete_task,
+    scheduler_events_snapshot,
+    timer_snapshot,
+    todo_snapshot,
+)
 from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
@@ -108,6 +113,34 @@ def init_furniture_routes() -> APIRouter:
     @router.get("/timers")
     async def timer_window():
         return JSONResponse(await run_in_threadpool(timer_snapshot))
+
+    return router
+
+
+def init_scheduler_routes() -> APIRouter:
+    """Expose pending scheduler events to the local management UI."""
+    router = APIRouter(prefix="/api/scheduler")
+
+    @router.get("/events")
+    async def scheduler_events():
+        payload = await run_in_threadpool(scheduler_events_snapshot)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @router.delete("/events/{event_id}")
+    async def delete_scheduler_event(event_id: str):
+        if not event_id or len(event_id) > 128:
+            return JSONResponse({"error": "invalid event id"}, status_code=400)
+        try:
+            deleted = await run_in_threadpool(delete_task, event_id)
+        except OSError:
+            logger.exception("Could not update the scheduler task store")
+            return JSONResponse(
+                {"error": "scheduled event could not be deleted"},
+                status_code=503,
+            )
+        if not deleted:
+            return JSONResponse({"error": "scheduled event not found"}, status_code=404)
+        return JSONResponse({"deleted": True, "id": event_id})
 
     return router
 

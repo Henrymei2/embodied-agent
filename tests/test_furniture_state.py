@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import pytest
@@ -122,6 +123,50 @@ def test_task_store_survives_a_corrupt_file():
     assert furniture_state.timer_snapshot()["timers"] == []
 
 
+def test_scheduler_events_include_tasks_and_timers_sorted_by_next_run():
+    now = datetime.now()
+    furniture_state.save_tasks(
+        {
+            "later": {
+                "id": "later",
+                "prompt": "Review the day",
+                "interval_seconds": 3600,
+                "next_run": (now + timedelta(hours=1)).isoformat(timespec="seconds"),
+                "report": False,
+            },
+            "timer": {
+                "id": "timer",
+                "kind": "timer",
+                "label": "tea",
+                "prompt": "Say the tea timer is ready",
+                "interval_seconds": None,
+                "next_run": (now + timedelta(minutes=5)).isoformat(timespec="seconds"),
+            },
+            "broken": {"id": "broken", "prompt": "missing next run"},
+        }
+    )
+
+    payload = furniture_state.scheduler_events_snapshot()
+
+    assert payload["count"] == 2
+    assert [event["id"] for event in payload["events"]] == ["timer", "later"]
+    assert payload["events"][0]["kind"] == "timer"
+    assert payload["events"][1]["kind"] == "recurring"
+    assert payload["events"][1]["report"] is False
+
+
+def test_concurrent_task_mutations_do_not_drop_updates():
+    def add(index: int) -> None:
+        furniture_state.mutate_tasks(
+            lambda tasks: tasks.__setitem__(str(index), {"id": str(index)})
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(add, range(40)))
+
+    assert set(furniture_state.load_tasks()) == {str(index) for index in range(40)}
+
+
 def test_saved_stores_are_valid_json_on_disk():
     furniture_state.save_todos([_todo("round trip")])
 
@@ -158,6 +203,42 @@ def test_hover_routes_serve_snapshots_and_stay_read_only():
     }
 
     assert client.post("/api/furniture/todo").status_code == 405
+
+
+def test_scheduler_routes_list_and_delete_events():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.open_llm_vtuber.routes import init_scheduler_routes
+
+    furniture_state.save_tasks(
+        {
+            "event1": {
+                "id": "event1",
+                "prompt": "Check the weather",
+                "priority": 10,
+                "interval_seconds": None,
+                "report": True,
+                "next_run": datetime.now().isoformat(timespec="seconds"),
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "run_count": 0,
+            }
+        }
+    )
+    app = FastAPI()
+    app.include_router(init_scheduler_routes())
+    client = TestClient(app)
+
+    response = client.get("/api/scheduler/events")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["events"][0]["kind"] == "one_time"
+
+    deleted = client.delete("/api/scheduler/events/event1")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "id": "event1"}
+    assert furniture_state.load_tasks() == {}
+    assert client.delete("/api/scheduler/events/event1").status_code == 404
 
 
 def _manager_at(monkeypatch, tmp_path, target_id: str | None) -> ToolManager:

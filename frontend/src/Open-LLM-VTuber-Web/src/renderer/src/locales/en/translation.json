@@ -4,6 +4,7 @@
     "cancel": "Cancel",
     "settings": "Settings",
     "close": "Close",
+    "retry": "Retry",
     "accept": "Accept"
   },
   "settings": {
@@ -91,6 +92,33 @@
   "history": {
     "chatHistoryList": "Chat History List",
     "noMessages": "No messages"
+  },
+  "scheduler": {
+    "title": "Scheduled Events",
+    "loading": "Loading scheduled events…",
+    "empty": "No events are currently scheduled.",
+    "loadError": "Scheduled events could not be loaded.",
+    "delete": "Delete scheduled event",
+    "deleteSuccess": "Scheduled event deleted",
+    "deleteError": "Scheduled event could not be deleted",
+    "untitled": "Untitled event",
+    "unknownTime": "Unknown next run time",
+    "oneTime": "One time",
+    "reports": "Reports to you",
+    "silent": "Runs silently",
+    "everyDays_one": "Every day",
+    "everyDays_other": "Every {{count}} days",
+    "everyHours_one": "Every hour",
+    "everyHours_other": "Every {{count}} hours",
+    "everyMinutes_one": "Every minute",
+    "everyMinutes_other": "Every {{count}} minutes",
+    "everySeconds_one": "Every second",
+    "everySeconds_other": "Every {{count}} seconds",
+    "kind": {
+      "timer": "Timer",
+      "recurring": "Recurring",
+      "one_time": "One time"
+    }
   },
   "notification": {
     "historyLoaded": "History loaded",

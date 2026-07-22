@@ -29,9 +29,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from src.open_llm_vtuber.furniture_state import (
+    delete_task,
     is_timer,
     load_tasks,
-    save_tasks,
+    mutate_tasks,
     timer_remaining_seconds,
 )
 
@@ -93,14 +94,10 @@ def set_timer(minutes: float, label: str = "") -> str:
         duration = _validate_minutes(minutes)
         clean_label = _validate_label(label)
 
-        tasks = load_tasks()
-        if sum(1 for task in tasks.values() if is_timer(task)) >= _MAX_TIMERS:
-            raise ValueError(f"at most {_MAX_TIMERS} timers can be pending")
-
         now = datetime.now()
         timer_id = uuid.uuid4().hex[:8]
         spoken = f"'{clean_label}' " if clean_label else ""
-        tasks[timer_id] = {
+        timer = {
             "id": timer_id,
             "kind": "timer",
             "label": clean_label,
@@ -115,9 +112,15 @@ def set_timer(minutes: float, label: str = "") -> str:
             "created_at": _iso(now),
             "run_count": 0,
         }
-        save_tasks(tasks)
+
+        def add_timer(tasks: dict[str, dict[str, Any]]) -> None:
+            if sum(1 for task in tasks.values() if is_timer(task)) >= _MAX_TIMERS:
+                raise ValueError(f"at most {_MAX_TIMERS} timers can be pending")
+            tasks[timer_id] = timer
+
+        mutate_tasks(add_timer)
         return json.dumps(
-            {"ok": True, "timer": _describe(tasks[timer_id], now)},
+            {"ok": True, "timer": _describe(timer, now)},
             ensure_ascii=False,
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -147,11 +150,8 @@ def cancel_timer(timer_id: str) -> str:
     try:
         if not isinstance(timer_id, str) or not timer_id or len(timer_id) > 80:
             raise ValueError("timer_id must be a non-empty string")
-        tasks = load_tasks()
-        if not is_timer(tasks.get(timer_id)):
+        if not delete_task(timer_id, predicate=is_timer):
             raise ValueError(f"timer '{timer_id}' was not found")
-        del tasks[timer_id]
-        save_tasks(tasks)
         return json.dumps({"ok": True, "timer_id": timer_id})
     except (OSError, TypeError, ValueError) as exc:
         return f"Error: {exc}"

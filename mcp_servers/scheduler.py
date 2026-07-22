@@ -40,8 +40,9 @@ from loguru import logger
 # behind the furniture hover windows, so its location, format, and atomic
 # writer live in one place.
 from src.open_llm_vtuber.furniture_state import (
+    delete_task as _delete_task,
     load_tasks as _load_tasks,
-    save_tasks as _save_tasks,
+    mutate_tasks as _mutate_tasks,
 )
 
 mcp = FastMCP("scheduler")
@@ -104,9 +105,7 @@ def schedule_task(
         "run_count": 0,
     }
 
-    tasks = _load_tasks()
-    tasks[task_id] = task
-    _save_tasks(tasks)
+    _mutate_tasks(lambda tasks: tasks.__setitem__(task_id, task))
 
     kind = f"every {interval_seconds}s" if interval_seconds else "one-time"
     return (
@@ -152,11 +151,8 @@ def remove_task(task_id: str) -> str:
     Returns:
         Confirmation that the task was removed, or an error if not found.
     """
-    tasks = _load_tasks()
-    if task_id not in tasks:
+    if not _delete_task(task_id):
         return f"Error: no task found with id '{task_id}'."
-    del tasks[task_id]
-    _save_tasks(tasks)
     return f"OK: removed task {task_id}."
 
 
@@ -184,36 +180,61 @@ DEFAULT_TASKS = [
 
 def _initialize_default_tasks() -> None:
     """Add default tasks on first launch if they don't already exist."""
-    tasks = _load_tasks()
 
-    # Check by description field to avoid duplicating on restart
-    existing_descriptions = {t.get("description") for t in tasks.values()}
+    def add_defaults(tasks: dict) -> int:
+        # Check by description field to avoid duplicating on restart.
+        existing_descriptions = {t.get("description") for t in tasks.values()}
+        added = 0
+        for default in DEFAULT_TASKS:
+            if default["description"] in existing_descriptions:
+                continue
 
-    added = 0
-    for default in DEFAULT_TASKS:
-        if default["description"] in existing_descriptions:
-            continue
+            task_id = str(uuid.uuid4())[:8]
+            next_run = _iso(
+                datetime.now() + timedelta(seconds=default.get("delay_seconds", 0))
+            )
+            tasks[task_id] = {
+                "id": task_id,
+                "prompt": default["prompt"],
+                "priority": default["priority"],
+                "interval_seconds": default["interval_seconds"],
+                "report": default["report"],
+                "next_run": next_run,
+                "created_at": _now_iso(),
+                "run_count": 0,
+                "description": default["description"],
+            }
+            added += 1
+        return added
 
-        task_id = str(uuid.uuid4())[:8]
-        next_run = _iso(
-            datetime.now() + timedelta(seconds=default.get("delay_seconds", 0))
-        )
-        tasks[task_id] = {
-            "id": task_id,
-            "prompt": default["prompt"],
-            "priority": default["priority"],
-            "interval_seconds": default["interval_seconds"],
-            "report": default["report"],
-            "next_run": next_run,
-            "created_at": _now_iso(),
-            "run_count": 0,
-            "description": default["description"],
-        }
-        added += 1
-
+    added = _mutate_tasks(add_defaults, save_if=bool)
     if added:
-        _save_tasks(tasks)
         logger.info(f"Scheduler: initialized {added} default task(s).")
+
+
+def _claim_due_tasks(now: datetime) -> list[tuple[str, dict]]:
+    """Advance/remove due tasks atomically before they are enqueued."""
+
+    def claim(tasks: dict) -> list[tuple[str, dict]]:
+        due: list[tuple[str, dict]] = []
+        for task_id, task in list(tasks.items()):
+            next_run = datetime.fromisoformat(task["next_run"])
+            if now < next_run:
+                continue
+
+            claimed = dict(task)
+            claimed["run_count"] = task.get("run_count", 0) + 1
+            due.append((task_id, claimed))
+
+            interval = task.get("interval_seconds")
+            if interval:
+                task["run_count"] = claimed["run_count"]
+                task["next_run"] = _iso(now + timedelta(seconds=interval))
+            else:
+                del tasks[task_id]
+        return due
+
+    return _mutate_tasks(claim, save_if=bool)
 
 
 # ── Background execution loop ──────────────────────────────────────────────────
@@ -232,14 +253,9 @@ async def _scheduler_loop(client_uid: str) -> None:
         try:
             await asyncio.sleep(_TICK_INTERVAL)
             now = datetime.now()
-            tasks = _load_tasks()
-            changed = False
+            due_tasks = _claim_due_tasks(now)
 
-            for task_id, task in list(tasks.items()):
-                next_run = datetime.fromisoformat(task["next_run"])
-                if now < next_run:
-                    continue
-
+            for task_id, task in due_tasks:
                 logger.info(
                     f"Scheduler: firing task {task_id} "
                     f"(priority={task['priority']}): {task['prompt'][:60]}..."
@@ -267,20 +283,6 @@ async def _scheduler_loop(client_uid: str) -> None:
                     priority=task.get("priority", PRIORITY_SCHEDULED),
                     label=f"scheduled:{task_id}",
                 )
-
-                # Update run count and next_run
-                task["run_count"] = task.get("run_count", 0) + 1
-                interval = task.get("interval_seconds")
-                if interval:
-                    task["next_run"] = _iso(now + timedelta(seconds=interval))
-                    tasks[task_id] = task
-                else:
-                    # One-time task — remove after firing
-                    del tasks[task_id]
-                changed = True
-
-            if changed:
-                _save_tasks(tasks)
 
         except asyncio.CancelledError:
             logger.info("Scheduler: background loop cancelled.")

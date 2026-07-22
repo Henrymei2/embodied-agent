@@ -19,8 +19,9 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+from filelock import FileLock, Timeout
 from loguru import logger
 
 from .workspace import DEFAULT_WORKSPACE_DIR
@@ -30,6 +31,8 @@ _PRIORITY_ORDER = {priority: index for index, priority in enumerate(TODO_PRIORIT
 
 # How many rows a hover window shows before it reports a remainder.
 _SNAPSHOT_LIMIT = 8
+_TASK_LOCK_TIMEOUT = 5
+_MutationResult = TypeVar("_MutationResult")
 
 
 def workspace_root() -> Path:
@@ -108,6 +111,10 @@ def tasks_path() -> Path:
     return workspace_root() / "scheduler_tasks.json"
 
 
+def tasks_lock_path() -> Path:
+    return workspace_root() / "scheduler_tasks.lock"
+
+
 def load_tasks() -> dict[str, dict[str, Any]]:
     """Return scheduled tasks, treating an unreadable store as empty."""
     path = tasks_path()
@@ -124,10 +131,54 @@ def load_tasks() -> dict[str, dict[str, Any]]:
 
 
 def save_tasks(tasks: dict[str, dict[str, Any]]) -> None:
+    """Replace the task store under its cross-process lock."""
     try:
-        _write_json_atomic(tasks_path(), tasks)
-    except OSError as exc:
+        lock_path = tasks_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(lock_path), timeout=_TASK_LOCK_TIMEOUT):
+            _write_json_atomic(tasks_path(), tasks)
+    except (OSError, Timeout) as exc:
         logger.error(f"Scheduler: could not save tasks file: {exc}")
+
+
+def mutate_tasks(
+    mutation: Callable[[dict[str, dict[str, Any]]], _MutationResult],
+    *,
+    save_if: Callable[[_MutationResult], bool] | None = None,
+) -> _MutationResult:
+    """Atomically apply a read-modify-write operation to the shared task store.
+
+    Scheduler and timer MCP servers run in subprocesses while the scheduler loop
+    and HTTP API run in the main process. The lock prevents any of those writers
+    from restoring a deleted task or dropping a concurrently created task.
+    """
+    lock_path = tasks_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with FileLock(str(lock_path), timeout=_TASK_LOCK_TIMEOUT):
+            tasks = load_tasks()
+            result = mutation(tasks)
+            if save_if is None or save_if(result):
+                _write_json_atomic(tasks_path(), tasks)
+            return result
+    except Timeout as exc:
+        raise OSError("scheduler task store is busy") from exc
+
+
+def delete_task(
+    task_id: str,
+    predicate: Callable[[dict[str, Any]], bool] | None = None,
+) -> bool:
+    """Delete one task, optionally only when it matches ``predicate``."""
+
+    def delete(tasks: dict[str, dict[str, Any]]) -> bool:
+        task = tasks.get(task_id)
+        if task is None or (predicate is not None and not predicate(task)):
+            return False
+        del tasks[task_id]
+        return True
+
+    return mutate_tasks(delete, save_if=bool)
 
 
 def is_timer(task: Any) -> bool:
@@ -189,3 +240,52 @@ def timer_snapshot(limit: int = _SNAPSHOT_LIMIT) -> dict[str, Any]:
         "timers": timers[:limit],
         "remaining": max(0, len(timers) - limit),
     }
+
+
+def scheduler_events_snapshot() -> dict[str, Any]:
+    """Return normalized pending tasks for the scheduler management UI."""
+    events: list[dict[str, Any]] = []
+    for task_id, task in load_tasks().items():
+        if not isinstance(task, dict) or not isinstance(task.get("next_run"), str):
+            continue
+        raw_interval = task.get("interval_seconds")
+        interval = (
+            raw_interval
+            if isinstance(raw_interval, (int, float))
+            and not isinstance(raw_interval, bool)
+            and raw_interval > 0
+            else None
+        )
+        priority = task.get("priority", 10)
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            priority = 10
+        run_count = task.get("run_count", 0)
+        if not isinstance(run_count, int) or isinstance(run_count, bool):
+            run_count = 0
+        created_at = task.get("created_at")
+        if not isinstance(created_at, str):
+            created_at = None
+        kind = "timer" if is_timer(task) else "recurring" if interval else "one_time"
+        events.append(
+            {
+                "id": str(task_id),
+                "kind": kind,
+                "label": str(task.get("label") or ""),
+                "prompt": str(task.get("prompt") or ""),
+                "priority": priority,
+                "interval_seconds": interval,
+                "report": bool(task.get("report", True)),
+                "next_run": task["next_run"],
+                "created_at": created_at,
+                "run_count": run_count,
+            }
+        )
+
+    def next_run_key(event: dict[str, Any]) -> float:
+        try:
+            return datetime.fromisoformat(event["next_run"]).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            return float("inf")
+
+    events.sort(key=next_run_key)
+    return {"count": len(events), "events": events}

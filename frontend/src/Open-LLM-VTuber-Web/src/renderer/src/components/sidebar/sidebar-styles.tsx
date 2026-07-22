@@ -237,6 +237,79 @@ export const sidebarStyles = {
     },
   },
 
+  schedulerDrawer: {
+    listContainer: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: 3,
+      height: '100%',
+      overflowY: 'auto',
+      px: 4,
+      py: 2,
+      css: commonStyles.scrollbar,
+    },
+    eventItem: {
+      p: 3,
+      borderRadius: 'md',
+      bg: 'whiteAlpha.50',
+      border: '1px solid',
+      borderColor: 'whiteAlpha.100',
+    },
+    eventHeader: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 3,
+    },
+    eventTitle: {
+      color: 'whiteAlpha.950',
+      fontSize: 'sm',
+      fontWeight: 'semibold',
+      overflowWrap: 'anywhere' as const,
+      mb: 1,
+    },
+    kindBadge: {
+      size: 'sm' as const,
+      colorPalette: 'blue',
+      variant: 'subtle' as const,
+    },
+    prompt: {
+      color: 'whiteAlpha.800',
+      fontSize: 'xs',
+      mt: 3,
+      whiteSpace: 'pre-wrap' as const,
+      overflowWrap: 'anywhere' as const,
+    },
+    metadata: {
+      color: 'whiteAlpha.600',
+      fontSize: 'xs',
+      mt: 3,
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: 1,
+    },
+    deleteButton: {
+      variant: 'ghost' as const,
+      size: 'sm' as const,
+      color: 'red.300',
+      flexShrink: 0,
+      _hover: {
+        bg: 'whiteAlpha.200',
+      },
+    },
+    state: {
+      flex: 1,
+      minHeight: '240px',
+      color: 'whiteAlpha.700',
+      display: 'flex',
+      flexDirection: 'column' as const,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 3,
+      textAlign: 'center' as const,
+    },
+  },
+
   cameraPanel: {
     container: {
       width: '97%',
