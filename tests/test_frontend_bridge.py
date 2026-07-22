@@ -237,7 +237,7 @@ def test_mcp_subprocess_environment_is_session_bound(monkeypatch, tmp_path):
     }
 
 
-def test_calendar_subprocess_receives_only_google_token_path(monkeypatch, tmp_path):
+def test_google_subprocesses_receive_only_google_token_path(monkeypatch, tmp_path):
     monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path / "workspace"))
     monkeypatch.setattr(
         "src.open_llm_vtuber.bridge_auth.get_bridge_token", lambda: "bridge-secret"
@@ -247,9 +247,11 @@ def test_calendar_subprocess_receives_only_google_token_path(monkeypatch, tmp_pa
         lambda: tmp_path / "app-data" / "google_token.json",
     )
     context = ServiceContext()
-    calendar_server = SimpleNamespace(env={})
+    google_servers = {
+        name: SimpleNamespace(env={}) for name in ("calendar", "drive", "gmail")
+    }
     context.mcp_server_registery = SimpleNamespace(
-        servers={"calendar": calendar_server}
+        servers=google_servers
     )
     context.system_config = SimpleNamespace(
         host="localhost",
@@ -267,11 +269,12 @@ def test_calendar_subprocess_receives_only_google_token_path(monkeypatch, tmp_pa
 
     context._configure_mcp_server_environment()
 
-    assert calendar_server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"].endswith(
-        "app-data/google_token.json"
-    )
-    assert "EMBODIED_AGENT_GOOGLE_CLIENT_SECRETS_FILE" not in calendar_server.env
-    assert "EMBODIED_AGENT_GOOGLE_REDIRECT_URI" not in calendar_server.env
+    for server in google_servers.values():
+        assert server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"].endswith(
+            "app-data/google_token.json"
+        )
+        assert "EMBODIED_AGENT_GOOGLE_CLIENT_SECRETS_FILE" not in server.env
+        assert "EMBODIED_AGENT_GOOGLE_REDIRECT_URI" not in server.env
 
 
 @pytest.mark.asyncio

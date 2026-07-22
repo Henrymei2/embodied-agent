@@ -177,3 +177,60 @@ def test_google_routes_sanitize_callback_and_status():
     assert "sensitive-code" not in callback.text
     assert callback.headers["referrer-policy"] == "no-referrer"
     assert callback.headers["cache-control"] == "no-store"
+
+
+def test_gmail_unread_routes_page_and_sanitize_failures():
+    class FakeService:
+        def unread_status(self):
+            return {"has_unread": True}
+
+        def unread_messages(self, *, page_size, page_token):
+            assert (page_size, page_token) == (20, "next")
+            return {
+                "messages": [
+                    {
+                        "message_id": "m1",
+                        "thread_id": "t1",
+                        "sender": "Sender <sender@example.com>",
+                        "subject": "Hello",
+                        "received_at": "today",
+                        "snippet": "Preview",
+                    }
+                ],
+                "next_page_token": None,
+                "has_unread": True,
+            }
+
+        def status(self):
+            return {}
+
+    app = FastAPI()
+    app.include_router(init_google_integration_routes(FakeService()))
+    client = TestClient(app)
+
+    assert client.get("/api/integrations/google/gmail/unread-status").json() == {
+        "has_unread": True
+    }
+    response = client.get(
+        "/api/integrations/google/gmail/unread",
+        params={"page_size": 20, "page_token": "next"},
+    )
+    assert response.status_code == 200
+    assert response.json()["messages"][0]["message_id"] == "m1"
+    assert (
+        client.get(
+            "/api/integrations/google/gmail/unread", params={"page_size": 51}
+        ).status_code
+        == 400
+    )
+
+    def fail():
+        raise RuntimeError("sensitive upstream response")
+
+    app = FastAPI()
+    failing = FakeService()
+    failing.unread_status = fail
+    app.include_router(init_google_integration_routes(failing))
+    failed = TestClient(app).get("/api/integrations/google/gmail/unread-status")
+    assert failed.status_code == 502
+    assert "sensitive upstream response" not in failed.text

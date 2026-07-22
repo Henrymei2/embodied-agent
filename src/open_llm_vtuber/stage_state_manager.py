@@ -9,7 +9,7 @@ from typing import Any
 from loguru import logger
 
 
-STAGE_VERSION = 4
+STAGE_VERSION = 5
 STAGE_BASE_DIR = "stage_state"
 
 # Live data sources a furniture hover window may render. Each one is backed by a
@@ -18,6 +18,7 @@ UI_WINDOW_PROVIDERS = (
     "google_calendar_status",
     "todo_list",
     "timer_status",
+    "google_gmail_unread",
 )
 
 
@@ -147,6 +148,66 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                     "color": "#ffffff",
                     "borderRadius": 8,
                     "fontSize": 14,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "archive_shelf",
+                "type": "panel",
+                "label": "archive shelf",
+                "x": 300,
+                "y": 430,
+                "width": 125,
+                "height": 110,
+                "zIndex": 2,
+                "text": "archive shelf",
+                "texture": {
+                    "src": "./stage-assets/archive-shelf.png",
+                    "fit": "contain",
+                    "alt": "archive shelf",
+                },
+                "style": {
+                    "background": "rgba(146, 64, 14, 0.88)",
+                    "borderColor": "rgba(254, 215, 170, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "mailbox",
+                "type": "panel",
+                "label": "mailbox",
+                "x": 830,
+                "y": 430,
+                "width": 96,
+                "height": 88,
+                "zIndex": 2,
+                "text": "mailbox",
+                "texture": {
+                    "src": "./stage-assets/mailbox-empty.png",
+                    "fit": "contain",
+                    "alt": "mailbox",
+                },
+                "stateTextures": {
+                    "unread": {
+                        "src": "./stage-assets/mailbox-unread.png",
+                        "fit": "contain",
+                        "alt": "mailbox with unread mail",
+                    }
+                },
+                "uiWindow": {
+                    "title": "Unread Gmail",
+                    "body": "Unread messages for the connected Google account.",
+                    "provider": "google_gmail_unread",
+                },
+                "style": {
+                    "background": "rgba(71, 85, 105, 0.9)",
+                    "borderColor": "rgba(203, 213, 225, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
                     "fontWeight": "700",
                 },
             },
@@ -313,7 +374,7 @@ def _is_safe_asset_src(value: Any) -> bool:
 
 
 def migrate_stage(stage: Any) -> Any:
-    """Return a v4 stage document, preserving existing layout and assets.
+    """Return a v5 stage document, preserving existing layout and assets.
 
     Every supported older version also gains the furniture introduced by newer
     default rooms: a tool stays hidden while the object it is bound to is absent
@@ -322,7 +383,7 @@ def migrate_stage(stage: Any) -> Any:
     """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2, 3}:
+    if stage.get("version") not in {1, 2, 3, 4}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
@@ -356,6 +417,10 @@ def migrate_stage(stage: Any) -> Any:
             if "spritesheet" not in migrated_node and "spritesheet" in default_node:
                 migrated_node["spritesheet"] = copy.deepcopy(
                     default_node["spritesheet"]
+                )
+            if "stateTextures" not in migrated_node and "stateTextures" in default_node:
+                migrated_node["stateTextures"] = copy.deepcopy(
+                    default_node["stateTextures"]
                 )
             nodes.append(migrated_node)
     else:
@@ -404,6 +469,21 @@ def _validate_texture(texture: Any, node_id: str, errors: list[str]) -> None:
         errors.append(f"Node {node_id} texture.fit must be contain or cover.")
     if not _is_safe_text(texture.get("alt"), 160):
         errors.append(f"Node {node_id} texture.alt contains unsafe text length.")
+
+
+def _validate_state_textures(
+    state_textures: Any, node_id: str, errors: list[str]
+) -> None:
+    if state_textures is None:
+        return
+    if not isinstance(state_textures, dict):
+        errors.append(f"Node {node_id} stateTextures must be an object.")
+        return
+    for key, texture in state_textures.items():
+        if key != "unread":
+            errors.append(f"Node {node_id} stateTextures.{key} is not supported.")
+            continue
+        _validate_texture(texture, f"{node_id} stateTextures.{key}", errors)
 
 
 def _validate_ui_window(ui_window: Any, node_id: str, errors: list[str]) -> None:
@@ -533,7 +613,7 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
         return False, ["Stage document must be an object."]
 
     if stage.get("version") != STAGE_VERSION:
-        errors.append("Stage version must be 3.")
+        errors.append("Stage version must be 5.")
 
     canvas = stage.get("canvas")
     if not isinstance(canvas, dict):
@@ -587,6 +667,9 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             if node.get("src") is not None and not _is_safe_asset_src(node.get("src")):
                 errors.append(f"Node {node_id or index} src is invalid.")
             _validate_texture(node.get("texture"), str(node_id or index), errors)
+            _validate_state_textures(
+                node.get("stateTextures"), str(node_id or index), errors
+            )
             _validate_ui_window(node.get("uiWindow"), str(node_id or index), errors)
             _validate_spritesheet(
                 node.get("spritesheet"), str(node_id or index), errors

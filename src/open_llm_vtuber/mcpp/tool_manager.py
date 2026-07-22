@@ -32,6 +32,8 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "todo": "todo_list",
     "timer": "hourglass",
     "weather": "window",
+    "drive": "archive shelf",
+    "gmail": "mailbox",
 }
 
 PROXIMITY_THRESHOLD = 150.0

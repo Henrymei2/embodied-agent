@@ -103,6 +103,39 @@ def test_all_playwright_tool_schemas_require_computer_proximity(
     ]
 
 
+def test_google_server_tools_require_their_furniture(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    assert save_stage_state("character", stage)[0]
+    tools = {
+        "list_drive_files": FormattedTool(input_schema={}, related_server="drive"),
+        "get_email": FormattedTool(input_schema={}, related_server="gmail"),
+    }
+    manager = ToolManager(
+        formatted_tools_openai=[
+            _openai_tool("move_to"),
+            _openai_tool("list_drive_files"),
+            _openai_tool("get_email"),
+        ],
+        initial_tools_dict=tools,
+        conf_uid="character",
+    )
+
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == ["move_to"]
+    _move_avatar(stage, "archive_shelf")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "list_drive_files",
+    ]
+    _move_avatar(stage, "mailbox")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "get_email",
+    ]
+
+
 def test_tool_access_prompt_lists_all_tools_and_locations(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     stage = get_default_stage("character")

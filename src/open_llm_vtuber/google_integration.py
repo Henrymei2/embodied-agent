@@ -266,6 +266,80 @@ class GoogleIntegrationService:
         credentials = self._load_credentials()
         return build("calendar", "v3", credentials=credentials, cache_discovery=False)
 
+    def gmail(self):
+        credentials = self._load_credentials()
+        return build("gmail", "v1", credentials=credentials, cache_discovery=False)
+
+    def drive(self):
+        credentials = self._load_credentials()
+        return build("drive", "v3", credentials=credentials, cache_discovery=False)
+
+    @staticmethod
+    def _gmail_header(message: dict[str, Any], name: str) -> str:
+        payload = message.get("payload")
+        headers = payload.get("headers", []) if isinstance(payload, dict) else []
+        for header in headers:
+            if (
+                isinstance(header, dict)
+                and str(header.get("name", "")).lower() == name.lower()
+            ):
+                return str(header.get("value") or "")
+        return ""
+
+    def unread_status(self) -> dict[str, bool]:
+        response = (
+            self.gmail()
+            .users()
+            .messages()
+            .list(
+                userId="me",
+                labelIds=["UNREAD"],
+                includeSpamTrash=False,
+                maxResults=1,
+            )
+            .execute()
+        )
+        return {"has_unread": bool(response.get("messages"))}
+
+    def unread_messages(
+        self, *, page_size: int = 20, page_token: str | None = None
+    ) -> dict[str, Any]:
+        messages_api = self.gmail().users().messages()
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "labelIds": ["UNREAD"],
+            "includeSpamTrash": False,
+            "maxResults": page_size,
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        response = messages_api.list(**kwargs).execute()
+        items = []
+        for reference in response.get("messages", []):
+            if not isinstance(reference, dict) or not reference.get("id"):
+                continue
+            message = messages_api.get(
+                userId="me",
+                id=reference["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+            items.append(
+                {
+                    "message_id": str(message.get("id") or ""),
+                    "thread_id": str(message.get("threadId") or ""),
+                    "sender": self._gmail_header(message, "From"),
+                    "subject": self._gmail_header(message, "Subject") or "(no subject)",
+                    "received_at": self._gmail_header(message, "Date"),
+                    "snippet": str(message.get("snippet") or ""),
+                }
+            )
+        return {
+            "messages": items,
+            "next_page_token": response.get("nextPageToken"),
+            "has_unread": bool(items),
+        }
+
     def status(self) -> dict[str, Any]:
         if not self.configured:
             return {

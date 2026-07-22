@@ -118,6 +118,8 @@ Examples:
 - Todo tools are only available when the agent is close to the todo_list.
 - Timer tools are only available when the agent is close to the hourglass.
 - Weather tools are only available when the agent is close to the window.
+- Google Drive tools are only available when the agent is close to the archive shelf.
+- Gmail tools are only available when the agent is close to the mailbox.
 
 If a user asks for a calendar task and the agent is not near the calendar:
 1. Use `list_objects` or `get_object_position` to find the calendar.

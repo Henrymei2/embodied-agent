@@ -11,14 +11,19 @@ from src.open_llm_vtuber.stage_state_manager import (
 )
 
 
-def test_default_stage_is_v4_with_assets_and_calendar_window():
+def test_default_stage_is_v5_with_google_furniture():
     stage = get_default_stage("conf-a")
 
-    assert stage["version"] == 4
+    assert stage["version"] == 5
     nodes = {node["id"]: node for node in stage["nodes"]}
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
     assert nodes["bed"]["texture"]["src"] == "./stage-assets/bed.png"
     assert nodes["calendar"]["uiWindow"]["provider"] == "google_calendar_status"
+    assert nodes["archive_shelf"]["texture"]["src"].endswith("archive-shelf.png")
+    assert nodes["mailbox"]["uiWindow"]["provider"] == "google_gmail_unread"
+    assert nodes["mailbox"]["stateTextures"]["unread"]["src"].endswith(
+        "mailbox-unread.png"
+    )
     assert validate_stage(stage) == (True, [])
 
 
@@ -33,7 +38,15 @@ def test_default_stage_carries_tool_furniture():
 def test_tool_furniture_does_not_share_a_proximity_radius():
     """Standing at one object must not unlock another object's tools."""
     nodes = {node["id"]: node for node in get_default_stage("conf-a")["nodes"]}
-    gated = ["todo_list", "hourglass", "window", "computer", "calendar"]
+    gated = [
+        "todo_list",
+        "hourglass",
+        "window",
+        "computer",
+        "calendar",
+        "archive_shelf",
+        "mailbox",
+    ]
 
     for index, first in enumerate(gated):
         for second in gated[index + 1 :]:
@@ -44,7 +57,7 @@ def test_tool_furniture_does_not_share_a_proximity_radius():
             assert distance > PROXIMITY_THRESHOLD, f"{first} overlaps {second}"
 
 
-def test_v1_stage_migrates_to_v4_and_preserves_positions():
+def test_v1_stage_migrates_to_v5_and_preserves_positions():
     v1_stage = get_default_stage("conf-a")
     v1_stage["version"] = 1
     v1_stage["nodes"] = [
@@ -65,7 +78,7 @@ def test_v1_stage_migrates_to_v4_and_preserves_positions():
     migrated = migrate_stage(v1_stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     assert nodes["avatar"]["x"] == 123
     assert nodes["avatar"]["y"] == 234
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
@@ -73,7 +86,7 @@ def test_v1_stage_migrates_to_v4_and_preserves_positions():
     assert validate_stage(v1_stage) == (True, [])
 
 
-def test_v2_stage_migrates_to_v4_with_calendar_window():
+def test_v2_stage_migrates_to_v5_with_calendar_window():
     stage = get_default_stage("conf-a")
     stage["version"] = 2
     nodes = {node["id"]: node for node in stage["nodes"]}
@@ -81,7 +94,7 @@ def test_v2_stage_migrates_to_v4_with_calendar_window():
 
     migrated = migrate_stage(stage)
 
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     calendar = next(node for node in migrated["nodes"] if node["id"] == "calendar")
     assert calendar["uiWindow"]["provider"] == "google_calendar_status"
 
@@ -101,9 +114,28 @@ def test_v3_stage_gains_new_furniture_but_keeps_custom_layout():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 4
+    assert migrated["version"] == 5
     assert {"todo_list", "hourglass", "window"} <= set(nodes)
     assert nodes["bed"]["x"] == 321
+    assert validate_stage(migrated) == (True, [])
+
+
+def test_v4_stage_gains_google_furniture_and_keeps_custom_layout():
+    stage = get_default_stage("conf-a")
+    stage["version"] = 4
+    stage["nodes"] = [
+        node
+        for node in stage["nodes"]
+        if node["id"] not in {"archive_shelf", "mailbox"}
+    ]
+    next(node for node in stage["nodes"] if node["id"] == "calendar")["x"] = 555
+
+    migrated = migrate_stage(stage)
+    nodes = {node["id"]: node for node in migrated["nodes"]}
+
+    assert migrated["version"] == 5
+    assert {"archive_shelf", "mailbox"} <= set(nodes)
+    assert nodes["calendar"]["x"] == 555
     assert validate_stage(migrated) == (True, [])
 
 

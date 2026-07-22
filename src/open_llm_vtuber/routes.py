@@ -23,6 +23,41 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
     async def google_status():
         return JSONResponse(await run_in_threadpool(service.status))
 
+    @router.get("/gmail/unread-status")
+    async def gmail_unread_status():
+        try:
+            return JSONResponse(await run_in_threadpool(service.unread_status))
+        except GoogleIntegrationError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except Exception as exc:  # Google client errors are never safe to expose.
+            logger.warning("Gmail unread status failed: type={}", type(exc).__name__)
+            return JSONResponse(
+                {"error": "Gmail unread status is unavailable."}, status_code=502
+            )
+
+    @router.get("/gmail/unread")
+    async def gmail_unread(page_size: int = 20, page_token: str = ""):
+        if page_size < 1 or page_size > 50:
+            return JSONResponse(
+                {"error": "page_size must be between 1 and 50."}, status_code=400
+            )
+        if len(page_token) > 2048:
+            return JSONResponse({"error": "page_token is invalid."}, status_code=400)
+        try:
+            payload = await run_in_threadpool(
+                service.unread_messages,
+                page_size=page_size,
+                page_token=page_token or None,
+            )
+            return JSONResponse(payload)
+        except GoogleIntegrationError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except Exception as exc:
+            logger.warning("Gmail unread listing failed: type={}", type(exc).__name__)
+            return JSONResponse(
+                {"error": "Unread Gmail messages are unavailable."}, status_code=502
+            )
+
     @router.get("/authorize")
     async def google_authorize():
         try:
@@ -39,7 +74,7 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
         else:
             try:
                 await run_in_threadpool(service.exchange_code, state, code)
-                message = "Google Calendar is connected. You may close this window."
+                message = "Google is connected. You may close this window."
                 status_code = 200
             except GoogleIntegrationError as exc:
                 message = str(exc)
@@ -47,7 +82,7 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
         # This intentionally contains no external resources, scripts, or callback data.
         return HTMLResponse(
             "<!doctype html><html><head><meta charset='utf-8'>"
-            "<title>Google Calendar authorization</title></head>"
+            "<title>Google authorization</title></head>"
             f"<body><main><h1>{message}</h1></main></body></html>",
             status_code=status_code,
             headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"},

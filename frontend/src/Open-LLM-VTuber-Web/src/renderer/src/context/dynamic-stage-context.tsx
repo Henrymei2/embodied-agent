@@ -34,6 +34,7 @@ export interface StageNode {
   src?: string;
   alt?: string;
   texture?: StageTexture;
+  stateTextures?: Partial<Record<"unread", StageTexture>>;
   spritesheet?: StageSpritesheet;
   uiWindow?: FurnitureWindowConfig;
   style?: StageNodeStyle;
@@ -46,6 +47,7 @@ export const UI_WINDOW_PROVIDERS = [
   "google_calendar_status",
   "todo_list",
   "timer_status",
+  "google_gmail_unread",
 ] as const;
 
 export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];
@@ -87,7 +89,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 4;
+  version: 5;
   canvas: {
     width: number;
     height: number;
@@ -151,7 +153,7 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 4;
+const STAGE_VERSION = 5;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
 
@@ -243,6 +245,66 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
         color: "#ffffff",
         borderRadius: 8,
         fontSize: 14,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "archive_shelf",
+      type: "panel",
+      label: "archive shelf",
+      x: 300,
+      y: 430,
+      width: 125,
+      height: 110,
+      zIndex: 2,
+      text: "archive shelf",
+      texture: {
+        src: "./stage-assets/archive-shelf.png",
+        fit: "contain",
+        alt: "archive shelf",
+      },
+      style: {
+        background: "rgba(146, 64, 14, 0.88)",
+        borderColor: "rgba(254, 215, 170, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "mailbox",
+      type: "panel",
+      label: "mailbox",
+      x: 830,
+      y: 430,
+      width: 96,
+      height: 88,
+      zIndex: 2,
+      text: "mailbox",
+      texture: {
+        src: "./stage-assets/mailbox-empty.png",
+        fit: "contain",
+        alt: "mailbox",
+      },
+      stateTextures: {
+        unread: {
+          src: "./stage-assets/mailbox-unread.png",
+          fit: "contain",
+          alt: "mailbox with unread mail",
+        },
+      },
+      uiWindow: {
+        title: "Unread Gmail",
+        body: "Unread messages for the connected Google account.",
+        provider: "google_gmail_unread",
+      },
+      style: {
+        background: "rgba(71, 85, 105, 0.9)",
+        borderColor: "rgba(203, 213, 225, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
         fontWeight: "700",
       },
     },
@@ -436,6 +498,21 @@ const validateTexture = (texture: unknown, nodeId: string, errors: string[]) => 
   }
 };
 
+const validateStateTextures = (stateTextures: unknown, nodeId: string, errors: string[]) => {
+  if (stateTextures === undefined) return;
+  if (!isRecord(stateTextures)) {
+    errors.push(`Node ${nodeId} stateTextures must be an object.`);
+    return;
+  }
+  Object.entries(stateTextures).forEach(([key, texture]) => {
+    if (key !== "unread") {
+      errors.push(`Node ${nodeId} stateTextures.${key} is not supported.`);
+      return;
+    }
+    validateTexture(texture, `${nodeId} stateTextures.${key}`, errors);
+  });
+};
+
 const validateUiWindow = (uiWindow: unknown, nodeId: string, errors: string[]) => {
   if (uiWindow === undefined) return;
   if (!isRecord(uiWindow)) {
@@ -540,7 +617,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (candidate.version !== 1 && candidate.version !== 2 && candidate.version !== 3) {
+  if (![1, 2, 3, 4].includes(candidate.version as number)) {
     return candidate;
   }
 
@@ -563,6 +640,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
         ...defaultNode,
         ...node,
         texture: node.texture ?? defaultNode.texture,
+        stateTextures: node.stateTextures ?? defaultNode.stateTextures,
         spritesheet: node.spritesheet ?? defaultNode.spritesheet,
         uiWindow: node.uiWindow ?? defaultNode.uiWindow,
         style: {
@@ -716,6 +794,7 @@ export const validateStageDocument = (candidate: unknown): {
         errors.push(`Node ${id || index} src is invalid.`);
       }
       validateTexture(node.texture, String(id || index), errors);
+      validateStateTextures(node.stateTextures, String(id || index), errors);
       validateSpritesheet(node.spritesheet, String(id || index), errors);
       validateUiWindow(node.uiWindow, String(id || index), errors);
       validateNodeStyle(node.style, String(id || index), errors);

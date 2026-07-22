@@ -9,6 +9,7 @@ import {
   useDynamicStage,
 } from "@/context/dynamic-stage-context";
 import { useWebSocket } from "@/context/websocket-context";
+import { useChatHistory } from "@/context/chat-history-context";
 
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
 const MOVE_DURATION_MS = 900;
@@ -22,7 +23,75 @@ interface GoogleStatus {
   message: string;
 }
 
+interface UnreadMessage {
+  message_id: string;
+  thread_id: string;
+  sender: string;
+  subject: string;
+  received_at: string;
+  snippet: string;
+}
+
+interface UnreadPage {
+  messages: UnreadMessage[];
+  next_page_token?: string | null;
+  has_unread: boolean;
+}
+
 const statusCache = new Map<string, { expires: number; value: GoogleStatus }>();
+
+const GMAIL_MUTATION_TOOLS = new Set([
+  "mark_email_read",
+  "mark_email_unread",
+  "archive_email",
+  "send_email",
+]);
+
+function useMailboxUnreadState(node: StageNode, hovered: boolean) {
+  const { baseUrl } = useWebSocket();
+  const { messages } = useChatHistory();
+  const [hasUnread, setHasUnread] = useState(false);
+  const mutation = [...messages].reverse().find((message) => (
+    message.type === "tool_call_status" &&
+    message.status === "completed" &&
+    Boolean(message.tool_name && GMAIL_MUTATION_TOOLS.has(message.tool_name))
+  ));
+  const mutationKey = mutation ? `${mutation.tool_id}:${mutation.timestamp}` : "";
+
+  const refresh = useCallback(async () => {
+    if (node.uiWindow?.provider !== "google_gmail_unread") return;
+    try {
+      const response = await fetch(`${baseUrl}/api/integrations/google/gmail/unread-status`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("unread status request failed");
+      const value = await response.json() as { has_unread: boolean };
+      setHasUnread(Boolean(value.has_unread));
+    } catch (_error) {
+      // Preserve the last successful state during transient/auth failures.
+    }
+  }, [baseUrl, node.uiWindow?.provider]);
+
+  useEffect(() => {
+    if (node.uiWindow?.provider !== "google_gmail_unread") return undefined;
+    void refresh();
+    const onFocus = () => void refresh();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 60_000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(interval);
+    };
+  }, [node.uiWindow?.provider, refresh]);
+
+  useEffect(() => {
+    if (hovered || mutationKey) void refresh();
+  }, [hovered, mutationKey, refresh]);
+
+  return hasUnread;
+}
 
 interface TodoWindowItem {
   text: string;
@@ -158,11 +227,52 @@ function FurnitureWindow({
   const { baseUrl } = useWebSocket();
   const [status, setStatus] = useState<GoogleStatus | null>(null);
   const [loading, setLoading] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState<UnreadMessage[]>([]);
+  const [unreadNextToken, setUnreadNextToken] = useState<string | null>(null);
+  const [unreadLoading, setUnreadLoading] = useState(false);
+  const [unreadError, setUnreadError] = useState<string | null>(null);
+  const [unreadNeedsAuth, setUnreadNeedsAuth] = useState(false);
+  const unreadRequest = useRef(0);
   const config = node.uiWindow;
   const provider = config?.provider;
   const todoFeed = useFurnitureFeed<TodoWindowData>(baseUrl, provider === "todo_list" ? provider : undefined, open, 15_000);
   const timerFeed = useFurnitureFeed<TimerWindowData>(baseUrl, provider === "timer_status" ? provider : undefined, open, 20_000);
   useSecondTick(open && provider === "timer_status");
+
+  const loadUnread = useCallback(async (pageToken?: string) => {
+    if (provider !== "google_gmail_unread") return;
+    const nextPage = Boolean(pageToken);
+    const requestId = ++unreadRequest.current;
+    setUnreadLoading(true);
+    if (!nextPage) {
+      setUnreadMessages([]);
+      setUnreadNextToken(null);
+    }
+    setUnreadError(null);
+    setUnreadNeedsAuth(false);
+    try {
+      const params = new URLSearchParams({ page_size: "20" });
+      if (pageToken) params.set("page_token", pageToken);
+      const response = await fetch(
+        `${baseUrl}/api/integrations/google/gmail/unread?${params.toString()}`,
+        { headers: { Accept: "application/json" } },
+      );
+      const value = await response.json() as UnreadPage & { error?: string };
+      if (!response.ok) {
+        if (response.status === 401) setUnreadNeedsAuth(true);
+        throw new Error(value.error || "Unread Gmail messages are unavailable.");
+      }
+      if (requestId !== unreadRequest.current) return;
+      setUnreadMessages((current) => nextPage ? [...current, ...value.messages] : value.messages);
+      setUnreadNextToken(value.next_page_token || null);
+    } catch (error) {
+      if (requestId === unreadRequest.current) {
+        setUnreadError(error instanceof Error ? error.message : "Unread Gmail messages are unavailable.");
+      }
+    } finally {
+      if (requestId === unreadRequest.current) setUnreadLoading(false);
+    }
+  }, [baseUrl, provider]);
 
   const loadStatus = useCallback(async (force = false) => {
     if (provider !== "google_calendar_status") return;
@@ -196,6 +306,11 @@ function FurnitureWindow({
   useEffect(() => {
     if (open) void loadStatus();
   }, [loadStatus, open]);
+
+  useEffect(() => {
+    if (open && provider === "google_gmail_unread") void loadUnread();
+    if (!open) unreadRequest.current += 1;
+  }, [loadUnread, open, provider]);
 
   useEffect(() => {
     if (!open || provider !== "google_calendar_status") return undefined;
@@ -261,6 +376,46 @@ function FurnitureWindow({
               <Button mt="12px" size="sm" onClick={authorize}>
                 {status.connected ? "Reauthenticate with Google" : "Authenticate with Google"}
               </Button>
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "google_gmail_unread" && (
+        <Box mt="12px" aria-live="polite">
+          {unreadLoading && unreadMessages.length === 0 ? (
+            <Spinner size="sm" aria-label="Loading unread Gmail messages" />
+          ) : unreadError ? (
+            <>
+              <Text fontSize="sm" color="orange.200">{unreadError}</Text>
+              {unreadNeedsAuth && (
+                <Button mt="12px" size="sm" onClick={authorize}>Authenticate with Google</Button>
+              )}
+            </>
+          ) : unreadMessages.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">No unread messages.</Text>
+          ) : (
+            <>
+              {unreadMessages.map((message) => (
+                <Box key={message.message_id} py="8px" borderBottom="1px solid" borderColor="whiteAlpha.200">
+                  <Text fontSize="xs" color="blue.200" fontWeight="700" overflowWrap="anywhere">
+                    {message.sender || "Unknown sender"}
+                  </Text>
+                  <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+                    {message.subject || "(no subject)"}
+                  </Text>
+                  {message.received_at && <Text fontSize="xs" color="gray.500">{message.received_at}</Text>}
+                  {message.snippet && (
+                    <Text fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                      {message.snippet}
+                    </Text>
+                  )}
+                </Box>
+              ))}
+              {unreadNextToken && (
+                <Button mt="10px" size="xs" onClick={() => void loadUnread(unreadNextToken)} disabled={unreadLoading}>
+                  {unreadLoading ? "Loading…" : "Load more"}
+                </Button>
+              )}
             </>
           )}
         </Box>
@@ -646,6 +801,10 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
 }) {
   const style = node.style || {};
   const furniture = useFurnitureWindow(node);
+  const hasUnread = useMailboxUnreadState(node, furniture.open);
+  const displayNode = hasUnread && node.stateTextures?.unread
+    ? { ...node, texture: node.stateTextures.unread }
+    : node;
   const interactionProps = node.uiWindow ? {
     ref: furniture.anchorRef,
     tabIndex: 0,
@@ -736,7 +895,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
       overflow="hidden"
       padding={node.type === "text" ? "0" : "8px"}
     >
-      <StageBoxContent node={node} />
+      <StageBoxContent node={displayNode} />
       {popup}
     </Box>
   );

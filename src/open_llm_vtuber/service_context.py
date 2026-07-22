@@ -227,7 +227,7 @@ class ServiceContext:
             )
             if resolved_conf_uid:
                 server.env["EMBODIED_AGENT_CONF_UID"] = resolved_conf_uid
-            if server_name == "calendar":
+            if server_name in {"calendar", "drive", "gmail"}:
                 from .google_integration import default_token_file
 
                 server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"] = str(
