@@ -134,6 +134,31 @@ class MemoryManager:
         if action and action.strip():
             self._context.append(ContextEntry("action", action.strip()))
 
+    def note_daily(self, text: str) -> bool:
+        """Append a timestamped observation directly to today's daily memory.
+
+        Used for passive observations (such as a screen-context task change)
+        that belong in the day's record but are not conversation turns. Skips a
+        write when it would repeat the most recent such note, so an alternating
+        or flapping signal cannot fill the file. Returns whether a line was
+        written.
+        """
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return False
+
+        existing = self._read_if_exists(self._daily_path(date.today()))
+        for previous in reversed(existing.splitlines()):
+            stripped = previous.strip()
+            if stripped.startswith("- ["):
+                # Compare only the payload after the "- [HH:MM] " prefix.
+                if stripped.split("] ", 1)[-1] == cleaned:
+                    return False
+                break
+
+        self._append_daily(f"- [{datetime.now():%H:%M}] {cleaned}\n")
+        return True
+
     @property
     def context(self) -> List[ContextEntry]:
         return list(self._context)

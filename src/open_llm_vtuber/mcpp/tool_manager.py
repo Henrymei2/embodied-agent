@@ -29,6 +29,7 @@ PROXIMITY_REQUIREMENTS: Dict[str, str] = {
 SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "playwright": "computer",
     "ddg-search": "computer",
+    "screen": "computer",
     "todo": "todo_list",
     "timer": "hourglass",
     "weather": "window",

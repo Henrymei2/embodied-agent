@@ -19,6 +19,9 @@ class Observation:
     hour_of_day: Optional[int] = None
     # Explicit user-controlled do-not-interrupt signal from the frontend.
     focus_mode: bool = False
+    # One-line coarse summary of what the user is doing on screen (app + title),
+    # if a recent screen-context push is available. Lets help be actionable.
+    screen_context: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,37 @@ async def test_empty_messages_are_ignored(workspace):
     assert mm.context == []
 
 
+def test_note_daily_writes_timestamped_line_to_today(workspace):
+    mm = MemoryManager(workspace_dir=workspace)
+
+    assert mm.note_daily("Screen context: VS Code — memory_manager.py") is True
+
+    daily = (workspace / "memory" / f"{date.today().isoformat()}.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Screen context: VS Code — memory_manager.py" in daily
+    assert daily.count("- [") == 1
+
+
+def test_note_daily_skips_a_repeat_of_the_latest_note(workspace):
+    mm = MemoryManager(workspace_dir=workspace)
+    mm.note_daily("Screen context: Terminal — pytest")
+
+    # An immediate repeat is dropped; a different note is kept.
+    assert mm.note_daily("Screen context: Terminal — pytest") is False
+    assert mm.note_daily("Screen context: Chrome — docs") is True
+
+    daily = (workspace / "memory" / f"{date.today().isoformat()}.md").read_text(
+        encoding="utf-8"
+    )
+    assert daily.count("- [") == 2
+
+
+def test_note_daily_ignores_blank_text(workspace):
+    mm = MemoryManager(workspace_dir=workspace)
+    assert mm.note_daily("   ") is False
+
+
 # --------------------------------------------------------------------------- #
 # Contextual -> Daily compaction
 # --------------------------------------------------------------------------- #

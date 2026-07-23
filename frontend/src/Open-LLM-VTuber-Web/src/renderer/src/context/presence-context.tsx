@@ -11,6 +11,41 @@ import {
 import { useLocalStorage } from "@/hooks/utils/use-local-storage";
 import { wsService } from "@/services/websocket-service";
 
+// How often coarse screen context is published for just-in-time help.
+const SCREEN_CONTEXT_INTERVAL_MS = 5 * 60_000;
+
+interface ForegroundWindow {
+  app?: string;
+  title?: string;
+}
+
+// Live desktop capture is intentionally optional: a plain browser cannot see
+// other applications, so screen context is only published when the electron
+// main process exposes a coarse foreground-window reader on window.api. Wiring
+// a real reader (via an OS/native call) is the one remaining step for live
+// desktop capture; the backend, tool, and dedup pipeline are already in place.
+interface ScreenContextBridge {
+  getActiveWindow?: () =>
+    | ForegroundWindow
+    | null
+    | Promise<ForegroundWindow | null>;
+}
+
+async function readForegroundWindow(): Promise<ForegroundWindow | null> {
+  const bridge = (window as { api?: ScreenContextBridge }).api;
+  if (!bridge?.getActiveWindow) return null;
+  try {
+    const result = await bridge.getActiveWindow();
+    if (!result) return null;
+    const app = typeof result.app === "string" ? result.app.trim() : "";
+    const title = typeof result.title === "string" ? result.title.trim() : "";
+    if (!app && !title) return null;
+    return { app: app || undefined, title: title || undefined };
+  } catch {
+    return null;
+  }
+}
+
 export type PresenceFeedback = "helpful" | "dismissed" | "snoozed";
 
 export interface PresenceReceipt {
@@ -97,6 +132,18 @@ export function PresenceProvider({
     });
   }, [focusModeValue]);
 
+  const publishScreenContext = useCallback(async () => {
+    if (wsService.getCurrentState() !== "OPEN") return;
+    const foreground = await readForegroundWindow();
+    if (!foreground) return; // browser/no-bridge: nothing coarse to report
+    wsService.sendMessage({
+      type: "screen-context",
+      app: foreground.app,
+      title: foreground.title,
+      idle_seconds: Math.max(0, (Date.now() - lastActivityAt.current) / 1000),
+    });
+  }, []);
+
   useEffect(() => {
     const markActivity = () => {
       lastActivityAt.current = Date.now();
@@ -130,6 +177,27 @@ export function PresenceProvider({
       stateSubscription.unsubscribe();
     };
   }, [publishPresence]);
+
+  useEffect(() => {
+    const publish = () => {
+      void publishScreenContext();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") publish();
+    };
+    const intervalId = window.setInterval(publish, SCREEN_CONTEXT_INTERVAL_MS);
+    document.addEventListener("visibilitychange", handleVisibility);
+    const stateSubscription = wsService.onStateChange((wsState) => {
+      if (wsState === "OPEN") publish();
+    });
+    publish();
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      stateSubscription.unsubscribe();
+    };
+  }, [publishScreenContext]);
 
   const updateState = useCallback((nextState: PresenceState) => {
     setState((current) => ({ ...current, ...nextState }));

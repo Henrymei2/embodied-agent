@@ -286,6 +286,42 @@ def init_frontend_action_routes() -> APIRouter:
             status_code=status_code,
         )
 
+    @router.post("/internal/screen-context")
+    async def internal_screen_context(request: Request, payload: dict = Body(...)):
+        """Return the latest coarse screen context for a client.
+
+        Same loopback + bridge-token guard as the frontend-action bridge: this
+        is only for the server's own MCP subprocesses (the get_screen_context
+        tool). Screen context lives in memory and is never persisted, so it is
+        read here rather than from a workspace file.
+        """
+        from .autonomy.screen_context import get_screen_context
+
+        client_host = request.client.host if request.client else None
+        if client_host not in _LOOPBACK_HOSTS:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if not verify_bridge_token(request.headers.get(BRIDGE_TOKEN_HEADER)):
+            return JSONResponse({"error": "invalid bridge token"}, status_code=403)
+
+        client_uid = payload.get("client_uid")
+        if not isinstance(client_uid, str) or not client_uid:
+            return JSONResponse(
+                {"error": "client_uid must be a string"}, status_code=400
+            )
+
+        context = get_screen_context(client_uid)
+        if context is None:
+            return JSONResponse({"available": False})
+        return JSONResponse(
+            {
+                "available": True,
+                "app": context.app,
+                "title": context.title,
+                "idle_seconds": context.idle_seconds,
+                "summary": context.summary(),
+            }
+        )
+
     return router
 
 

@@ -96,6 +96,7 @@ class WebSocketHandler:
             "heartbeat": self._handle_heartbeat,
             "frontend_action_result": self._handle_frontend_action_result,
             "presence-context": self._handle_presence_context,
+            "screen-context": self._handle_screen_context,
             "autonomy-feedback": self._handle_autonomy_feedback,
             "request-presence-state": self._handle_presence_state_request,
             "request-habit-state": self._handle_habit_state_request,
@@ -383,8 +384,10 @@ class WebSocketHandler:
         unregister_client(client_uid)
         from .autonomy.observation import clear_client_presence
         from .autonomy.presence import unregister_presence_ledger
+        from .autonomy.screen_context import clear_screen_context
 
         clear_client_presence(client_uid)
+        clear_screen_context(client_uid)
         unregister_presence_ledger(client_uid)
         from .conversations.llm_request_queue import remove_queue
 
@@ -424,11 +427,13 @@ class WebSocketHandler:
         from .client_registry import unregister_client
         from .autonomy.observation import clear_client_presence
         from .autonomy.presence import unregister_presence_ledger
+        from .autonomy.screen_context import clear_screen_context
         from .conversations.llm_request_queue import remove_queue
 
         unregister_client_sender(client_uid)
         unregister_client(client_uid)
         clear_client_presence(client_uid)
+        clear_screen_context(client_uid)
         unregister_presence_ledger(client_uid)
         remove_queue(client_uid)
 
@@ -814,6 +819,45 @@ class WebSocketHandler:
                     }
                 )
             )
+
+    async def _handle_screen_context(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Accept a coarse screen-context push and record task changes.
+
+        Only short labels (foreground app, window/document title, idle time) are
+        accepted; raw screen contents are rejected by the validator. When the
+        task changes, one line is appended to daily memory so the agent's later
+        decisions can reason over what the user has been doing.
+        """
+        from .autonomy.screen_context import update_screen_context
+
+        try:
+            context, task_changed = update_screen_context(client_uid, data)
+        except ValueError as exc:
+            logger.warning(f"Rejected invalid screen context from {client_uid}: {exc}")
+            await websocket.send_text(
+                json.dumps({"type": "error", "message": str(exc)})
+            )
+            return
+
+        if task_changed:
+            self._record_screen_context_to_memory(client_uid, context.summary())
+
+    def _record_screen_context_to_memory(self, client_uid: str, summary: str) -> None:
+        """Append a screen-context task change to daily memory, best-effort."""
+        from .client_registry import get_client_context
+
+        context = get_client_context(client_uid)
+        memory_manager = getattr(
+            getattr(context, "agent_engine", None), "_memory_manager", None
+        )
+        if memory_manager is None:
+            return
+        try:
+            memory_manager.note_daily(f"Screen context: {summary}")
+        except Exception as exc:  # noqa: BLE001 - observation logging is optional
+            logger.error(f"Failed recording screen context to memory: {exc}")
 
     async def _handle_autonomy_feedback(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

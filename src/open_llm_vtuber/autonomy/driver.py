@@ -37,9 +37,11 @@ def _build_observation(client_uid: str, state: AutonomyState) -> Observation:
     gracefully. `user_present` is true whenever the client is still registered.
     """
     from ..client_registry import get_client_context
+    from .screen_context import get_screen_context
 
     connected = get_client_context(client_uid) is not None
     presence = get_client_presence(client_uid)
+    screen = get_screen_context(client_uid)
     now = datetime.now()
     return Observation(
         idle_seconds=presence.idle_seconds,
@@ -47,6 +49,7 @@ def _build_observation(client_uid: str, state: AutonomyState) -> Observation:
         seconds_since_last_spoke=state.seconds_since_last_spoke(now),
         hour_of_day=now.hour,
         focus_mode=presence.focus_mode,
+        screen_context=screen.summary() if screen is not None else None,
     )
 
 
@@ -175,6 +178,15 @@ async def _dispatch(
     }
     priority = PRIORITY_PROACTIVE if decision.spoke else PRIORITY_PASSIVE
 
+    # Make autonomous help screen-aware: when a recent screen context is known,
+    # hand it to the agent alongside the action prompt so any offer of help is
+    # about what the user is actually doing rather than generic.
+    prompt = decision.prompt
+    if observation.screen_context:
+        prompt = (
+            f"Current screen context: {observation.screen_context}.\n{decision.prompt}"
+        )
+
     async def _run() -> None:
         from ..conversations.single_conversation import process_single_conversation
 
@@ -182,7 +194,7 @@ async def _dispatch(
             context=context,
             websocket_send=send_text,
             client_uid=client_uid,
-            user_input=decision.prompt,
+            user_input=prompt,
             metadata=metadata,
         )
 
