@@ -737,14 +737,17 @@ function AvatarNodeContent({ node }: { node: StageNode }) {
   );
 }
 
-function StageBoxContent({ node }: { node: StageNode }) {
+function StageBoxContent({
+  node,
+  hasError,
+  onTextureError,
+}: {
+  node: StageNode;
+  hasError: boolean;
+  onTextureError: () => void;
+}) {
   const style = node.style || {};
-  const [hasError, setHasError] = useState(false);
   const showTexture = Boolean(node.texture?.src && !hasError);
-
-  useEffect(() => {
-    setHasError(false);
-  }, [node.texture?.src]);
 
   return (
     <>
@@ -757,12 +760,13 @@ function StageBoxContent({ node }: { node: StageNode }) {
           src={node.texture.src}
           alt={node.texture.alt || node.alt || node.label || node.id}
           objectFit={node.texture.fit || "contain"}
-          padding={node.texture.fit === "cover" ? "0" : "8px"}
-          onError={() => setHasError(true)}
+          padding="0"
+          imageRendering="pixelated"
+          onError={onTextureError}
           zIndex={1}
         />
       )}
-      {node.type === "panel" && (
+      {node.type === "panel" && !showTexture && (
         <Box
           position="absolute"
           inset="8px"
@@ -805,6 +809,11 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
   const displayNode = hasUnread && node.stateTextures?.unread
     ? { ...node, texture: node.stateTextures.unread }
     : node;
+  const [textureError, setTextureError] = useState(false);
+  const hasTexture = Boolean(displayNode.texture?.src && !textureError);
+  useEffect(() => {
+    setTextureError(false);
+  }, [displayNode.texture?.src]);
   const interactionProps = node.uiWindow ? {
     ref: furniture.anchorRef,
     tabIndex: 0,
@@ -851,6 +860,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
           src={node.src}
           alt={node.alt || node.label || node.id}
           objectFit="cover"
+          imageRendering="pixelated"
         />
         {popup}
       </Box>
@@ -884,18 +894,22 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
       aria-label={node.label || node.id}
       minWidth={node.type === "text" ? undefined : "32px"}
       minHeight={node.type === "text" ? undefined : "24px"}
-      border={node.type === "text" ? undefined : "2px solid"}
-      borderColor={style.borderColor || "rgba(255, 255, 255, 0.7)"}
-      borderRadius={`${style.borderRadius ?? (node.type === "shape" ? 999 : 8)}px`}
-      bg={node.type === "text" ? "transparent" : (style.background || "rgba(15, 23, 42, 0.72)")}
-      boxShadow={node.type === "text" ? undefined : "0 16px 34px rgba(15, 23, 42, 0.28)"}
+      border={node.type === "text" || hasTexture ? undefined : "2px solid"}
+      borderColor={hasTexture ? undefined : (style.borderColor || "rgba(255, 255, 255, 0.7)")}
+      borderRadius={hasTexture ? undefined : `${style.borderRadius ?? (node.type === "shape" ? 999 : 8)}px`}
+      bg={node.type === "text" || hasTexture ? "transparent" : (style.background || "rgba(15, 23, 42, 0.72)")}
+      boxShadow={node.type === "text" || hasTexture ? undefined : "0 16px 34px rgba(15, 23, 42, 0.28)"}
       display="flex"
       alignItems="center"
       justifyContent="center"
-      overflow="hidden"
-      padding={node.type === "text" ? "0" : "8px"}
+      overflow="visible"
+      padding={node.type === "text" || hasTexture ? "0" : "8px"}
     >
-      <StageBoxContent node={displayNode} />
+      <StageBoxContent
+        node={displayNode}
+        hasError={textureError}
+        onTextureError={() => setTextureError(true)}
+      />
       {popup}
     </Box>
   );
@@ -919,22 +933,35 @@ export default function DynamicStage(): JSX.Element {
         inset="0"
         bg={stage.canvas.background}
       >
-        <Box
-          position="absolute"
-          left="0"
-          right="0"
-          top="48%"
-          height="2px"
-          bg={stage.canvas.theme?.floorLine || "rgba(88, 67, 48, 0.32)"}
-        />
-        <Box
-          position="absolute"
-          left="8%"
-          right="8%"
-          bottom="0"
-          height="38%"
-          bg={`repeating-linear-gradient(90deg, ${stage.canvas.theme?.floorStripe || "rgba(104, 75, 46, 0.16)"} 0 2px, transparent 2px 86px)`}
-        />
+        {stage.canvas.texture?.src ? (
+          <Image
+            width="100%"
+            height="100%"
+            src={stage.canvas.texture.src}
+            alt={stage.canvas.texture.alt || "cozy pixel-art bedroom"}
+            objectFit={stage.canvas.texture.fit || "cover"}
+            imageRendering="pixelated"
+          />
+        ) : (
+          <>
+            <Box
+              position="absolute"
+              left="0"
+              right="0"
+              top="48%"
+              height="2px"
+              bg={stage.canvas.theme?.floorLine || "rgba(88, 67, 48, 0.32)"}
+            />
+            <Box
+              position="absolute"
+              left="8%"
+              right="8%"
+              bottom="0"
+              height="38%"
+              bg={`repeating-linear-gradient(90deg, ${stage.canvas.theme?.floorStripe || "rgba(104, 75, 46, 0.16)"} 0 2px, transparent 2px 86px)`}
+            />
+          </>
+        )}
       </Box>
 
       {stage.nodes

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 
 from src.open_llm_vtuber.mcpp.tool_manager import PROXIMITY_THRESHOLD
 from src.open_llm_vtuber.stage_state_manager import (
     get_default_stage,
+    load_stage_state,
     migrate_stage,
+    STAGE_THEME_REVISION,
     validate_stage,
 )
 
@@ -15,6 +18,8 @@ def test_default_stage_is_v5_with_google_furniture():
     stage = get_default_stage("conf-a")
 
     assert stage["version"] == 5
+    assert stage["metadata"]["theme_revision"] == STAGE_THEME_REVISION
+    assert stage["canvas"]["texture"]["src"].endswith("bedroom-background.png")
     nodes = {node["id"]: node for node in stage["nodes"]}
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
     assert nodes["bed"]["texture"]["src"] == "./stage-assets/bed.png"
@@ -33,6 +38,52 @@ def test_default_stage_carries_tool_furniture():
     assert nodes["todo_list"]["uiWindow"]["provider"] == "todo_list"
     assert nodes["hourglass"]["uiWindow"]["provider"] == "timer_status"
     assert "provider" not in nodes["window"]["uiWindow"]
+    assert nodes["todo_list"]["texture"]["src"].endswith("todo-list.png")
+    assert nodes["hourglass"]["texture"]["src"].endswith("hourglass.png")
+    assert nodes["window"]["texture"]["src"].endswith("window.png")
+
+
+def test_unmarked_v5_stage_is_force_reset_and_persisted(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    saved = get_default_stage("conf-a")
+    saved["metadata"].pop("theme_revision")
+    saved["canvas"]["background"] = "#000000"
+    saved["nodes"].append(
+        {
+            "id": "custom_chair",
+            "type": "panel",
+            "x": 50,
+            "y": 50,
+            "width": 50,
+            "height": 50,
+        }
+    )
+    path = tmp_path / "stage_state" / "conf-a" / "stage.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(saved), encoding="utf-8")
+
+    loaded = load_stage_state("conf-a")
+
+    assert loaded["metadata"]["theme_revision"] == STAGE_THEME_REVISION
+    assert loaded["metadata"]["updated_by"] == "default"
+    assert loaded["canvas"]["background"] == "#e8c98f"
+    assert "custom_chair" not in {node["id"] for node in loaded["nodes"]}
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["metadata"]["theme_revision"] == STAGE_THEME_REVISION
+    assert persisted["metadata"]["updated_by"] == "theme_reset"
+
+
+def test_marked_v5_stage_is_not_reset(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    saved = get_default_stage("conf-a")
+    saved["canvas"]["background"] = "#123456"
+    path = tmp_path / "stage_state" / "conf-a" / "stage.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(saved), encoding="utf-8")
+
+    loaded = load_stage_state("conf-a")
+
+    assert loaded["canvas"]["background"] == "#123456"
 
 
 def test_tool_furniture_does_not_share_a_proximity_radius():
@@ -181,3 +232,17 @@ def test_stage_rejects_javascript_asset_urls():
     assert ok is False
     assert "Node bed texture.src is invalid." in errors
     assert "Node avatar spritesheet.src is invalid." in errors
+
+
+def test_stage_rejects_invalid_canvas_texture():
+    stage = get_default_stage("conf-a")
+    stage["canvas"]["texture"] = {
+        "src": "javascript:alert(1)",
+        "fit": "stretch",
+    }
+
+    ok, errors = validate_stage(stage)
+
+    assert ok is False
+    assert "Node canvas texture.src is invalid." in errors
+    assert "Node canvas texture.fit must be contain or cover." in errors

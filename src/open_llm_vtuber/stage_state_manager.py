@@ -11,6 +11,7 @@ from loguru import logger
 
 STAGE_VERSION = 5
 STAGE_BASE_DIR = "stage_state"
+STAGE_THEME_REVISION = "cozy-bedroom-v1"
 
 # Live data sources a furniture hover window may render. Each one is backed by a
 # read-only backend route the frontend polls while the window is open.
@@ -67,10 +68,11 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
         "canvas": {
             "width": 960,
             "height": 540,
-            "background": "linear-gradient(180deg, #d7ecf3 0%, #d7ecf3 48%, #c6a983 48%, #c6a983 100%)",
-            "theme": {
-                "floorLine": "rgba(88, 67, 48, 0.32)",
-                "floorStripe": "rgba(104, 75, 46, 0.16)",
+            "background": "#e8c98f",
+            "texture": {
+                "src": "./stage-assets/bedroom-background.png",
+                "fit": "cover",
+                "alt": "cozy pixel-art bedroom",
             },
         },
         "nodes": [
@@ -78,10 +80,10 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "computer",
                 "type": "panel",
                 "label": "computer",
-                "x": 260,
-                "y": 255,
-                "width": 150,
-                "height": 104,
+                "x": 220,
+                "y": 390,
+                "width": 230,
+                "height": 190,
                 "zIndex": 2,
                 "text": "computer",
                 "texture": {
@@ -102,10 +104,10 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "calendar",
                 "type": "panel",
                 "label": "calendar",
-                "x": 480,
-                "y": 420,
-                "width": 118,
-                "height": 92,
+                "x": 600,
+                "y": 140,
+                "width": 110,
+                "height": 130,
                 "zIndex": 2,
                 "text": "calendar",
                 "texture": {
@@ -132,9 +134,9 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "type": "panel",
                 "label": "bed",
                 "x": 700,
-                "y": 270,
-                "width": 188,
-                "height": 118,
+                "y": 380,
+                "width": 230,
+                "height": 180,
                 "zIndex": 2,
                 "text": "bed",
                 "texture": {
@@ -155,8 +157,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "archive_shelf",
                 "type": "panel",
                 "label": "archive shelf",
-                "x": 300,
-                "y": 430,
+                "x": 400,
+                "y": 390,
                 "width": 125,
                 "height": 110,
                 "zIndex": 2,
@@ -179,8 +181,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "mailbox",
                 "type": "panel",
                 "label": "mailbox",
-                "x": 830,
-                "y": 430,
+                "x": 880,
+                "y": 390,
                 "width": 96,
                 "height": 88,
                 "zIndex": 2,
@@ -215,12 +217,17 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "todo_list",
                 "type": "panel",
                 "label": "todo_list",
-                "x": 110,
-                "y": 420,
-                "width": 112,
-                "height": 132,
+                "x": 375,
+                "y": 140,
+                "width": 105,
+                "height": 125,
                 "zIndex": 2,
                 "text": "todo list",
+                "texture": {
+                    "src": "./stage-assets/todo-list.png",
+                    "fit": "contain",
+                    "alt": "todo list",
+                },
                 "uiWindow": {
                     "title": "Todo list",
                     "body": "Open items the agent is tracking.",
@@ -241,10 +248,15 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "label": "hourglass",
                 "x": 860,
                 "y": 150,
-                "width": 72,
-                "height": 100,
+                "width": 65,
+                "height": 90,
                 "zIndex": 2,
                 "text": "hourglass",
+                "texture": {
+                    "src": "./stage-assets/hourglass.png",
+                    "fit": "contain",
+                    "alt": "hourglass",
+                },
                 "uiWindow": {
                     "title": "Timers",
                     "body": "Timers the agent has set.",
@@ -263,12 +275,17 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "window",
                 "type": "panel",
                 "label": "window",
-                "x": 110,
-                "y": 140,
-                "width": 140,
-                "height": 96,
+                "x": 140,
+                "y": 130,
+                "width": 185,
+                "height": 155,
                 "zIndex": 2,
                 "text": "window",
+                "texture": {
+                    "src": "./stage-assets/window.png",
+                    "fit": "contain",
+                    "alt": "bedroom window",
+                },
                 "uiWindow": {
                     "title": "Window",
                     "body": (
@@ -289,8 +306,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "avatar",
                 "type": "avatar",
                 "label": "avatar",
-                "x": 480,
-                "y": 270,
+                "x": 550,
+                "y": 300,
                 "width": 70,
                 "height": 92,
                 "zIndex": 3,
@@ -329,6 +346,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
             "created_at": now,
             "updated_at": now,
             "updated_by": "default",
+            "theme_revision": STAGE_THEME_REVISION,
         },
     }
 
@@ -627,6 +645,7 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             errors.append("Canvas height must be 240-4096.")
         if not _is_safe_color(canvas.get("background")):
             errors.append("Canvas background is invalid.")
+        _validate_texture(canvas.get("texture"), "canvas", errors)
 
     nodes = stage.get("nodes")
     if not isinstance(nodes, list):
@@ -707,6 +726,14 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
         with open(filepath, "r", encoding="utf-8") as file:
             stage = json.load(file)
         stage = migrate_stage(stage)
+        metadata = stage.get("metadata")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("theme_revision") != STAGE_THEME_REVISION
+        ):
+            stage = get_default_stage(conf_uid)
+            save_stage_state(conf_uid, stage, updated_by="theme_reset")
+            return stage
         ok, errors = validate_stage(stage)
         if ok:
             stage.setdefault("metadata", {})

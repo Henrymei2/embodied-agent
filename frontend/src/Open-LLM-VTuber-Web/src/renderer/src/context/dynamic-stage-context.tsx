@@ -94,6 +94,7 @@ export interface DynamicStageDocument {
     width: number;
     height: number;
     background: string;
+    texture?: StageTexture;
     theme?: Record<string, string>;
   };
   nodes: StageNode[];
@@ -102,6 +103,7 @@ export interface DynamicStageDocument {
     created_at?: string;
     updated_at?: string;
     updated_by?: string;
+    theme_revision?: string;
   };
 }
 
@@ -156,6 +158,7 @@ const ROOM_HEIGHT = 540;
 const STAGE_VERSION = 5;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
+const STAGE_THEME_REVISION = "cozy-bedroom-v1";
 
 const nowIso = () => new Date().toISOString();
 
@@ -164,10 +167,11 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
   canvas: {
     width: ROOM_WIDTH,
     height: ROOM_HEIGHT,
-    background: "linear-gradient(180deg, #d7ecf3 0%, #d7ecf3 48%, #c6a983 48%, #c6a983 100%)",
-    theme: {
-      floorLine: "rgba(88, 67, 48, 0.32)",
-      floorStripe: "rgba(104, 75, 46, 0.16)",
+    background: "#e8c98f",
+    texture: {
+      src: "./stage-assets/bedroom-background.png",
+      fit: "cover",
+      alt: "cozy pixel-art bedroom",
     },
   },
   nodes: [
@@ -175,10 +179,10 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "computer",
       type: "panel",
       label: "computer",
-      x: 260,
-      y: 255,
-      width: 150,
-      height: 104,
+      x: 220,
+      y: 390,
+      width: 230,
+      height: 190,
       zIndex: 2,
       text: "computer",
       texture: {
@@ -199,10 +203,10 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "calendar",
       type: "panel",
       label: "calendar",
-      x: 480,
-      y: 420,
-      width: 118,
-      height: 92,
+      x: 600,
+      y: 140,
+      width: 110,
+      height: 130,
       zIndex: 2,
       text: "calendar",
       texture: {
@@ -229,9 +233,9 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       type: "panel",
       label: "bed",
       x: 700,
-      y: 270,
-      width: 188,
-      height: 118,
+      y: 380,
+      width: 230,
+      height: 180,
       zIndex: 2,
       text: "bed",
       texture: {
@@ -252,8 +256,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "archive_shelf",
       type: "panel",
       label: "archive shelf",
-      x: 300,
-      y: 430,
+      x: 400,
+      y: 390,
       width: 125,
       height: 110,
       zIndex: 2,
@@ -276,8 +280,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "mailbox",
       type: "panel",
       label: "mailbox",
-      x: 830,
-      y: 430,
+      x: 880,
+      y: 390,
       width: 96,
       height: 88,
       zIndex: 2,
@@ -312,12 +316,17 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "todo_list",
       type: "panel",
       label: "todo_list",
-      x: 110,
-      y: 420,
-      width: 112,
-      height: 132,
+      x: 375,
+      y: 140,
+      width: 105,
+      height: 125,
       zIndex: 2,
       text: "todo list",
+      texture: {
+        src: "./stage-assets/todo-list.png",
+        fit: "contain",
+        alt: "todo list",
+      },
       uiWindow: {
         title: "Todo list",
         body: "Open items the agent is tracking.",
@@ -338,10 +347,15 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       label: "hourglass",
       x: 860,
       y: 150,
-      width: 72,
-      height: 100,
+      width: 65,
+      height: 90,
       zIndex: 2,
       text: "hourglass",
+      texture: {
+        src: "./stage-assets/hourglass.png",
+        fit: "contain",
+        alt: "hourglass",
+      },
       uiWindow: {
         title: "Timers",
         body: "Timers the agent has set.",
@@ -360,12 +374,17 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "window",
       type: "panel",
       label: "window",
-      x: 110,
-      y: 140,
-      width: 140,
-      height: 96,
+      x: 140,
+      y: 130,
+      width: 185,
+      height: 155,
       zIndex: 2,
       text: "window",
+      texture: {
+        src: "./stage-assets/window.png",
+        fit: "contain",
+        alt: "bedroom window",
+      },
       uiWindow: {
         title: "Window",
         body: "The agent checks the weather from here, using a public forecast service that needs no account.",
@@ -383,8 +402,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "avatar",
       type: "avatar",
       label: "avatar",
-      x: 480,
-      y: 270,
+      x: 550,
+      y: 300,
       width: 70,
       height: 92,
       zIndex: 3,
@@ -423,6 +442,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
     created_at: nowIso(),
     updated_at: nowIso(),
     updated_by: "default",
+    theme_revision: STAGE_THEME_REVISION,
   },
 });
 
@@ -749,6 +769,7 @@ export const validateStageDocument = (candidate: unknown): {
     if (!isSafeColor(candidate.canvas.background)) {
       errors.push("Canvas background is invalid.");
     }
+    validateTexture(candidate.canvas.texture, "canvas", errors);
   }
 
   if (!Array.isArray(candidate.nodes)) {
