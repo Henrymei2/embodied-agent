@@ -32,7 +32,7 @@ class BasicMemoryAgentConfig(I18nMixin, BaseModel):
     faster_first_response: Optional[bool] = Field(True, alias="faster_first_response")
     segment_method: Literal["regex", "pysbd"] = Field("pysbd", alias="segment_method")
     use_mcpp: Optional[bool] = Field(False, alias="use_mcpp")
-    mcp_enabled_servers: Optional[List[str]] = Field([], alias="mcp_enabled_servers")
+    mcp_disabled_servers: Optional[List[str]] = Field([], alias="mcp_disabled_servers")
     use_memory: Optional[bool] = Field(True, alias="use_memory")
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
@@ -48,8 +48,8 @@ class BasicMemoryAgentConfig(I18nMixin, BaseModel):
         "use_mcpp": Description(
             en="Whether to use MCP (Model Context Protocol) for the agent (default: True)",
         ),
-        "mcp_enabled_servers": Description(
-            en="List of MCP servers to enable for the agent",
+        "mcp_disabled_servers": Description(
+            en="List of MCP servers to disable for the agent (default: none)",
         ),
         "use_memory": Description(
             en="Whether to enable the three-layer persistent memory system "

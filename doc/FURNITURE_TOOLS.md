@@ -61,16 +61,10 @@ the room. See `frontend/frontend_api_doc.md` for the stage document contract.
 ## Configuration
 
 ```yaml
-mcp_enabled_servers:
-  - bash
-  - scene
-  - calendar
-  - scheduler
-  - todo
-  - timer
-  - weather
-  - time
-  - ddg-search
+mcp_disabled_servers:
+  - drive
+  - gmail
+  - playwright
 ```
 
 Existing rooms pick the new furniture up through the v4 stage migration; no

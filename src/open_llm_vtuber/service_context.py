@@ -90,12 +90,12 @@ class ServiceContext:
     async def _init_mcp_components(
         self,
         use_mcpp,
-        enabled_servers,
+        disabled_servers,
         conf_uid: str | None = None,
     ):
         """Initializes MCP components based on configuration, dynamically fetching tool info."""
         logger.debug(
-            f"Initializing MCP components: use_mcpp={use_mcpp}, enabled_servers={enabled_servers}"
+            f"Initializing MCP components: use_mcpp={use_mcpp}, disabled_servers={disabled_servers}"
         )
 
         # Reset MCP components first
@@ -106,15 +106,28 @@ class ServiceContext:
         self.json_detector = None
         self.mcp_prompt = ""
 
-        if use_mcpp and enabled_servers:
+        if use_mcpp:
             # 1. Initialize ServerRegistry
             self.mcp_server_registery = ServerRegistry()
+            disabled_server_set = set(disabled_servers or [])
+            enabled_servers = [
+                server_name
+                for server_name in self.mcp_server_registery.servers
+                if server_name not in disabled_server_set
+            ]
             logger.info("ServerRegistry initialized or referenced.")
-            logger.info(f"MCP enabled servers requested by config: {enabled_servers}")
+            logger.info(f"MCP servers disabled by config: {disabled_servers or []}")
+            logger.info(f"MCP servers enabled for this session: {enabled_servers}")
             logger.info(
                 f"MCP servers loaded from registry: {sorted(self.mcp_server_registery.servers.keys())}"
             )
             self._configure_mcp_server_environment(conf_uid=conf_uid)
+
+            if not enabled_servers:
+                logger.warning(
+                    "All registered MCP servers are disabled. MCP components not initialized."
+                )
+                return
 
             # 2. Use ToolAdapter to get the MCP prompt and tools
             if not self.tool_adapter:
@@ -185,14 +198,8 @@ class ServiceContext:
 
             logger.info("StreamJSONDetector initialized for this session.")
 
-        elif use_mcpp and not enabled_servers:
-            logger.warning(
-                "use_mcpp is True, but mcp_enabled_servers list is empty. MCP components not initialized."
-            )
         else:
-            logger.debug(
-                "MCP components not initialized (use_mcpp is False or no enabled servers)."
-            )
+            logger.debug("MCP components not initialized (use_mcpp is False).")
 
     def _configure_mcp_server_environment(self, conf_uid: str | None = None) -> None:
         """Inject backend connection settings into MCP server subprocess envs."""
@@ -287,7 +294,7 @@ class ServiceContext:
         # Initialize session-specific MCP components
         await self._init_mcp_components(
             self.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
-            self.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
+            self.character_config.agent_config.agent_settings.basic_memory_agent.mcp_disabled_servers,
             conf_uid=self.character_config.conf_uid,
         )
 
@@ -347,7 +354,7 @@ class ServiceContext:
         # Initialize MCP Components before initializing Agent
         await self._init_mcp_components(
             config.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
-            config.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
+            config.character_config.agent_config.agent_settings.basic_memory_agent.mcp_disabled_servers,
             conf_uid=config.character_config.conf_uid,
         )
 
