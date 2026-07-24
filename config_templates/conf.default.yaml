@@ -82,7 +82,7 @@ character_config:
         # Use MCP (Model Context Protocol) Plus to let the LLM have the ability to use tools
         # 'Plus' means that it has the ability to call tools by using OpenAI API.
         use_mcpp: True
-        mcp_enabled_servers: ["bash", "scene", "calendar", "scheduler", "todo", "timer", "weather", "time", "ddg-search", "playwright"]
+        mcp_enabled_servers: ["bash", "scene", "calendar", "scheduler", "todo", "timer", "weather", "diary", "time", "ddg-search", "playwright"]
         # Enable the three-layer persistent memory system
         # (contextual -> daily -> long-term), stored in the agent workspace.
         use_memory: True

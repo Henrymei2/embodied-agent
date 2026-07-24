@@ -48,6 +48,7 @@ export const UI_WINDOW_PROVIDERS = [
   "todo_list",
   "timer_status",
   "google_gmail_unread",
+  "diary_memory",
 ] as const;
 
 export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];
@@ -373,6 +374,30 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       style: {
         background: "rgba(56, 189, 248, 0.85)",
         borderColor: "rgba(224, 242, 254, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 14,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "diary",
+      type: "panel",
+      label: "diary",
+      x: 700,
+      y: 420,
+      width: 104,
+      height: 112,
+      zIndex: 2,
+      text: "diary",
+      uiWindow: {
+        title: "Diary",
+        body: "Recent daily memories from the agent workspace.",
+        provider: "diary_memory",
+      },
+      style: {
+        background: "rgba(120, 53, 15, 0.9)",
+        borderColor: "rgba(253, 186, 116, 0.9)",
         color: "#ffffff",
         borderRadius: 8,
         fontSize: 14,

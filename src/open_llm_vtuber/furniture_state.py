@@ -14,6 +14,7 @@ here rather than reimplemented per caller.
 
 from __future__ import annotations
 
+import re
 import json
 import os
 import uuid
@@ -239,6 +240,86 @@ def timer_snapshot(limit: int = _SNAPSHOT_LIMIT) -> dict[str, Any]:
         "count": len(timers),
         "timers": timers[:limit],
         "remaining": max(0, len(timers) - limit),
+    }
+
+# ── Diary memory snapshots ────────────────────────────────────────────────────
+
+_DIARY_ENTRY_LIMIT = 30
+_DIARY_PREVIEW_CHARS = 500
+_DIARY_FULL_CHARS = 8_000
+_DIARY_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
+
+def diary_memory_dir() -> Path:
+    return workspace_root() / "memory"
+
+
+def _diary_files() -> list[Path]:
+    root = diary_memory_dir()
+    if not root.exists():
+        return []
+    return sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_file() and _DIARY_DATE_RE.fullmatch(path.name)
+        ),
+        key=lambda path: path.stem,
+        reverse=True,
+    )
+
+
+def _clean_diary_text(text: str, limit: int) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("# Daily Memory"):
+        cleaned = "\n".join(cleaned.splitlines()[1:]).strip()
+    if len(cleaned) > limit:
+        return cleaned[: limit - 1].rstrip() + "…"
+    return cleaned
+
+
+def diary_snapshot(limit: int = _SNAPSHOT_LIMIT) -> dict[str, Any]:
+    """Compact recent-memory view for the diary hover window."""
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        limit = _SNAPSHOT_LIMIT
+    limit = max(1, min(limit, _DIARY_ENTRY_LIMIT))
+
+    entries: list[dict[str, Any]] = []
+    for path in _diary_files()[:limit]:
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        preview = _clean_diary_text(raw, _DIARY_PREVIEW_CHARS)
+        if not preview:
+            preview = "(no notes yet)"
+        entries.append(
+            {
+                "date": path.stem,
+                "preview": preview,
+            }
+        )
+
+    total = len(_diary_files())
+    return {
+        "available": True,
+        "count": total,
+        "entries": entries,
+        "remaining": max(0, total - limit),
+    }
+
+
+def read_diary_entry(entry_date: str) -> dict[str, Any]:
+    """Read one daily memory file by YYYY-MM-DD date."""
+    if not isinstance(entry_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry_date):
+        raise ValueError("entry_date must use YYYY-MM-DD format")
+    path = diary_memory_dir() / f"{entry_date}.md"
+    if not path.exists():
+        raise ValueError(f"diary entry '{entry_date}' was not found")
+    raw = path.read_text(encoding="utf-8")
+    return {
+        "date": entry_date,
+        "content": _clean_diary_text(raw, _DIARY_FULL_CHARS),
     }
 
 

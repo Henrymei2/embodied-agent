@@ -120,10 +120,23 @@ interface TimerWindowData {
   remaining: number;
 }
 
+interface DiaryWindowItem {
+  date: string;
+  preview: string;
+}
+
+interface DiaryWindowData {
+  available: boolean;
+  count: number;
+  entries: DiaryWindowItem[];
+  remaining: number;
+}
+
 // Read-only routes backing the furniture hover windows.
 const FURNITURE_FEED_ROUTES: Record<string, string> = {
   todo_list: "/api/furniture/todo",
   timer_status: "/api/furniture/timers",
+  diary_memory: "/api/furniture/diary",
 };
 
 const TODO_PRIORITY_COLORS: Record<string, string> = {
@@ -237,6 +250,7 @@ function FurnitureWindow({
   const provider = config?.provider;
   const todoFeed = useFurnitureFeed<TodoWindowData>(baseUrl, provider === "todo_list" ? provider : undefined, open, 15_000);
   const timerFeed = useFurnitureFeed<TimerWindowData>(baseUrl, provider === "timer_status" ? provider : undefined, open, 20_000);
+  const diaryFeed = useFurnitureFeed<DiaryWindowData>(baseUrl, provider === "diary_memory" ? provider : undefined, open, 20_000);
   useSecondTick(open && provider === "timer_status");
 
   const loadUnread = useCallback(async (pageToken?: string) => {
@@ -454,6 +468,35 @@ function FurnitureWindow({
               {todoFeed.data.remaining > 0 && (
                 <Text fontSize="xs" color="gray.400" mt="8px">
                   +{todoFeed.data.remaining} more open
+                </Text>
+              )}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "diary_memory" && (
+        <Box mt="12px" aria-live="polite">
+          {diaryFeed.failed || diaryFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">Diary memories are unavailable.</Text>
+          ) : !diaryFeed.data ? (
+            <Spinner size="sm" aria-label="Loading diary memories" />
+          ) : diaryFeed.data.entries.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">No daily memories yet.</Text>
+          ) : (
+            <>
+              {diaryFeed.data.entries.map((entry) => (
+                <Box key={entry.date} py="8px" borderBottom="1px solid" borderColor="whiteAlpha.200">
+                  <Text fontSize="xs" color="orange.200" fontWeight="700">
+                    {entry.date}
+                  </Text>
+                  <Text mt="3px" fontSize="xs" color="gray.300" whiteSpace="pre-wrap" overflowWrap="anywhere">
+                    {entry.preview}
+                  </Text>
+                </Box>
+              ))}
+              {diaryFeed.data.remaining > 0 && (
+                <Text fontSize="xs" color="gray.400" mt="8px">
+                  +{diaryFeed.data.remaining} more memory day(s)
                 </Text>
               )}
             </>

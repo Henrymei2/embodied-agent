@@ -10,6 +10,7 @@ from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .furniture_state import (
     delete_task,
+    diary_snapshot,
     scheduler_events_snapshot,
     timer_snapshot,
     todo_snapshot,
@@ -113,6 +114,10 @@ def init_furniture_routes() -> APIRouter:
     @router.get("/timers")
     async def timer_window():
         return JSONResponse(await run_in_threadpool(timer_snapshot))
+    
+    @router.get("/diary")
+    async def diary_window():
+        return JSONResponse(await run_in_threadpool(diary_snapshot))
 
     return router
 
