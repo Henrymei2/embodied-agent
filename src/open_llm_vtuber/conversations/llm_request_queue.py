@@ -95,7 +95,7 @@ class ClientRequestQueue:
                     await self._current_task
                 except asyncio.CancelledError:
                     logger.info(
-                        f"LLMQueue: '{item.label}' was cancelled for {self.client_uid}"
+                        f"LLMQueue: '{item.label}' was canceled for {self.client_uid}"
                     )
                 except Exception as e:
                     logger.error(
@@ -105,7 +105,7 @@ class ClientRequestQueue:
                     self._current_task = None
                     self._queue.task_done()
             except asyncio.CancelledError:
-                logger.debug(f"LLMQueue: worker cancelled for {self.client_uid}")
+                logger.debug(f"LLMQueue: worker canceled for {self.client_uid}")
                 break
 
 

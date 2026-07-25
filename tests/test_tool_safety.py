@@ -136,6 +136,82 @@ def test_google_server_tools_require_their_furniture(monkeypatch, tmp_path):
     ]
 
 
+def test_library_tools_split_across_the_shelf_and_the_chair(monkeypatch, tmp_path):
+    """One server, two objects: browsing and reading are not the same spot."""
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    assert save_stage_state("character", stage)[0]
+    manager = ToolManager(
+        formatted_tools_openai=[
+            _openai_tool("move_to"),
+            _openai_tool("list_books"),
+            _openai_tool("read_book"),
+        ],
+        initial_tools_dict={
+            name: FormattedTool(input_schema={}, related_server="library")
+            for name in ("list_books", "read_book")
+        },
+        conf_uid="character",
+    )
+
+    _move_avatar(stage, "bookshelf")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "list_books",
+    ]
+
+    _move_avatar(stage, "reading_chair")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "read_book",
+    ]
+
+
+def test_room_and_plan_tools_require_their_own_furniture(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    assert save_stage_state("character", stage)[0]
+    manager = ToolManager(
+        formatted_tools_openai=[
+            _openai_tool("move_to"),
+            _openai_tool("place_object"),
+            _openai_tool("move_object"),
+            _openai_tool("write_plan"),
+            _openai_tool("sit_down"),
+        ],
+        initial_tools_dict={
+            "place_object": FormattedTool(input_schema={}, related_server="scene"),
+            "move_object": FormattedTool(input_schema={}, related_server="scene"),
+            "write_plan": FormattedTool(input_schema={}, related_server="plan"),
+            "sit_down": FormattedTool(input_schema={}, related_server="idle"),
+        },
+        conf_uid="character",
+    )
+
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == ["move_to"]
+
+    _move_avatar(stage, "design_board")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "place_object",
+        "move_object",
+    ]
+
+    _move_avatar(stage, "writing_desk")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "write_plan",
+    ]
+
+    _move_avatar(stage, "sofa")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == ["move_to", "sit_down"]
+
+
 def test_tool_access_prompt_lists_all_tools_and_locations(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     stage = get_default_stage("character")

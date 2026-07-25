@@ -17,6 +17,7 @@ from typing import Optional
 from loguru import logger
 
 from .directions import Direction
+from ..utils.timezone import now_local
 
 _STATE_FILENAME = "autonomy_state.json"
 
@@ -104,13 +105,17 @@ class AutonomyState:
             then = datetime.fromisoformat(ts)
         except ValueError:
             return None
-        return max(0.0, ((now or datetime.now()) - then).total_seconds())
+        resolved_now = now or now_local()
+        if then.tzinfo is None:
+            # Legacy state persisted before timestamps were made timezone-aware.
+            then = then.replace(tzinfo=resolved_now.tzinfo)
+        return max(0.0, (resolved_now - then).total_seconds())
 
     def record_action(
         self, direction: Direction, spoke: bool, now: Optional[datetime] = None
     ) -> None:
         """Record that the agent acted along `direction` (and whether it spoke)."""
-        stamp = (now or datetime.now()).isoformat(timespec="seconds")
+        stamp = (now or now_local()).isoformat(timespec="seconds")
         self.last_action_ts = stamp
         if spoke:
             self.last_spoke_ts = stamp

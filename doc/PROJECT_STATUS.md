@@ -34,19 +34,27 @@ reversible?
 
 ### Embodiment
 
-- Persistent 960x540 stage v3 with avatar, computer, calendar, and bed.
-- Sprite walk/idle animation, textures, validated external/relative assets,
-  movement, object queries, and reachability.
-- Safe room modification through `place_object` and `remove_object` templates.
+- Persistent 960x540 stage v6 laid out in wall, back, and front bands: window,
+  todo list, calendar, hourglass, design board, mailbox, computer, archive
+  shelf, bookshelf, writing desk, reading chair, bed, and sofa.
+- Sprite walk/idle/seated animation, textures, validated external/relative
+  assets, movement, object queries, and reachability.
+- Safe room modification through `place_object`, `move_object`, and
+  `remove_object`, all bound to the design board.
 - Stage state synchronizes on connection and persists after live
   frontend actions.
 
 ### Spatial safety
 
-- Computer tools require proximity to the computer.
-- Google Calendar tools require proximity to the calendar.
+- Every skill is bound to an object: computer, calendar, todo list, hourglass,
+  window, archive shelf, mailbox, bookshelf, reading chair, writing desk, sofa,
+  and design board.
+- The default room keeps each gated object more than 150 units from every other
+  one and starts the avatar clear of all of them, so one object never unlocks
+  another's tools and the first use of any is preceded by a walk.
 - Gating occurs at schema exposure and again at execution time.
 - Missing/invalid scene identity fails closed for object-gated tools.
+- Objects whose removal would strand their tools cannot be removed.
 - Frontend actions are routed by exact client and character; replies from a
   different client cannot complete or persist the request.
 
@@ -95,8 +103,9 @@ Persistent stage <---- validated result ---+
 | Autonomous behavior MVP | Complete | scored planner, directions, cadence, Presence Contract |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |
 | Calendar object/tool | Complete | Google OAuth, primary-calendar CRUD, connection window, dual proximity enforcement |
-| Just-in-time contextual help | Privacy-bounded | idle/present/focus context is implemented; raw app titles and screen content are excluded |
-| Browser | Integration-ready | visible browser panel/result plumbing exists; external browser MCP runtime is not bundled |
+| Just-in-time contextual help | Complete | coarse screen context, confidence/frequency gating, daily-memory task changes |
+| Browser | Complete | Playwright MCP registered and gated on the computer; visible session and result plumbing |
+| Books, plans, idling, room editing | Complete | bookshelf, reading chair, writing desk, sofa, and design board, each with its own tools and window |
 | Self-evolution | Safe subset complete | memory, affinities, mood/familiarity; unattended executable self-rewrite is excluded |
 | 3D embodiment | Deferred | 2D is the supported production path |
 
@@ -105,10 +114,14 @@ Persistent stage <---- validated result ---+
 The remaining partial items require authority or infrastructure outside this
 repository rather than unfinished local code:
 
-- Google Calendar requires an operator-supplied OAuth client and explicit user
-  consent; the application implements token storage, refresh, and reauthorization.
-- A browser provider needs its own MCP process/runtime and any required account
-  credentials. The frontend can display provider live-view metadata.
+- Google Calendar, Drive, and Gmail require an operator-supplied OAuth client and
+  explicit user consent; the application implements token storage, refresh, and
+  reauthorization.
+- The browser server runs `npx @playwright/mcp`, so it needs Node on the PATH and
+  any account credentials the sites themselves require. A server whose runtime is
+  missing is skipped at load rather than failing the session.
+- Book text comes from Project Gutenberg, so only public-domain titles can
+  actually be read; other books can be shelved but not opened.
 - Raw screen/application awareness would materially expand privacy scope. The
   current protocol deliberately accepts only coarse presence signals.
 - 3D/Unity would be a separate renderer and asset pipeline, not a safe incremental

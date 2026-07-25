@@ -3,24 +3,38 @@ import json
 import math
 import os
 import re
-from datetime import datetime
 from typing import Any
 
 from loguru import logger
 
+from .utils.timezone import now_local
 
-STAGE_VERSION = 5
+
+STAGE_VERSION = 6
 STAGE_BASE_DIR = "stage_state"
-STAGE_THEME_REVISION = "cozy-bedroom-v1"
+# Bumping this rebuilds every stored room from the defaults. v2 re-lays the room
+# into wall/back/front bands so each object keeps its own 150-unit radius: a
+# layout saved under the old arrangement could not satisfy that with the
+# furniture added since.
+STAGE_THEME_REVISION = "cozy-bedroom-v2"
 
-# Live data sources a furniture hover window may render. Each one is backed by a
-# read-only backend route the frontend polls while the window is open.
+# Live data sources a furniture hover window may render. Most are backed by a
+# read-only backend route the frontend polls while the window is open;
+# `room_layout` is rendered from the stage document the frontend already holds.
 UI_WINDOW_PROVIDERS = (
     "google_calendar_status",
     "todo_list",
     "timer_status",
     "google_gmail_unread",
+    "bookshelf",
+    "reading_status",
+    "plan_status",
+    "room_layout",
 )
+
+# Avatar postures. Anything else is rejected, and walking clears the pose, so a
+# seated avatar can never be shown mid-stride.
+AVATAR_POSES = ("standing", "sitting")
 
 
 def _is_safe_filename(filename: str) -> bool:
@@ -58,7 +72,7 @@ def _get_stage_path(conf_uid: str) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return now_local().isoformat(timespec="seconds")
 
 
 def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
@@ -80,8 +94,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "computer",
                 "type": "panel",
                 "label": "computer",
-                "x": 220,
-                "y": 390,
+                "x": 120,
+                "y": 370,
                 "width": 230,
                 "height": 190,
                 "zIndex": 2,
@@ -104,8 +118,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "calendar",
                 "type": "panel",
                 "label": "calendar",
-                "x": 600,
-                "y": 140,
+                "x": 425,
+                "y": 110,
                 "width": 110,
                 "height": 130,
                 "zIndex": 2,
@@ -133,11 +147,12 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "bed",
                 "type": "panel",
                 "label": "bed",
-                "x": 700,
-                "y": 380,
-                "width": 230,
-                "height": 180,
-                "zIndex": 2,
+                "x": 480,
+                "y": 465,
+                "width": 210,
+                "height": 150,
+                # Front band: drawn over the furniture standing behind it.
+                "zIndex": 3,
                 "text": "bed",
                 "texture": {
                     "src": "./stage-assets/bed.png",
@@ -157,8 +172,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "archive_shelf",
                 "type": "panel",
                 "label": "archive shelf",
-                "x": 400,
-                "y": 390,
+                "x": 360,
+                "y": 370,
                 "width": 125,
                 "height": 110,
                 "zIndex": 2,
@@ -181,8 +196,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "mailbox",
                 "type": "panel",
                 "label": "mailbox",
-                "x": 880,
-                "y": 390,
+                "x": 900,
+                "y": 110,
                 "width": 96,
                 "height": 88,
                 "zIndex": 2,
@@ -217,8 +232,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "todo_list",
                 "type": "panel",
                 "label": "todo_list",
-                "x": 375,
-                "y": 140,
+                "x": 265,
+                "y": 110,
                 "width": 105,
                 "height": 125,
                 "zIndex": 2,
@@ -246,8 +261,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "hourglass",
                 "type": "panel",
                 "label": "hourglass",
-                "x": 860,
-                "y": 150,
+                "x": 585,
+                "y": 110,
                 "width": 65,
                 "height": 90,
                 "zIndex": 2,
@@ -275,8 +290,8 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "window",
                 "type": "panel",
                 "label": "window",
-                "x": 140,
-                "y": 130,
+                "x": 105,
+                "y": 110,
                 "width": 185,
                 "height": 155,
                 "zIndex": 2,
@@ -303,14 +318,164 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 },
             },
             {
+                "id": "bookshelf",
+                "type": "panel",
+                "label": "bookshelf",
+                "x": 600,
+                "y": 370,
+                "width": 120,
+                "height": 150,
+                "zIndex": 2,
+                "text": "bookshelf",
+                "texture": {
+                    "src": "./stage-assets/bookshelf.png",
+                    "fit": "contain",
+                    "alt": "bookshelf",
+                },
+                "uiWindow": {
+                    "title": "Bookshelf",
+                    "body": "Books the agent has shelved to read.",
+                    "provider": "bookshelf",
+                },
+                "style": {
+                    "background": "rgba(120, 53, 15, 0.9)",
+                    "borderColor": "rgba(253, 230, 138, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "reading_chair",
+                "type": "panel",
+                "label": "reading chair",
+                "x": 240,
+                "y": 477,
+                "width": 120,
+                "height": 125,
+                "zIndex": 3,
+                "text": "reading chair",
+                "texture": {
+                    "src": "./stage-assets/reading-chair.png",
+                    "fit": "contain",
+                    "alt": "reading chair",
+                },
+                "uiWindow": {
+                    "title": "Reading chair",
+                    "body": "The book being read, and the notes taken so far.",
+                    "provider": "reading_status",
+                },
+                "style": {
+                    "background": "rgba(47, 125, 117, 0.9)",
+                    "borderColor": "rgba(204, 251, 241, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "writing_desk",
+                "type": "panel",
+                "label": "writing desk",
+                "x": 840,
+                "y": 370,
+                "width": 150,
+                "height": 120,
+                "zIndex": 2,
+                "text": "writing desk",
+                "texture": {
+                    "src": "./stage-assets/writing-desk.png",
+                    "fit": "contain",
+                    "alt": "writing desk",
+                },
+                "uiWindow": {
+                    "title": "Plans",
+                    "body": "Plans the agent has drafted, awaiting your decision.",
+                    "provider": "plan_status",
+                },
+                "style": {
+                    "background": "rgba(180, 118, 62, 0.9)",
+                    "borderColor": "rgba(254, 240, 204, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "sofa",
+                "type": "panel",
+                "label": "sofa",
+                "x": 720,
+                "y": 480,
+                "width": 190,
+                "height": 105,
+                "zIndex": 3,
+                "text": "sofa",
+                "texture": {
+                    "src": "./stage-assets/sofa.png",
+                    "fit": "contain",
+                    "alt": "sofa",
+                },
+                "uiWindow": {
+                    "title": "Sofa",
+                    "body": (
+                        "Where the agent sits when there is nothing to do. It "
+                        "still hears you, and walking anywhere stands it up."
+                    ),
+                },
+                "style": {
+                    "background": "rgba(124, 74, 99, 0.9)",
+                    "borderColor": "rgba(245, 214, 228, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
+                "id": "design_board",
+                "type": "panel",
+                "label": "design board",
+                "x": 745,
+                "y": 110,
+                "width": 120,
+                "height": 110,
+                "zIndex": 2,
+                "text": "design board",
+                "texture": {
+                    "src": "./stage-assets/design-board.png",
+                    "fit": "contain",
+                    "alt": "design board",
+                },
+                "uiWindow": {
+                    "title": "Room layout",
+                    "body": "Every object in the room, and which are fixed.",
+                    "provider": "room_layout",
+                },
+                "style": {
+                    "background": "rgba(146, 100, 46, 0.9)",
+                    "borderColor": "rgba(254, 226, 176, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
                 "id": "avatar",
                 "type": "avatar",
                 "label": "avatar",
-                "x": 550,
-                "y": 300,
+                # Standing clear of every object's radius, so the first thing the
+                # agent does with any object-bound tool is walk to it.
+                "x": 60,
+                "y": 515,
                 "width": 70,
                 "height": 92,
-                "zIndex": 3,
+                # Above the front band, so the avatar is never hidden by furniture.
+                "zIndex": 4,
                 "text": "avatar",
                 "spritesheet": {
                     "src": "./stage-assets/avatar.png",
@@ -330,6 +495,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                         "walk_left": {"row": 5, "frames": [0, 1, 2, 3]},
                         "walk_right": {"row": 6, "frames": [0, 1, 2, 3]},
                         "walk_up": {"row": 7, "frames": [0, 1, 2, 3]},
+                        "sit_down": {"row": 8, "frames": [0, 1, 2, 1]},
                     },
                 },
                 "style": {
@@ -391,8 +557,17 @@ def _is_safe_asset_src(value: Any) -> bool:
     )
 
 
+def _uses_default_sheet(node: dict[str, Any], default_node: dict[str, Any]) -> bool:
+    """True when a node's spritesheet points at the image the default room ships."""
+    stored = node.get("spritesheet")
+    shipped = default_node.get("spritesheet")
+    if not isinstance(stored, dict) or not isinstance(shipped, dict):
+        return False
+    return stored.get("src") == shipped.get("src")
+
+
 def migrate_stage(stage: Any) -> Any:
-    """Return a v5 stage document, preserving existing layout and assets.
+    """Return a v6 stage document, preserving existing layout and assets.
 
     Every supported older version also gains the furniture introduced by newer
     default rooms: a tool stays hidden while the object it is bound to is absent
@@ -401,7 +576,7 @@ def migrate_stage(stage: Any) -> Any:
     """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2, 3, 4}:
+    if stage.get("version") not in {1, 2, 3, 4, 5}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
@@ -433,6 +608,13 @@ def migrate_stage(stage: Any) -> Any:
             if "texture" not in migrated_node and "texture" in default_node:
                 migrated_node["texture"] = copy.deepcopy(default_node["texture"])
             if "spritesheet" not in migrated_node and "spritesheet" in default_node:
+                migrated_node["spritesheet"] = copy.deepcopy(
+                    default_node["spritesheet"]
+                )
+            elif _uses_default_sheet(migrated_node, default_node):
+                # The stored animation map describes the shipped image file, and
+                # that file gained rows (a seated pose) with this version. A
+                # custom sheet — any other src — keeps its own map untouched.
                 migrated_node["spritesheet"] = copy.deepcopy(
                     default_node["spritesheet"]
                 )
@@ -631,7 +813,7 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
         return False, ["Stage document must be an object."]
 
     if stage.get("version") != STAGE_VERSION:
-        errors.append("Stage version must be 5.")
+        errors.append(f"Stage version must be {STAGE_VERSION}.")
 
     canvas = stage.get("canvas")
     if not isinstance(canvas, dict):
@@ -693,6 +875,8 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             _validate_spritesheet(
                 node.get("spritesheet"), str(node_id or index), errors
             )
+            if node.get("pose") not in (None, *AVATAR_POSES):
+                errors.append(f"Node {node_id or index} pose is not supported.")
             if style is not None:
                 if not isinstance(style, dict):
                     errors.append(f"Node {node_id or index} style must be an object.")

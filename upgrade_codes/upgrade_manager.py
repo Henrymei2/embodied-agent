@@ -27,7 +27,8 @@ class UpgradeManager:
         log_dir = "logs"
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(
-            log_dir, f"upgrade_{datetime.now().strftime('%Y-%m-%d-%H-%M')}.log"
+            log_dir,
+            f"upgrade_{datetime.now().astimezone().strftime('%Y-%m-%d-%H-%M')}.log",
         )
 
         logger.add(

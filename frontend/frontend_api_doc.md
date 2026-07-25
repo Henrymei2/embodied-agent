@@ -129,16 +129,27 @@ Patch shape:
 {
   "canvas": { "background": "#0f172a" },
   "nodes": [],
-  "remove_node_ids": ["reading_chair"],
+  "remove_node_ids": ["plant_stand"],
   "metadata": { "updated_by": "example" }
 }
 ```
 
-## 5. Stage document v4
+Patch nodes are merged field by field into the node with the same ID, so a patch
+may carry a single field. This is how the avatar is seated without resending its
+spritesheet:
+
+```json
+{ "nodes": [{ "id": "avatar", "pose": "sitting" }] }
+```
+
+New IDs are appended as complete nodes. `move_to` clears `pose` as part of the
+same update that moves the avatar, so a seated sprite is never shown mid-stride.
+
+## 5. Stage document v6
 
 ```json
 {
-  "version": 4,
+  "version": 6,
   "canvas": {
     "width": 960,
     "height": 540,
@@ -156,7 +167,12 @@ Patch shape:
 Supported node types: `shape`, `text`, `image`, `avatar`, and `panel`. A node
 requires a unique safe ID, numeric `x`, `y`, `width`, and `height`, and may have
 label/text/style, a safe image source, a furniture texture, an avatar
-spritesheet, or a declarative `uiWindow`. The stage is capped at 80 nodes.
+spritesheet, a declarative `uiWindow`, or a `pose` of `standing` or `sitting`.
+The stage is capped at 80 nodes.
+
+Nodes are painted by `zIndex`: wall and back-band furniture at 2, front-band
+furniture at 3, and the avatar at 4, so the avatar is never hidden behind the
+room.
 
 Asset sources may be `http(s)` URLs, `data:image` base64 URLs, or relative
 public paths such as `./stage-assets/chair.png`. `javascript:` URLs and unknown
@@ -166,23 +182,23 @@ Furniture example:
 
 ```json
 {
-  "id": "reading_chair",
+  "id": "plant_stand",
   "type": "panel",
-  "label": "reading_chair",
+  "label": "plant stand",
   "x": 320,
   "y": 180,
   "width": 120,
   "height": 90,
   "zIndex": 2,
-  "text": "reading chair",
+  "text": "plant stand",
   "texture": {
-    "src": "./stage-assets/chair.png",
+    "src": "./stage-assets/plant.png",
     "fit": "contain",
-    "alt": "reading chair"
+    "alt": "plant stand"
   },
   "uiWindow": {
-    "title": "Reading chair",
-    "body": "A comfortable place to read."
+    "title": "Plant stand",
+    "body": "Something green in the corner."
   }
 }
 ```
@@ -194,17 +210,30 @@ both validators. Supported dynamic providers:
 | Provider | Object | Route polled while open | Shows |
 | --- | --- | --- | --- |
 | `google_calendar_status` | `calendar` | `/api/integrations/google/status` | Connection state and an authorize button |
+| `google_gmail_unread` | `mailbox` | `/api/integrations/google/gmail/unread` | Unread senders and subjects |
 | `todo_list` | `todo_list` | `/api/furniture/todo` | Open items by priority, plus an overflow count |
 | `timer_status` | `hourglass` | `/api/furniture/timers` | Pending timers with a live countdown |
+| `bookshelf` | `bookshelf` | `/api/furniture/bookshelf` | Shelved books, newest first |
+| `reading_status` | `reading chair` | `/api/furniture/reading` | The open book, its progress bar, and recent notes |
+| `plan_status` | `writing desk` | `/api/furniture/plans` | Pending plans with Approve and Decline buttons |
+| `room_layout` | `design board` | none | The stage document the frontend already holds |
 
-The `/api/furniture/*` routes are read-only projections of the same stores the
-agent edits through proximity-gated MCP tools. They return only what the panel
-renders — no identifiers or paths — and expose no way to mutate state.
+The `/api/furniture/*` GET routes are read-only projections of the same stores
+the agent edits through proximity-gated MCP tools. They return only what the
+panel renders — no file paths — and expose no way to mutate state.
 
-Migration: a stored v1, v2, or v3 stage is upgraded on load. Older documents also
+`POST /api/furniture/plans/{plan_id}/decision` with `{"decision": "approved"}`
+or `{"decision": "declined"}` is the single exception, and the only writer of a
+plan's verdict anywhere in the system. It applies to pending plans only, so a
+decided plan cannot be flipped, and no MCP tool can reach it.
+
+Migration: a stored v1 through v5 stage is upgraded on load. Older documents also
 gain any furniture added by newer default rooms, because a tool stays hidden
 while the object it is bound to is missing from the scene. A custom layout,
-including moved or removed objects, is otherwise preserved.
+including moved or removed objects, is otherwise preserved — except when the
+default room's `theme_revision` changes, which rebuilds the room from the
+defaults. v6 does exactly that: with twelve gated objects, the layout has to be
+rebuilt for each to keep its own 150-unit radius.
 
 ## 6. Connection synchronization
 

@@ -2,13 +2,13 @@ import asyncio
 import json
 import re
 import uuid
-from datetime import datetime
 from typing import List, Optional, Dict
 from loguru import logger
 
 from ..agent.output_types import DisplayText, Actions
 from ..tts.tts_interface import TTSInterface
 from ..utils.stream_audio import prepare_audio_payload
+from ..utils.timezone import now_local
 from .types import WebSocketSend
 
 
@@ -163,7 +163,7 @@ class TTSTaskManager:
         logger.debug(f"🏃Generating audio for '''{text}'''...")
         return await tts_engine.async_generate_audio(
             text=text,
-            file_name_no_ext=f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}",
+            file_name_no_ext=f"{now_local().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}",
         )
 
     def clear(self) -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import json
 
-from mcp_servers import scene_tools
+from mcp_servers import bridge_client, scene_tools
 from src.open_llm_vtuber.stage_state_manager import get_default_stage
 
 
@@ -44,16 +44,16 @@ def test_frontend_bridge_request_carries_session_identity(monkeypatch):
     monkeypatch.setenv("EMBODIED_AGENT_CLIENT_UID", "client-42")
     monkeypatch.setenv("EMBODIED_AGENT_CONF_UID", "character-42")
     monkeypatch.setenv("EMBODIED_AGENT_BRIDGE_TOKEN", "secret")
-    monkeypatch.setattr(scene_tools.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(bridge_client.urllib.request, "urlopen", urlopen)
 
-    assert scene_tools._post_frontend_action_sync("move_to", {"x": 1, "y": 2}) == (
+    assert bridge_client.post_frontend_action_sync("move_to", {"x": 1, "y": 2}) == (
         True,
         None,
     )
     assert captured["body"] == {
         "action": "move_to",
         "args": {"x": 1, "y": 2},
-        "timeout": scene_tools._FRONTEND_ACTION_TIMEOUT_SECONDS,
+        "timeout": bridge_client.ACTION_TIMEOUT_SECONDS,
         "client_uid": "client-42",
         "conf_uid": "character-42",
     }
@@ -73,12 +73,12 @@ def test_invalid_bridge_response_is_reported(monkeypatch):
             return io.BytesIO(b"not json").read()
 
     monkeypatch.setattr(
-        scene_tools.urllib.request,
+        bridge_client.urllib.request,
         "urlopen",
         lambda *_args, **_kwargs: Response(),
     )
 
-    ok, error = scene_tools._post_frontend_action_sync("move_to", {})
+    ok, error = bridge_client.post_frontend_action_sync("move_to", {})
 
     assert ok is False
     assert "could not reach backend" in error
@@ -98,16 +98,16 @@ async def test_place_object_uses_validated_stage_patch(monkeypatch):
     monkeypatch.setattr(scene_tools, "_post_frontend_action", post)
 
     result = await scene_tools.place_object(
-        "reading_chair",
+        "plant_stand",
         300,
         220,
         image_url="./stage-assets/chair.png",
     )
 
-    assert result == "OK: placed reading_chair at x=300, y=220."
+    assert result == "OK: placed plant_stand at x=300, y=220."
     assert captured["action"] == "stage_patch_state"
     node = captured["args"]["patch"]["nodes"][0]
-    assert node["id"] == "reading_chair"
+    assert node["id"] == "plant_stand"
     assert node["texture"]["src"] == "./stage-assets/chair.png"
 
 
@@ -137,3 +137,67 @@ async def test_remove_object_protects_avatar(monkeypatch):
     assert await scene_tools.remove_object("avatar") == (
         "Error: the avatar cannot be removed from its own room."
     )
+
+
+async def test_remove_object_protects_objects_that_gate_tools(monkeypatch):
+    """Removing these would hide the tools only reachable at them, for good."""
+    stage = get_default_stage("character")
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+
+    async def should_not_post(_action, _args):
+        raise AssertionError("protected furniture must not reach the frontend")
+
+    monkeypatch.setattr(scene_tools, "_post_frontend_action", should_not_post)
+
+    for name in ("computer", "design board"):
+        assert "is fixed furniture" in await scene_tools.remove_object(name)
+
+
+async def test_move_object_patches_the_existing_node(monkeypatch):
+    stage = get_default_stage("character")
+    captured: dict = {}
+
+    async def post(action, args):
+        captured["action"] = action
+        captured["args"] = args
+        return True, None
+
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action", post)
+
+    result = await scene_tools.move_object("bookshelf", 300, 380)
+
+    assert result == "OK: moved bookshelf to x=300, y=380."
+    node = captured["args"]["patch"]["nodes"][0]
+    assert (node["id"], node["x"], node["y"]) == ("bookshelf", 300, 380)
+    # The patch must carry the node's assets, not just its new position.
+    assert node["texture"]["src"].endswith("bookshelf.png")
+
+
+async def test_move_object_rejects_positions_outside_the_canvas(monkeypatch):
+    stage = get_default_stage("character")
+
+    async def should_not_post(_action, _args):
+        raise AssertionError("invalid moves must not reach the frontend")
+
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action", should_not_post)
+
+    assert await scene_tools.move_object("bookshelf", 5000, 10) == (
+        "Error: x and y must be inside the stage canvas."
+    )
+    assert await scene_tools.move_object("avatar", 100, 100) == (
+        "Error: use move_to to move the avatar."
+    )
+
+
+def test_describe_room_lists_objects_and_marks_fixed_furniture(monkeypatch):
+    stage = get_default_stage("character")
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+
+    described = scene_tools.describe_room()
+
+    assert "Canvas is 960x540." in described
+    assert "computer (label=computer" in described
+    assert "fixed" in described
+    assert "avatar" not in described

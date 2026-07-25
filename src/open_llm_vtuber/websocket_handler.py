@@ -161,7 +161,7 @@ class WebSocketHandler:
         register_client(client_uid, session_service_context, websocket.send_text)
         from mcp_servers.scheduler import _scheduler_loop
 
-        # Track the scheduler loop so it is cancelled on disconnect. Leaving it
+        # Track the scheduler loop so it is canceled on disconnect. Leaving it
         # fire-and-forget leaks a loop on every reconnect; the stale loops race
         # on the shared scheduler_tasks.json and can advance a recurring task's
         # next_run before the live loop fires it.

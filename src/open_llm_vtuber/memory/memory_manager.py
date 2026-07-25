@@ -45,6 +45,7 @@ from typing import Awaitable, Callable, List, Optional
 from loguru import logger
 
 from ..workspace import ensure_workspace
+from ..utils.timezone import now_local
 
 # Marker appended to a daily file once it has been promoted to long-term memory,
 # so it is not promoted again.
@@ -59,7 +60,7 @@ class ContextEntry:
 
     role: str  # "user", "assistant", or "action"
     content: str
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=now_local)
 
     def render(self) -> str:
         if self.role == "action":
@@ -147,7 +148,7 @@ class MemoryManager:
         if not cleaned:
             return False
 
-        existing = self._read_if_exists(self._daily_path(date.today()))
+        existing = self._read_if_exists(self._daily_path(now_local().date()))
         for previous in reversed(existing.splitlines()):
             stripped = previous.strip()
             if stripped.startswith("- ["):
@@ -156,7 +157,7 @@ class MemoryManager:
                     return False
                 break
 
-        self._append_daily(f"- [{datetime.now():%H:%M}] {cleaned}\n")
+        self._append_daily(f"- [{now_local():%H:%M}] {cleaned}\n")
         return True
 
     @property
@@ -208,7 +209,7 @@ class MemoryManager:
     async def _compact_context_to_daily_locked(self) -> None:
         summary = await self._summarize_context()
         if summary:
-            stamp = datetime.now().strftime("%H:%M")
+            stamp = now_local().strftime("%H:%M")
             entry = f"## {stamp}\n{summary}\n\n"
             self._append_daily(entry)
             logger.info("Memory: compacted context -> daily memory.")
@@ -425,7 +426,7 @@ class MemoryManager:
         if not mem_dir.exists():
             return 0
 
-        today = date.today()
+        today = now_local().date()
         promoted = 0
         for path in sorted(mem_dir.glob("*.md")):
             day = self._parse_daily_filename(path)
@@ -506,7 +507,7 @@ class MemoryManager:
         if longterm:
             sections.append(f"# Long-term memory\n{longterm}")
 
-        today_path = self._daily_path(date.today())
+        today_path = self._daily_path(now_local().date())
         today = self._read_if_exists(today_path)
         today = today.replace(_PROMOTED_MARKER, "").strip()
         if today:
@@ -531,7 +532,7 @@ class MemoryManager:
         return f"# Daily Memory - {day.isoformat()}\n\n"
 
     def _append_daily(self, text: str) -> None:
-        day = date.today()
+        day = now_local().date()
         path = self._daily_path(day)
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
@@ -559,7 +560,7 @@ class MemoryManager:
     def _yesterday() -> date:
         from datetime import timedelta
 
-        return date.today() - timedelta(days=1)
+        return now_local().date() - timedelta(days=1)
 
     @staticmethod
     def _heuristic_summary(rendered: str, max_lines: int = 20) -> str:

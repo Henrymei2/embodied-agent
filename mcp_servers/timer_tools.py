@@ -35,6 +35,7 @@ from src.open_llm_vtuber.furniture_state import (
     mutate_tasks,
     timer_remaining_seconds,
 )
+from src.open_llm_vtuber.utils.timezone import now_local
 
 _MAX_TIMERS = 50
 _MAX_MINUTES = 24 * 60
@@ -94,7 +95,7 @@ def set_timer(minutes: float, label: str = "") -> str:
         duration = _validate_minutes(minutes)
         clean_label = _validate_label(label)
 
-        now = datetime.now()
+        now = now_local()
         timer_id = uuid.uuid4().hex[:8]
         spoken = f"'{clean_label}' " if clean_label else ""
         timer = {
@@ -134,7 +135,7 @@ def list_timers() -> str:
     Requires standing near the hourglass.
     """
     try:
-        now = datetime.now()
+        now = now_local()
         timers = [
             _describe(task, now) for task in load_tasks().values() if is_timer(task)
         ]

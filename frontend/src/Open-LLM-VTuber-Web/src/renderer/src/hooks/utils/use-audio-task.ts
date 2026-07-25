@@ -109,7 +109,7 @@ export const useAudioTask = () => {
         audio.addEventListener('canplaythrough', () => {
           // Check for interruption before playback
           if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
-            console.warn('Audio playback cancelled due to interruption or audio was stopped');
+            console.warn('Audio playback canceled due to interruption or audio was stopped');
             cleanup();
             return;
           }

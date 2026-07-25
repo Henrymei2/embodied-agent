@@ -2,9 +2,10 @@ import os
 import re
 import json
 import uuid
-from datetime import datetime
 from typing import Literal, List, TypedDict, Optional
 from loguru import logger
+
+from .utils.timezone import now_local
 
 
 class HistoryMessage(TypedDict):
@@ -68,7 +69,7 @@ def create_new_history(conf_uid: str) -> str:
 
     # Use uuid.uuid4().hex to generate a UUID without hyphens
     # New format: UUID_YYYY-MM-DD_HH-MM-SS
-    history_uid = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{uuid.uuid4().hex}"
+    history_uid = f"{now_local().strftime('%Y-%m-%d_%H-%M-%S')}_{uuid.uuid4().hex}"
     conf_dir = _ensure_conf_dir(conf_uid)  # conf_uid is sanitized here
 
     # Create history file with empty metadata
@@ -77,7 +78,7 @@ def create_new_history(conf_uid: str) -> str:
         initial_data = [
             {
                 "role": "metadata",
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "timestamp": now_local().isoformat(timespec="seconds"),
             }
         ]
         with open(filepath, "w", encoding="utf-8") as f:
@@ -127,7 +128,7 @@ def store_message(
             logger.error(f"Failed to load history file: {filepath}")
             pass
 
-    now_str = datetime.now().isoformat(timespec="seconds")
+    now_str = now_local().isoformat(timespec="seconds")
     new_item = {
         "role": role,
         "timestamp": now_str,
@@ -191,7 +192,7 @@ def update_metadate(conf_uid: str, history_uid: str, metadata: dict) -> bool:
             # Create new metadata with timestamp if none exists
             new_metadata = {
                 "role": "metadata",
-                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "timestamp": now_local().isoformat(timespec="seconds"),
             }
             new_metadata.update(metadata)  # Add new fields
             history_data.insert(0, new_metadata)

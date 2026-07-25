@@ -9,6 +9,7 @@ from loguru import logger
 
 from .types import MCPServer
 from .utils.path import validate_file
+from ..utils.timezone import get_timezone_override
 
 DEFAULT_CONFIG_PATH = "mcp_servers.json"
 
@@ -87,15 +88,31 @@ class ServerRegistry:
                     )
                     continue
 
+            args = server_details["args"]
+            if server_name == "time":
+                args = self._apply_timezone_override(args)
+
             self.servers[server_name] = MCPServer(
                 name=server_name,
                 command=command,
-                args=server_details["args"],
+                args=args,
                 env=server_details.get("env", None),
                 cwd=server_details.get("cwd", None),
                 timeout=server_details.get("timeout", None),
             )
             logger.debug(f"MCPSR: Loaded server: '{server_name}'.")
+
+    @staticmethod
+    def _apply_timezone_override(args: list[str]) -> list[str]:
+        """Keep the `time` MCP server's timezone consistent with the rest of
+        the app: honor `system_config.timezone` if the operator set one,
+        otherwise strip any hardcoded flag so the server auto-detects the
+        user's local timezone itself."""
+        filtered = [a for a in args if not a.startswith("--local-timezone=")]
+        override = get_timezone_override()
+        if override:
+            filtered.append(f"--local-timezone={override}")
+        return filtered
 
     def remove_server(self, server_name: str) -> None:
         """Remove a server from the available servers."""

@@ -132,13 +132,41 @@ CANDIDATES: list[Candidate] = [
     Candidate(
         direction=Direction.HOUSEKEEPING,
         prompt=(
-            "Tidy or improve your room. Consider rearranging or updating an object "
-            "in your scene so it better reflects recent activity. Keep changes "
-            "small and tasteful."
+            "Tidy or improve your room. Walk to the design board, look at the "
+            "layout with `describe_room`, and rearrange or update one object so it "
+            "better reflects recent activity. Keep changes small and tasteful."
         ),
         usefulness=0.5,
         intrusiveness=0.05,
         risk=0.2,
+        delivery=SILENT,
+        relevance=_idle_boost,
+    ),
+    Candidate(
+        # Standing in the middle of the room forever reads as a frozen program,
+        # so settling on the sofa is a real (if tiny) thing worth doing.
+        direction=Direction.HOUSEKEEPING,
+        prompt=(
+            "You have nothing to do right now. Walk to the sofa and sit down "
+            "rather than standing in the middle of the room. Say nothing."
+        ),
+        usefulness=0.55,
+        intrusiveness=0.0,
+        risk=0.05,
+        delivery=SILENT,
+        relevance=_idle_boost,
+    ),
+    Candidate(
+        direction=Direction.GROWTH,
+        prompt=(
+            "Continue the book you have open. Walk to the reading chair, read the "
+            "next passage with `read_book`, then save a short summary of it with "
+            "`save_reading_note`. If no book is open, look at the bookshelf first "
+            "and pick something you think the user would find interesting."
+        ),
+        usefulness=0.5,
+        intrusiveness=0.05,
+        risk=0.1,
         delivery=SILENT,
         relevance=_idle_boost,
     ),
@@ -172,7 +200,8 @@ CANDIDATES: list[Candidate] = [
         prompt=(
             "Review any user-approved long-term goals in your workspace and make a "
             "small amount of progress on the highest-priority one. Do not start "
-            "anything the user has not approved."
+            "anything the user has not approved: if the work needs a decision, walk "
+            "to the writing desk and draft a plan for them to approve instead."
         ),
         usefulness=0.5,
         intrusiveness=0.05,

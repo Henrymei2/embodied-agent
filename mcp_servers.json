@@ -32,9 +32,38 @@
         "command": "uv",
         "args": ["run", "python", "mcp_servers/weather_tools.py"]
       },
+      "library": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/library_tools.py"]
+      },
+      "plan": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/plan_tools.py"]
+      },
+      "idle": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/idle_tools.py"]
+      },
+      "drive": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/drive_tools.py"]
+      },
+      "gmail": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/gmail_tools.py"]
+      },
+      "playwright": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@playwright/mcp@latest",
+          "--browser=chrome",
+          "--viewport-size=1280x720"
+        ]
+      },
       "time": {
         "command": "uvx",
-        "args": ["mcp-server-time", "--local-timezone=America/Chicago"]
+        "args": ["mcp-server-time"]
       },
       "ddg-search": {
         "command": "uvx",

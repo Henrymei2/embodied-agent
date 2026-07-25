@@ -106,9 +106,17 @@ def build_frontend() -> None:
         sys.exit(1)
 
     logger.info("Building frontend from frontend/src...")
+    # Resolve npm ourselves: on Windows it is `npm.CMD`, and CreateProcess does
+    # not apply PATHEXT, so passing the bare name here never finds it.
+    npm_executable = shutil.which("npm")
+    if npm_executable is None:
+        logger.critical(
+            "`npm` was not found. Install Node.js/npm before starting the server."
+        )
+        sys.exit(1)
     try:
         subprocess.run(
-            ["npm", "run", "build:web"],
+            [npm_executable, "run", "build:web"],
             cwd=FRONTEND_SOURCE_DIR,
             check=True,
         )

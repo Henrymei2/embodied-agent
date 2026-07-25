@@ -8,8 +8,10 @@ the persisted stage JSON (no live frontend round-trip needed).
 
 move_to is different: it has to ask the running frontend to actually animate
 the avatar and report back when done, so it goes through the live WebSocket
-channel (see websocket_handler.py / frontend_bridge.py for the request/
-response plumbing).
+channel (see mcp_servers/bridge_client.py and frontend_bridge.py for the
+request/response plumbing). The three tools that change the room itself —
+place_object, move_object, and remove_object — work the same way, and are only
+offered at the `design board`.
 
 Run standalone for a quick sanity check:
     uv run python mcp_servers/scene_tools.py
@@ -18,13 +20,8 @@ Run standalone for a quick sanity check:
 from __future__ import annotations
 
 import math
-import json
-import os
 import re
 import sys
-import urllib.error
-import urllib.request
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +31,13 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.bridge_client import get_conf_uid as _get_conf_uid
+from mcp_servers.bridge_client import post_frontend_action as _post_frontend_action
 from src.open_llm_vtuber.stage_state_manager import load_stage_state, validate_stage
 
-_DEFAULT_CONF_UID = "mao_pro_001"
-_DEFAULT_BACKEND_URL = "http://localhost:12393"
-_FRONTEND_ACTION_TIMEOUT_SECONDS = 15.0
 _OBJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+# Removing these would strand the tools that are only reachable at them.
+_PROTECTED_OBJECT_IDS = frozenset({"avatar", "computer", "design_board"})
 
 mcp = FastMCP("scene")
 
@@ -49,68 +47,11 @@ def _get_nodes(conf_uid: str) -> list[dict[str, Any]]:
     return stage.get("nodes", [])
 
 
-def _get_conf_uid() -> str:
-    """Return this MCP subprocess's session-bound character configuration."""
-    return os.environ.get("EMBODIED_AGENT_CONF_UID", _DEFAULT_CONF_UID)
-
-
 def _find_node(nodes: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
     for node in nodes:
         if node.get("id") == label or node.get("label") == label:
             return node
     return None
-
-
-def _post_frontend_action_sync(
-    action: str, args: dict[str, Any]
-) -> tuple[bool, str | None]:
-    backend_url = os.environ.get("EMBODIED_AGENT_BACKEND_URL", _DEFAULT_BACKEND_URL)
-    url = f"{backend_url.rstrip('/')}/internal/frontend-action"
-    body = json.dumps(
-        {
-            "action": action,
-            "args": args,
-            "timeout": _FRONTEND_ACTION_TIMEOUT_SECONDS,
-            "client_uid": os.environ.get("EMBODIED_AGENT_CLIENT_UID"),
-            "conf_uid": _get_conf_uid(),
-        }
-    ).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    # The backend injects this per-run secret into our subprocess env; the
-    # bridge endpoint rejects requests without it.
-    bridge_token = os.environ.get("EMBODIED_AGENT_BRIDGE_TOKEN")
-    if bridge_token:
-        headers["X-Bridge-Token"] = bridge_token
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers=headers,
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=_FRONTEND_ACTION_TIMEOUT_SECONDS + 2.0,
-        ) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read().decode("utf-8"))
-        except Exception:  # noqa: BLE001
-            return False, f"backend returned HTTP {exc.code}"
-    except Exception as exc:  # noqa: BLE001
-        return False, f"could not reach backend frontend-action bridge: {exc}"
-
-    if payload.get("ok"):
-        return True, None
-    return False, payload.get("error") or "frontend action failed"
-
-
-async def _post_frontend_action(
-    action: str, args: dict[str, Any]
-) -> tuple[bool, str | None]:
-    return await asyncio.to_thread(_post_frontend_action_sync, action, args)
 
 
 @mcp.tool()
@@ -220,6 +161,31 @@ async def move_to(target: str) -> str:
 
 
 @mcp.tool()
+def describe_room() -> str:
+    """Describe the room layout: every object, its size, and free space.
+
+    Requires standing at the design board, which is where the room is redrawn.
+    """
+    stage = load_stage_state(_get_conf_uid())
+    canvas = stage.get("canvas", {})
+    objects = []
+    for node in stage.get("nodes", []):
+        if node.get("id") == "avatar":
+            continue
+        objects.append(
+            f"{node.get('id')} (label={node.get('label')}, x={node.get('x')}, "
+            f"y={node.get('y')}, {node.get('width')}x{node.get('height')}"
+            f"{', fixed' if node.get('id') in _PROTECTED_OBJECT_IDS else ''})"
+        )
+    if not objects:
+        return "The room is empty."
+    return (
+        f"Canvas is {canvas.get('width')}x{canvas.get('height')}. "
+        f"{len(objects)} object(s):\n" + "\n".join(objects)
+    )
+
+
+@mcp.tool()
 async def place_object(
     name: str,
     x: float,
@@ -229,6 +195,8 @@ async def place_object(
     image_url: str | None = None,
 ) -> str:
     """Place a validated furniture panel in the persistent room.
+
+    Requires standing at the design board.
 
     Args:
         name: Unique object ID/label using letters, numbers, hyphens, or underscores.
@@ -291,8 +259,62 @@ async def place_object(
 
 
 @mcp.tool()
+async def move_object(name: str, x: float, y: float) -> str:
+    """Move an existing room object to a new position.
+
+    Requires standing at the design board. The avatar is not furniture: use
+    `move_to` to walk instead.
+
+    Args:
+        name: The object's ID or label.
+        x: New horizontal center coordinate within the stage canvas.
+        y: New vertical center coordinate within the stage canvas.
+    """
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in (x, y)
+    ):
+        return "Error: x and y must be numeric."
+
+    stage = load_stage_state(_get_conf_uid())
+    node = _find_node(stage.get("nodes", []), name)
+    if node is None:
+        return f"Error: no object found with label '{name}'."
+    if node.get("id") == "avatar":
+        return "Error: use move_to to move the avatar."
+
+    canvas = stage.get("canvas", {})
+    if not 0 <= x <= canvas.get("width", 0) or not 0 <= y <= canvas.get("height", 0):
+        return "Error: x and y must be inside the stage canvas."
+
+    moved = {**node, "x": float(x), "y": float(y)}
+    candidate = {
+        **stage,
+        "nodes": [
+            moved if item.get("id") == node.get("id") else item
+            for item in stage.get("nodes", [])
+        ],
+    }
+    valid, errors = validate_stage(candidate)
+    if not valid:
+        return "Error: the move was rejected: " + "; ".join(errors)
+
+    ok, error = await _post_frontend_action(
+        "stage_patch_state",
+        {"patch": {"nodes": [moved], "metadata": {"updated_by": "move_object"}}},
+    )
+    if not ok:
+        return f"Error: move_object failed: {error}"
+    return f"OK: moved {node.get('id')} to x={x}, y={y}."
+
+
+@mcp.tool()
 async def remove_object(name: str) -> str:
-    """Remove a named room object; the avatar itself is protected."""
+    """Remove a named room object. Requires standing at the design board.
+
+    The avatar, the computer, and the design board itself cannot be removed,
+    because the tools reachable at them would become unreachable.
+    """
     nodes = _get_nodes(_get_conf_uid())
     node = _find_node(nodes, name)
     if node is None:
@@ -300,6 +322,11 @@ async def remove_object(name: str) -> str:
     node_id = node.get("id")
     if node_id == "avatar":
         return "Error: the avatar cannot be removed from its own room."
+    if node_id in _PROTECTED_OBJECT_IDS:
+        return (
+            f"Error: '{node_id}' is fixed furniture; removing it would strand the "
+            "tools that are only available there."
+        )
 
     ok, error = await _post_frontend_action(
         "stage_patch_state",

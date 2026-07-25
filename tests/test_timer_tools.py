@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from src.open_llm_vtuber.utils.timezone import now_local
+
 
 @pytest.fixture
 def timer(tmp_path, monkeypatch):
@@ -54,7 +56,7 @@ def test_timer_is_a_one_shot_scheduler_task(timer):
     assert task["priority"] == 10
     assert "stretch" in task["prompt"]
     due = datetime.fromisoformat(task["next_run"])
-    assert timedelta(minutes=4) < due - datetime.now() <= timedelta(minutes=5)
+    assert timedelta(minutes=4) < due - now_local() <= timedelta(minutes=5)
 
 
 def test_timer_rejects_bad_durations(timer):

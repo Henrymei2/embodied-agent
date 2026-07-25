@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
 from typing import Optional
 
 from loguru import logger
@@ -22,6 +21,7 @@ from .planner import AutonomyPlanner, PlannerDecision
 from .presence import PresenceLedger, get_or_create_presence_ledger
 from .settings import AutonomySettings
 from .state import AutonomyState
+from ..utils.timezone import now_local
 
 # How many ticks between habit-reflection passes (16 ticks = 4h at the default
 # 900s tick). Reflection is cheap to skip: it only runs when an LLM is
@@ -42,7 +42,7 @@ def _build_observation(client_uid: str, state: AutonomyState) -> Observation:
     connected = get_client_context(client_uid) is not None
     presence = get_client_presence(client_uid)
     screen = get_screen_context(client_uid)
-    now = datetime.now()
+    now = now_local()
     return Observation(
         idle_seconds=presence.idle_seconds,
         user_present=connected and presence.user_present,
@@ -232,7 +232,7 @@ async def autonomy_loop(
     """Background loop: tick the planner and act on its decisions.
 
     Safe to launch per client with `asyncio.create_task`; it exits cleanly when
-    cancelled (on disconnect).
+    canceled (on disconnect).
     """
     settings = settings or AutonomySettings()
     if not settings.enabled:
@@ -301,7 +301,7 @@ async def autonomy_loop(
                 state.record_action(decision.direction, spoke=decision.spoke)
 
         except asyncio.CancelledError:
-            logger.info(f"autonomy: loop cancelled for {client_uid}")
+            logger.info(f"autonomy: loop canceled for {client_uid}")
             break
         except Exception as exc:  # noqa: BLE001 - keep the loop alive on errors
             logger.error(f"autonomy: error in loop for {client_uid}: {exc}")

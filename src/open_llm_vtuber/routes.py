@@ -1,7 +1,6 @@
 import json
 from uuid import uuid4
 import numpy as np
-from datetime import datetime
 from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body, Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
@@ -9,7 +8,11 @@ from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .furniture_state import (
+    bookshelf_snapshot,
     delete_task,
+    plan_snapshot,
+    reading_snapshot,
+    record_plan_decision,
     scheduler_events_snapshot,
     timer_snapshot,
     todo_snapshot,
@@ -18,6 +21,7 @@ from .service_context import ServiceContext
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
 from .google_integration import GoogleIntegrationError, GoogleIntegrationService
+from .utils.timezone import now_local
 
 
 def init_google_integration_routes(service: GoogleIntegrationService) -> APIRouter:
@@ -74,7 +78,7 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
     @router.get("/oauth/callback")
     async def google_callback(state: str = "", code: str = "", error: str = ""):
         if error:
-            message = "Google authorization was cancelled or denied."
+            message = "Google authorization was canceled or denied."
             status_code = 400
         else:
             try:
@@ -97,12 +101,15 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
 
 
 def init_furniture_routes() -> APIRouter:
-    """Read-only views of the state behind furniture hover windows.
+    """Views of the state behind furniture hover windows.
 
     The frontend polls these while a hover window is open. They expose only what
-    the panel renders — no identifiers, no file paths, and no way to mutate the
-    stores, which stay reachable to the agent only through proximity-gated MCP
-    tools.
+    the panel renders — no file paths, and no way to write to the stores, which
+    stay reachable to the agent only through proximity-gated MCP tools.
+
+    The one exception is a plan decision. Approving or declining is the user's
+    call alone, so it has no MCP tool at all: this route is the only writer of
+    that field, and it can only move a plan out of `pending`.
     """
     router = APIRouter(prefix="/api/furniture")
 
@@ -113,6 +120,50 @@ def init_furniture_routes() -> APIRouter:
     @router.get("/timers")
     async def timer_window():
         return JSONResponse(await run_in_threadpool(timer_snapshot))
+
+    @router.get("/bookshelf")
+    async def bookshelf_window():
+        return JSONResponse(await run_in_threadpool(bookshelf_snapshot))
+
+    @router.get("/reading")
+    async def reading_window():
+        return JSONResponse(await run_in_threadpool(reading_snapshot))
+
+    @router.get("/plans")
+    async def plan_window():
+        return JSONResponse(
+            await run_in_threadpool(plan_snapshot),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/plans/{plan_id}/decision")
+    async def decide_plan(plan_id: str, payload: dict = Body(...)):
+        decision = payload.get("decision") if isinstance(payload, dict) else None
+        if decision not in {"approved", "declined"}:
+            return JSONResponse(
+                {"error": "decision must be 'approved' or 'declined'"},
+                status_code=400,
+            )
+        if not plan_id or len(plan_id) > 80:
+            return JSONResponse({"error": "invalid plan id"}, status_code=400)
+        try:
+            plan = await run_in_threadpool(record_plan_decision, plan_id, decision)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except OSError:
+            logger.exception("Could not update the plan store")
+            return JSONResponse(
+                {"error": "the plan could not be updated"}, status_code=503
+            )
+        if plan is None:
+            return JSONResponse(
+                {"error": "no plan is awaiting a decision under that id"},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"plan_id": plan_id, "status": plan["status"]},
+            headers={"Cache-Control": "no-store"},
+        )
 
     return router
 
@@ -439,7 +490,7 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
                     # Generate and send audio for each sentence
                     for sentence in sentences:
                         sentence = sentence + "."  # Add back the period
-                        file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid4())[:8]}"
+                        file_name = f"{now_local().strftime('%Y%m%d_%H%M%S')}_{str(uuid4())[:8]}"
                         audio_path = (
                             await default_context_cache.tts_engine.async_generate_audio(
                                 text=sentence, file_name_no_ext=file_name

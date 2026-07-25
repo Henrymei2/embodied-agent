@@ -120,11 +120,71 @@ interface TimerWindowData {
   remaining: number;
 }
 
-// Read-only routes backing the furniture hover windows.
+interface ShelfWindowBook {
+  title: string;
+  author?: string;
+  year?: number | null;
+  readable: boolean;
+}
+
+interface ShelfWindowData {
+  available: boolean;
+  message?: string;
+  count: number;
+  books: ShelfWindowBook[];
+  remaining: number;
+}
+
+interface ReadingWindowNote {
+  section?: number | null;
+  summary: string;
+}
+
+interface ReadingWindowData {
+  available: boolean;
+  message?: string;
+  session: {
+    title: string;
+    author?: string;
+    section: number;
+    progress_percent: number;
+    updated_at?: string | null;
+    notes: ReadingWindowNote[];
+  } | null;
+  finished_count?: number;
+}
+
+interface PlanWindowPlan {
+  plan_id: string;
+  title: string;
+  goal: string;
+  steps: string[];
+  status: string;
+  created_at?: string | null;
+}
+
+interface PlanWindowData {
+  available: boolean;
+  message?: string;
+  pending: PlanWindowPlan[];
+  pending_count?: number;
+  recent: PlanWindowPlan | null;
+}
+
+// Routes backing the furniture hover windows. `room_layout` has none: it is
+// rendered from the stage document the frontend already holds.
 const FURNITURE_FEED_ROUTES: Record<string, string> = {
   todo_list: "/api/furniture/todo",
   timer_status: "/api/furniture/timers",
+  bookshelf: "/api/furniture/bookshelf",
+  reading_status: "/api/furniture/reading",
+  plan_status: "/api/furniture/plans",
 };
+
+// Objects the backend refuses to remove, because the tools reachable at them
+// would become unreachable. Keep in sync with _PROTECTED_OBJECT_IDS in
+// mcp_servers/scene_tools.py.
+const FIXED_OBJECT_IDS = new Set(["computer", "design_board"]);
 
 const TODO_PRIORITY_COLORS: Record<string, string> = {
   high: "red.300",
@@ -141,37 +201,41 @@ function useFurnitureFeed<T>(
 ) {
   const [data, setData] = useState<T | null>(null);
   const [failed, setFailed] = useState(false);
+  const mounted = useRef(true);
   const route = provider ? FURNITURE_FEED_ROUTES[provider] : undefined;
 
   useEffect(() => {
-    if (!open || !route) return undefined;
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const response = await fetch(`${baseUrl}${route}`, {
-          headers: { Accept: "application/json" },
-        });
-        if (!response.ok) throw new Error("furniture feed request failed");
-        const value = await response.json() as T;
-        if (!cancelled) {
-          setData(value);
-          setFailed(false);
-        }
-      } catch (_error) {
-        if (!cancelled) setFailed(true);
-      }
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
     };
+  }, []);
 
+  const load = useCallback(async () => {
+    if (!route) return;
+    try {
+      const response = await fetch(`${baseUrl}${route}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("furniture feed request failed");
+      const value = await response.json() as T;
+      if (mounted.current) {
+        setData(value);
+        setFailed(false);
+      }
+    } catch (_error) {
+      if (mounted.current) setFailed(true);
+    }
+  }, [baseUrl, route]);
+
+  useEffect(() => {
+    if (!open || !route) return undefined;
     void load();
     const interval = window.setInterval(() => void load(), refreshMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [baseUrl, open, refreshMs, route]);
+    return () => window.clearInterval(interval);
+  }, [load, open, refreshMs, route]);
 
-  return { data, failed };
+  return { data, failed, reload: load };
 }
 
 /** Re-render once a second so a countdown stays live between fetches. */
@@ -237,7 +301,37 @@ function FurnitureWindow({
   const provider = config?.provider;
   const todoFeed = useFurnitureFeed<TodoWindowData>(baseUrl, provider === "todo_list" ? provider : undefined, open, 15_000);
   const timerFeed = useFurnitureFeed<TimerWindowData>(baseUrl, provider === "timer_status" ? provider : undefined, open, 20_000);
+  const shelfFeed = useFurnitureFeed<ShelfWindowData>(baseUrl, provider === "bookshelf" ? provider : undefined, open, 30_000);
+  const readingFeed = useFurnitureFeed<ReadingWindowData>(baseUrl, provider === "reading_status" ? provider : undefined, open, 20_000);
+  const planFeed = useFurnitureFeed<PlanWindowData>(baseUrl, provider === "plan_status" ? provider : undefined, open, 15_000);
+  const { stage } = useDynamicStage();
+  const [decidingPlan, setDecidingPlan] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   useSecondTick(open && provider === "timer_status");
+
+  const decidePlan = useCallback(async (planId: string, decision: "approved" | "declined") => {
+    setDecidingPlan(planId);
+    setDecisionError(null);
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/furniture/plans/${encodeURIComponent(planId)}/decision`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ decision }),
+        },
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error || "the plan could not be updated");
+      }
+      await planFeed.reload();
+    } catch (error) {
+      setDecisionError(error instanceof Error ? error.message : "the plan could not be updated");
+    } finally {
+      setDecidingPlan(null);
+    }
+  }, [baseUrl, planFeed]);
 
   const loadUnread = useCallback(async (pageToken?: string) => {
     if (provider !== "google_gmail_unread") return;
@@ -489,6 +583,158 @@ function FurnitureWindow({
           )}
         </Box>
       )}
+      {provider === "bookshelf" && (
+        <Box mt="12px" aria-live="polite">
+          {shelfFeed.failed || shelfFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {shelfFeed.data?.message || "The shelf is unavailable."}
+            </Text>
+          ) : !shelfFeed.data ? (
+            <Spinner size="sm" aria-label="Loading the bookshelf" />
+          ) : shelfFeed.data.books.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">No books shelved yet.</Text>
+          ) : (
+            <>
+              {shelfFeed.data.books.map((book, index) => (
+                <Box key={`${book.title}-${index}`} mb="8px">
+                  <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+                    {book.title}
+                    {!book.readable && (
+                      <Text as="span" color="gray.500" fontSize="xs"> · no full text</Text>
+                    )}
+                  </Text>
+                  {(book.author || book.year) && (
+                    <Text fontSize="xs" color="gray.400" overflowWrap="anywhere">
+                      {[book.author, book.year].filter(Boolean).join(" · ")}
+                    </Text>
+                  )}
+                </Box>
+              ))}
+              {shelfFeed.data.remaining > 0 && (
+                <Text fontSize="xs" color="gray.400" mt="8px">
+                  +{shelfFeed.data.remaining} more shelved
+                </Text>
+              )}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "reading_status" && (
+        <Box mt="12px" aria-live="polite">
+          {readingFeed.failed || readingFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {readingFeed.data?.message || "Reading progress is unavailable."}
+            </Text>
+          ) : !readingFeed.data ? (
+            <Spinner size="sm" aria-label="Loading reading progress" />
+          ) : !readingFeed.data.session ? (
+            <Text fontSize="sm" color="gray.400">
+              Nothing is being read right now.
+              {Boolean(readingFeed.data.finished_count) && ` ${readingFeed.data.finished_count} book(s) finished.`}
+            </Text>
+          ) : (
+            <>
+              <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+                {readingFeed.data.session.title}
+              </Text>
+              {readingFeed.data.session.author && (
+                <Text fontSize="xs" color="gray.400">{readingFeed.data.session.author}</Text>
+              )}
+              <Box mt="8px" height="6px" borderRadius="3px" bg="whiteAlpha.300" overflow="hidden">
+                <Box
+                  height="100%"
+                  width={`${Math.min(100, Math.max(0, readingFeed.data.session.progress_percent))}%`}
+                  bg="teal.300"
+                />
+              </Box>
+              <Text mt="4px" fontSize="xs" color="gray.400">
+                {readingFeed.data.session.progress_percent}% · passage {readingFeed.data.session.section}
+              </Text>
+              {readingFeed.data.session.notes.map((note, index) => (
+                <Box key={`${note.section}-${index}`} mt="8px" pt="8px" borderTop="1px solid" borderColor="whiteAlpha.200">
+                  <Text fontSize="xs" color="teal.200">passage {note.section}</Text>
+                  <Text fontSize="sm" color="gray.200" overflowWrap="anywhere">{note.summary}</Text>
+                </Box>
+              ))}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "plan_status" && (
+        <Box mt="12px" aria-live="polite">
+          {planFeed.failed || planFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {planFeed.data?.message || "Plans are unavailable."}
+            </Text>
+          ) : !planFeed.data ? (
+            <Spinner size="sm" aria-label="Loading plans" />
+          ) : planFeed.data.pending.length === 0 ? (
+            <Text fontSize="sm" color="gray.400">
+              No plan is waiting on you.
+              {planFeed.data.recent && ` Last plan "${planFeed.data.recent.title}" was ${planFeed.data.recent.status}.`}
+            </Text>
+          ) : (
+            <>
+              {planFeed.data.pending.map((plan) => (
+                <Box key={plan.plan_id} pb="10px" mb="10px" borderBottom="1px solid" borderColor="whiteAlpha.200">
+                  <Text fontSize="sm" color="gray.100" fontWeight="700" overflowWrap="anywhere">
+                    {plan.title}
+                  </Text>
+                  <Text fontSize="xs" color="gray.300" mt="2px" overflowWrap="anywhere">{plan.goal}</Text>
+                  {plan.steps.map((step, index) => (
+                    <Text key={`${plan.plan_id}-${index}`} fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                      {index + 1}. {step}
+                    </Text>
+                  ))}
+                  <Box mt="8px" display="flex" gap="8px">
+                    <Button
+                      size="xs"
+                      colorPalette="green"
+                      disabled={decidingPlan === plan.plan_id}
+                      onClick={() => void decidePlan(plan.plan_id, "approved")}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={decidingPlan === plan.plan_id}
+                      onClick={() => void decidePlan(plan.plan_id, "declined")}
+                    >
+                      Decline
+                    </Button>
+                  </Box>
+                </Box>
+              ))}
+              {decisionError && (
+                <Text fontSize="xs" color="orange.200">{decisionError}</Text>
+              )}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "room_layout" && (
+        <Box mt="12px" aria-live="polite">
+          <Text fontSize="xs" color="gray.400">
+            {stage.canvas.width}x{stage.canvas.height} · {stage.nodes.length - 1} object(s)
+          </Text>
+          {stage.nodes
+            .filter((item) => item.id !== "avatar")
+            .map((item) => (
+              <Box key={item.id} display="flex" justifyContent="space-between" gap="12px" mt="6px">
+                <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                  {item.label || item.id}
+                  {FIXED_OBJECT_IDS.has(item.id) && (
+                    <Text as="span" color="gray.500" fontSize="xs"> · fixed</Text>
+                  )}
+                </Text>
+                <Text fontSize="xs" color="gray.400" flexShrink={0} fontVariantNumeric="tabular-nums">
+                  {Math.round(item.x)}, {Math.round(item.y)}
+                </Text>
+              </Box>
+            ))}
+        </Box>
+      )}
     </Box>,
     document.body,
   );
@@ -553,6 +799,8 @@ const getAnimation = (
   preferredName: string,
   state: "idle" | "walk",
 ): { name: string; animation: StageSpriteAnimation } | null => {
+  // A custom sheet without the requested animation (a seated pose, say) still
+  // renders: the chain falls back to the sheet's own idle, then to any frame.
   const fallbackNames = [
     preferredName,
     spritesheet.defaultAnimations?.[state],
@@ -668,6 +916,11 @@ function useAvatarAnimation(node: StageNode) {
     }
   }, []);
 
+  // A seated avatar is never mid-stride: the backend clears the pose as part of
+  // the same stage update that moves it.
+  if (node.pose === "sitting" && !isMoving) {
+    return "sit_down";
+  }
   return `${isMoving ? "walk" : "idle"}_${direction}`;
 }
 

@@ -3,6 +3,11 @@ system_config:
   conf_version: 'v1.2.1'
   host: 'localhost' # use 0.0.0.0 if you want other devices to access this page
   port: 12393
+  # IANA timezone (e.g. 'America/Chicago', 'Europe/London') used for all
+  # timestamps (scheduling, timers, chat history, memory logs, ...). Leave
+  # blank to auto-detect from the system clock, so the agent naturally follows
+  # wherever the user's machine is.
+  timezone: ''
   # App-wide Google integration. Set this fixed path to a downloaded OAuth
   # client JSON outside the repository.
   google_integration:

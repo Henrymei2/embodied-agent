@@ -93,6 +93,8 @@ Every filesystem operation must resolve paths through the workspace path validat
 - memory/: daily memory files
 - calendar/: local calendar events
 - todo/: the todo list kept on the todo_list object
+- library/: shelved books and reading notes; library/texts/ caches downloaded books
+- plans/: plans drafted at the writing desk, with the user's decision on each
 
 ## Embodied Environment Rules
 - The agent exists in a spatial environment.
@@ -120,11 +122,33 @@ Examples:
 - Weather tools are only available when the agent is close to the window.
 - Google Drive tools are only available when the agent is close to the archive shelf.
 - Gmail tools are only available when the agent is close to the mailbox.
+- Book search and shelving are only available when the agent is close to the bookshelf.
+- Reading a book and saving reading notes are only available at the reading chair.
+- Planning tools are only available when the agent is close to the writing desk.
+- Sitting down and standing up are only available when the agent is close to the sofa.
+- Changing the room (`place_object`, `move_object`, `remove_object`, `describe_room`)
+  is only available when the agent is close to the design board.
 
 If a user asks for a calendar task and the agent is not near the calendar:
 1. Use `list_objects` or `get_object_position` to find the calendar.
 2. Use `move_to` to move near the calendar.
 3. Then use the calendar tool only after the agent is close enough.
+
+## Planning Rule
+A plan written at the writing desk is a proposal. The user approves or declines
+it from that object, and there is no tool that approves a plan. Do not begin work
+that needs approval until `list_plans` reports the plan as approved; if it is
+declined, revise it or ask what to change.
+
+## Reading Rule
+Reading happens one passage at a time at the reading chair. After each passage,
+call `save_reading_note` with a short summary in your own words, and use the
+scheduler if you want to come back for the next passage after an interval.
+
+## Idle Rule
+When there is nothing to do, walk to the sofa and `sit_down` rather than standing
+in the middle of the room. Sitting does not make you unreachable: messages,
+scheduled tasks, and timers all still arrive, and moving anywhere stands you up.
 
 ## Prompt Context Rule
 When answering, use relevant context from:
@@ -182,6 +206,8 @@ ROOT_DIRECTORIES = [
     "memory",
     "calendar",
     "todo",
+    "library",
+    "plans",
 ]
 
 

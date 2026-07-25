@@ -188,7 +188,7 @@ async def handle_group_interrupt(
     try:
         await task
     except asyncio.CancelledError:
-        logger.info(f"🛑 Group conversation {group_id} cancelled successfully.")
+        logger.info(f"🛑 Group conversation {group_id} canceled successfully.")
 
     current_conversation_tasks.pop(group_id, None)
     GroupConversationState.remove_state(group_id)

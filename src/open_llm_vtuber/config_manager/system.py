@@ -23,6 +23,7 @@ class SystemConfig(I18nMixin):
     port: int = Field(..., alias="port")
     tool_prompts: Dict[str, str] = Field(..., alias="tool_prompts")
     enable_proxy: bool = Field(False, alias="enable_proxy")
+    timezone: str = Field("", alias="timezone")
     autonomy_config: AutonomyConfig = Field(
         default_factory=AutonomyConfig, alias="autonomy_config"
     )
@@ -39,6 +40,10 @@ class SystemConfig(I18nMixin):
         ),
         "enable_proxy": Description(
             en="Enable proxy mode for multiple clients",
+        ),
+        "timezone": Description(
+            en="IANA timezone (e.g. 'America/Chicago') to use for all "
+            "timestamps. Leave blank to auto-detect from the system clock.",
         ),
         "autonomy_config": Description(
             en="Autonomous behavior loop settings",

@@ -136,7 +136,7 @@ async def process_group_conversation(
 
     except asyncio.CancelledError:
         logger.info(
-            f"🤡👍 Group Conversation {session_emoji} cancelled because interrupted."
+            f"🤡👍 Group Conversation {session_emoji} canceled because interrupted."
         )
         raise
     except Exception as e:

@@ -217,7 +217,7 @@ async def vad_main():
         port = 8765
         start_server = websockets.serve(audio_handler, host, port)
         logger.info(f"WebSocket server started at ws://{host}:{port}")
-        await start_server  # run forever until the task is cancelled
+        await start_server  # run forever until the task is canceled
 
     await asyncio.gather(start_websocket_server(), empty_run())
     # await start_playback(audio_queue, sr=vad.config.target_sr)

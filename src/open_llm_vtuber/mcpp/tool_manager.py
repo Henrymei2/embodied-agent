@@ -21,6 +21,21 @@ PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "add_calendar_event": "calendar",
     "update_calendar_event": "calendar",
     "remove_calendar_event": "calendar",
+    # The room is redrawn at the design board, not from wherever the agent stands.
+    "describe_room": "design board",
+    "place_object": "design board",
+    "move_object": "design board",
+    "remove_object": "design board",
+    # The library server serves two objects: browsing happens at the shelf,
+    # reading happens in the chair.
+    "list_books": "bookshelf",
+    "shelve_book": "bookshelf",
+    "list_shelf": "bookshelf",
+    "remove_from_shelf": "bookshelf",
+    "read_book": "reading chair",
+    "save_reading_note": "reading chair",
+    "reading_progress": "reading chair",
+    "finish_book": "reading chair",
 }
 
 # Every tool exposed by these MCP servers shares the same spatial requirement.
@@ -35,6 +50,8 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "weather": "window",
     "drive": "archive shelf",
     "gmail": "mailbox",
+    "plan": "writing desk",
+    "idle": "sofa",
 }
 
 PROXIMITY_THRESHOLD = 150.0
@@ -124,8 +141,7 @@ class ToolManager:
             )
             if len(description) > TOOL_DESCRIPTION_LIMIT:
                 description = (
-                    description[: TOOL_DESCRIPTION_LIMIT - 1].rsplit(" ", 1)[0]
-                    + "…"
+                    description[: TOOL_DESCRIPTION_LIMIT - 1].rsplit(" ", 1)[0] + "…"
                 )
 
             required_object = self.get_required_object(tool_name)

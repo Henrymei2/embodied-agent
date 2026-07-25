@@ -26,6 +26,8 @@ from typing import Optional
 
 from loguru import logger
 
+from ..utils.timezone import now_local
+
 # Familiarity ladder: (minimum cumulative points, label). Kept short and
 # monotonic; crossing into a new tier records a milestone.
 _FAMILIARITY_LADDER: list[tuple[int, str]] = [
@@ -154,7 +156,7 @@ class EvolutionState:
     """Serializable companion state. All persistence goes through load/save."""
 
     schema_version: int = _SCHEMA_VERSION
-    first_seen: str = field(default_factory=lambda: date.today().isoformat())
+    first_seen: str = field(default_factory=lambda: now_local().date().isoformat())
     last_interaction: Optional[str] = None
     total_interactions: int = 0
     total_sessions: int = 0
@@ -176,7 +178,9 @@ class EvolutionState:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 state = cls(
                     schema_version=int(raw.get("schema_version", _SCHEMA_VERSION)),
-                    first_seen=str(raw.get("first_seen") or date.today().isoformat()),
+                    first_seen=str(
+                        raw.get("first_seen") or now_local().date().isoformat()
+                    ),
                     last_interaction=raw.get("last_interaction"),
                     total_interactions=int(raw.get("total_interactions", 0)),
                     total_sessions=int(raw.get("total_sessions", 0)),
@@ -224,7 +228,7 @@ class EvolutionState:
             start = date.fromisoformat(self.first_seen)
         except ValueError:
             return 0
-        return max(0, (date.today() - start).days)
+        return max(0, (now_local().date() - start).days)
 
     # ------------------------------------------------------------------ #
     # Evolution
@@ -235,7 +239,7 @@ class EvolutionState:
         if self.last_interaction:
             try:
                 last = date.fromisoformat(self.last_interaction[:10])
-                idle_days = max(0, (date.today() - last).days)
+                idle_days = max(0, (now_local().date() - last).days)
             except ValueError:
                 idle_days = 0
             if idle_days:
@@ -250,7 +254,7 @@ class EvolutionState:
 
         self.total_interactions += 1
         self.familiarity_points += 1
-        self.last_interaction = datetime.now().isoformat(timespec="seconds")
+        self.last_interaction = now_local().isoformat(timespec="seconds")
 
         sentiment = _score_sentiment(user_text) if user_text else 0
         # EMA toward the sentiment target (-1/0/+1).
@@ -259,7 +263,7 @@ class EvolutionState:
         new_tier = self.familiarity_tier
         if new_tier > prev_tier:
             self._record_milestone(
-                f'reached "{self.familiarity_label}" on {date.today().isoformat()}'
+                f'reached "{self.familiarity_label}" on {now_local().date().isoformat()}'
             )
 
         self.save()

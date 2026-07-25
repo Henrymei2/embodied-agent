@@ -10,6 +10,9 @@ import React, {
 export type StageNodeType = "shape" | "text" | "image" | "avatar" | "panel";
 export type StageAssetFit = "contain" | "cover";
 export type StageDirection = "down" | "left" | "right" | "up";
+// Keep in sync with AVATAR_POSES in stage_state_manager.py.
+export const AVATAR_POSES = ["standing", "sitting"] as const;
+export type StagePose = (typeof AVATAR_POSES)[number];
 
 export interface StagePosition {
   x: number;
@@ -38,16 +41,22 @@ export interface StageNode {
   spritesheet?: StageSpritesheet;
   uiWindow?: FurnitureWindowConfig;
   style?: StageNodeStyle;
+  pose?: StagePose;
 }
 
-// Live data sources a furniture hover window may render. Each one is backed by
-// a read-only backend route the window polls while it is open. Keep in sync
-// with UI_WINDOW_PROVIDERS in stage_state_manager.py.
+// Live data sources a furniture hover window may render. Most are backed by a
+// backend route the window polls while it is open; `room_layout` is rendered
+// from the stage document this context already holds. Keep in sync with
+// UI_WINDOW_PROVIDERS in stage_state_manager.py.
 export const UI_WINDOW_PROVIDERS = [
   "google_calendar_status",
   "todo_list",
   "timer_status",
   "google_gmail_unread",
+  "bookshelf",
+  "reading_status",
+  "plan_status",
+  "room_layout",
 ] as const;
 
 export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];
@@ -89,7 +98,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 5;
+  version: 6;
   canvas: {
     width: number;
     height: number;
@@ -139,6 +148,7 @@ export interface FrontendActionResult {
     texture: string;
     spritesheet: string;
     furniture_window: string;
+    pose: string;
     move_duration_ms: number;
     patch_shape: string;
   };
@@ -155,10 +165,12 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 5;
+const STAGE_VERSION = 6;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
-const STAGE_THEME_REVISION = "cozy-bedroom-v1";
+// Keep in sync with STAGE_THEME_REVISION in stage_state_manager.py: the backend
+// rebuilds any stored room whose revision differs from its own.
+const STAGE_THEME_REVISION = "cozy-bedroom-v2";
 
 const nowIso = () => new Date().toISOString();
 
@@ -179,8 +191,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "computer",
       type: "panel",
       label: "computer",
-      x: 220,
-      y: 390,
+      x: 120,
+      y: 370,
       width: 230,
       height: 190,
       zIndex: 2,
@@ -203,8 +215,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "calendar",
       type: "panel",
       label: "calendar",
-      x: 600,
-      y: 140,
+      x: 425,
+      y: 110,
       width: 110,
       height: 130,
       zIndex: 2,
@@ -232,11 +244,11 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "bed",
       type: "panel",
       label: "bed",
-      x: 700,
-      y: 380,
-      width: 230,
-      height: 180,
-      zIndex: 2,
+      x: 480,
+      y: 465,
+      width: 210,
+      height: 150,
+      zIndex: 3,
       text: "bed",
       texture: {
         src: "./stage-assets/bed.png",
@@ -256,8 +268,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "archive_shelf",
       type: "panel",
       label: "archive shelf",
-      x: 400,
-      y: 390,
+      x: 360,
+      y: 370,
       width: 125,
       height: 110,
       zIndex: 2,
@@ -280,8 +292,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "mailbox",
       type: "panel",
       label: "mailbox",
-      x: 880,
-      y: 390,
+      x: 900,
+      y: 110,
       width: 96,
       height: 88,
       zIndex: 2,
@@ -316,8 +328,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "todo_list",
       type: "panel",
       label: "todo_list",
-      x: 375,
-      y: 140,
+      x: 265,
+      y: 110,
       width: 105,
       height: 125,
       zIndex: 2,
@@ -345,8 +357,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "hourglass",
       type: "panel",
       label: "hourglass",
-      x: 860,
-      y: 150,
+      x: 585,
+      y: 110,
       width: 65,
       height: 90,
       zIndex: 2,
@@ -374,8 +386,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       id: "window",
       type: "panel",
       label: "window",
-      x: 140,
-      y: 130,
+      x: 105,
+      y: 110,
       width: 185,
       height: 155,
       zIndex: 2,
@@ -399,14 +411,158 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       },
     },
     {
+      id: "bookshelf",
+      type: "panel",
+      label: "bookshelf",
+      x: 600,
+      y: 370,
+      width: 120,
+      height: 150,
+      zIndex: 2,
+      text: "bookshelf",
+      texture: {
+        src: "./stage-assets/bookshelf.png",
+        fit: "contain",
+        alt: "bookshelf",
+      },
+      uiWindow: {
+        title: "Bookshelf",
+        body: "Books the agent has shelved to read.",
+        provider: "bookshelf",
+      },
+      style: {
+        background: "rgba(120, 53, 15, 0.9)",
+        borderColor: "rgba(253, 230, 138, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "reading_chair",
+      type: "panel",
+      label: "reading chair",
+      x: 240,
+      y: 477,
+      width: 120,
+      height: 125,
+      zIndex: 3,
+      text: "reading chair",
+      texture: {
+        src: "./stage-assets/reading-chair.png",
+        fit: "contain",
+        alt: "reading chair",
+      },
+      uiWindow: {
+        title: "Reading chair",
+        body: "The book being read, and the notes taken so far.",
+        provider: "reading_status",
+      },
+      style: {
+        background: "rgba(47, 125, 117, 0.9)",
+        borderColor: "rgba(204, 251, 241, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "writing_desk",
+      type: "panel",
+      label: "writing desk",
+      x: 840,
+      y: 370,
+      width: 150,
+      height: 120,
+      zIndex: 2,
+      text: "writing desk",
+      texture: {
+        src: "./stage-assets/writing-desk.png",
+        fit: "contain",
+        alt: "writing desk",
+      },
+      uiWindow: {
+        title: "Plans",
+        body: "Plans the agent has drafted, awaiting your decision.",
+        provider: "plan_status",
+      },
+      style: {
+        background: "rgba(180, 118, 62, 0.9)",
+        borderColor: "rgba(254, 240, 204, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "sofa",
+      type: "panel",
+      label: "sofa",
+      x: 720,
+      y: 480,
+      width: 190,
+      height: 105,
+      zIndex: 3,
+      text: "sofa",
+      texture: {
+        src: "./stage-assets/sofa.png",
+        fit: "contain",
+        alt: "sofa",
+      },
+      uiWindow: {
+        title: "Sofa",
+        body: "Where the agent sits when there is nothing to do. It still hears you, and walking anywhere stands it up.",
+      },
+      style: {
+        background: "rgba(124, 74, 99, 0.9)",
+        borderColor: "rgba(245, 214, 228, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
+      id: "design_board",
+      type: "panel",
+      label: "design board",
+      x: 745,
+      y: 110,
+      width: 120,
+      height: 110,
+      zIndex: 2,
+      text: "design board",
+      texture: {
+        src: "./stage-assets/design-board.png",
+        fit: "contain",
+        alt: "design board",
+      },
+      uiWindow: {
+        title: "Room layout",
+        body: "Every object in the room, and which are fixed.",
+        provider: "room_layout",
+      },
+      style: {
+        background: "rgba(146, 100, 46, 0.9)",
+        borderColor: "rgba(254, 226, 176, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
       id: "avatar",
       type: "avatar",
       label: "avatar",
-      x: 550,
-      y: 300,
+      x: 60,
+      y: 515,
       width: 70,
       height: 92,
-      zIndex: 3,
+      zIndex: 4,
       text: "avatar",
       spritesheet: {
         src: "./stage-assets/avatar.png",
@@ -426,6 +582,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
           walk_left: { row: 5, frames: [0, 1, 2, 3] },
           walk_right: { row: 6, frames: [0, 1, 2, 3] },
           walk_up: { row: 7, frames: [0, 1, 2, 3] },
+          sit_down: { row: 8, frames: [0, 1, 2, 1] },
         },
       },
       style: {
@@ -637,7 +794,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (![1, 2, 3, 4].includes(candidate.version as number)) {
+  if (![1, 2, 3, 4, 5].includes(candidate.version as number)) {
     return candidate;
   }
 
@@ -656,12 +813,21 @@ const migrateStageDocument = (candidate: unknown): unknown => {
       if (!defaultNode) {
         return node;
       }
+      // A stored animation map describes the shipped image file, which gained a
+      // seated row in v6. A custom sheet — any other src — keeps its own map.
+      const storedSheet = isRecord(node.spritesheet) ? node.spritesheet : undefined;
+      const usesShippedSheet = Boolean(
+        storedSheet && defaultNode.spritesheet &&
+        storedSheet.src === defaultNode.spritesheet.src,
+      );
       return {
         ...defaultNode,
         ...node,
         texture: node.texture ?? defaultNode.texture,
         stateTextures: node.stateTextures ?? defaultNode.stateTextures,
-        spritesheet: node.spritesheet ?? defaultNode.spritesheet,
+        spritesheet: usesShippedSheet
+          ? defaultNode.spritesheet
+          : (node.spritesheet ?? defaultNode.spritesheet),
         uiWindow: node.uiWindow ?? defaultNode.uiWindow,
         style: {
           ...(defaultNode.style || {}),
@@ -819,6 +985,9 @@ export const validateStageDocument = (candidate: unknown): {
       validateSpritesheet(node.spritesheet, String(id || index), errors);
       validateUiWindow(node.uiWindow, String(id || index), errors);
       validateNodeStyle(node.style, String(id || index), errors);
+      if (node.pose !== undefined && node.pose !== null && !AVATAR_POSES.includes(node.pose as StagePose)) {
+        errors.push(`Node ${id || index} pose is not supported.`);
+      }
     });
   }
 
@@ -841,7 +1010,12 @@ const applyStagePatch = (
   const incomingNodes = new Map((patch.nodes || []).map((node) => [node.id, node]));
   const mergedNodes = current.nodes
     .filter((node) => !removeIds.has(node.id))
-    .map((node) => incomingNodes.get(node.id) || node);
+    // Field-level merge: a patch that carries one field (a pose, a position)
+    // must not drop the texture or spritesheet the node already had.
+    .map((node) => {
+      const incoming = incomingNodes.get(node.id);
+      return incoming ? { ...node, ...incoming } : node;
+    });
 
   (patch.nodes || []).forEach((node) => {
     if (!current.nodes.some((existing) => existing.id === node.id)) {
@@ -972,6 +1146,7 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
             version: STAGE_VERSION,
             texture: "nodes may include texture: { src, fit, alt }.",
             spritesheet: "avatar nodes may include spritesheet: { src, frameWidth, frameHeight, fps, animations, defaultAnimations }.",
+            pose: "avatar nodes may include pose: standing | sitting. move_to clears it.",
             furniture_window: "nodes may include uiWindow: { title, body?, provider? }; providers are allowlisted.",
             move_duration_ms: DEFAULT_MOVE_DURATION_MS,
             patch_shape: "args.patch may include canvas, nodes, remove_node_ids, metadata. Node assets use safe URL/data-image/relative src strings.",
@@ -1014,7 +1189,9 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
         const nextStage = applyStagePatch(stageRef.current, {
           nodes: stageRef.current.nodes.map((node) => (
             node.id === "avatar"
-              ? { ...node, x: destination.x, y: destination.y }
+              // Walking stands the avatar up, so a seated sprite is never
+              // animated mid-stride.
+              ? { ...node, x: destination.x, y: destination.y, pose: undefined }
             : node
           )),
         });

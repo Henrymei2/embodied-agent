@@ -164,7 +164,7 @@ async def process_single_conversation(
         return full_response  # Return accumulated full_response
 
     except asyncio.CancelledError:
-        logger.info(f"🤡👍 Conversation {session_emoji} cancelled because interrupted.")
+        logger.info(f"🤡👍 Conversation {session_emoji} canceled because interrupted.")
         raise
     except Exception as e:
         logger.error(f"Error in conversation chain: {e}")

@@ -44,6 +44,7 @@ from src.open_llm_vtuber.furniture_state import (
     load_tasks as _load_tasks,
     mutate_tasks as _mutate_tasks,
 )
+from src.open_llm_vtuber.utils.timezone import now_local
 
 mcp = FastMCP("scheduler")
 
@@ -52,7 +53,7 @@ _TICK_INTERVAL = 30
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return now_local().isoformat(timespec="seconds")
 
 
 def _iso(dt: datetime) -> str:
@@ -74,7 +75,7 @@ def schedule_task(
 
     Args:
         prompt: What the agent should do when this task fires
-            (e.g. "Check today's calendar and summarise upcoming events").
+            (e.g. "Check today's calendar and summarize upcoming events").
         priority: How urgently to run the task relative to others.
             10 = normal (default), 20 = passive/background.
             Never use 0 — that is reserved for live user requests.
@@ -92,7 +93,7 @@ def schedule_task(
         return "Error: priority 0 is reserved for live user requests. Use 10 or higher."
 
     task_id = str(uuid.uuid4())[:8]
-    next_run = _iso(datetime.now() + timedelta(seconds=delay_seconds))
+    next_run = _iso(now_local() + timedelta(seconds=delay_seconds))
 
     task = {
         "id": task_id,
@@ -191,7 +192,7 @@ def _initialize_default_tasks() -> None:
 
             task_id = str(uuid.uuid4())[:8]
             next_run = _iso(
-                datetime.now() + timedelta(seconds=default.get("delay_seconds", 0))
+                now_local() + timedelta(seconds=default.get("delay_seconds", 0))
             )
             tasks[task_id] = {
                 "id": task_id,
@@ -219,6 +220,9 @@ def _claim_due_tasks(now: datetime) -> list[tuple[str, dict]]:
         due: list[tuple[str, dict]] = []
         for task_id, task in list(tasks.items()):
             next_run = datetime.fromisoformat(task["next_run"])
+            if next_run.tzinfo is None:
+                # Legacy tasks persisted before timestamps were made timezone-aware.
+                next_run = next_run.replace(tzinfo=now.tzinfo)
             if now < next_run:
                 continue
 
@@ -252,7 +256,7 @@ async def _scheduler_loop(client_uid: str) -> None:
     while True:
         try:
             await asyncio.sleep(_TICK_INTERVAL)
-            now = datetime.now()
+            now = now_local()
             due_tasks = _claim_due_tasks(now)
 
             for task_id, task in due_tasks:
@@ -285,7 +289,7 @@ async def _scheduler_loop(client_uid: str) -> None:
                 )
 
         except asyncio.CancelledError:
-            logger.info("Scheduler: background loop cancelled.")
+            logger.info("Scheduler: background loop canceled.")
             break
         except Exception as e:
             logger.error(f"Scheduler: error in loop: {e}")
