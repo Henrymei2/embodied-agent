@@ -14,12 +14,14 @@ from fastapi import (
 )
 from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
 from .furniture_state import (
+    drawing_board_image_path,
+    drawing_board_snapshot,
     bookshelf_snapshot,
     delete_task,
     plan_snapshot,
@@ -321,6 +323,17 @@ def init_furniture_routes() -> APIRouter:
             {"plan_id": plan_id, "status": plan["status"]},
             headers={"Cache-Control": "no-store"},
         )
+
+    @router.get("/drawing-board")
+    async def drawing_board_window():
+        return JSONResponse(await run_in_threadpool(drawing_board_snapshot))
+
+    @router.get("/drawing-board/image/latest")
+    async def drawing_board_latest_image():
+        path = await run_in_threadpool(drawing_board_image_path)
+        if not path.exists():
+            return JSONResponse({"error": "no drawing has been generated yet"}, status_code=404)
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
 
     return router
 

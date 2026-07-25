@@ -8,6 +8,14 @@
         "--browser=chrome",
         "--viewport-size=1280x720"
       ]
+    },
+    "drawing_board": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "mcp_servers/drawing_board_tools.py"
+      ]
     }
   }
 }
