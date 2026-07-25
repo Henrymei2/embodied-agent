@@ -336,6 +336,102 @@ def timer_remaining_seconds(task: dict[str, Any], now: datetime | None = None) -
     return max(0, int((due - now).total_seconds()))
 
 
+
+# ── Drawing Board store ───────────────────────────────────────────────────────
+
+_DRAWING_METADATA_FILE = "latest.json"
+_DRAWING_IMAGE_FILE = "latest.png"
+
+
+def drawing_board_dir() -> Path:
+    return workspace_root() / "drawing_board"
+
+
+def drawing_board_image_path() -> Path:
+    return drawing_board_dir() / _DRAWING_IMAGE_FILE
+
+
+def drawing_board_metadata_path() -> Path:
+    return drawing_board_dir() / _DRAWING_METADATA_FILE
+
+
+def save_drawing_board_image(
+    image_bytes: bytes,
+    *,
+    prompt: str,
+    drawing_id: str,
+    model: str,
+    size: str,
+    quality: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Save a generated Drawing Board image and latest metadata."""
+    if not isinstance(image_bytes, bytes) or not image_bytes:
+        raise ValueError("image data cannot be empty")
+    if len(image_bytes) > 15 * 1024 * 1024:
+        raise ValueError("image data is too large")
+
+    root = drawing_board_dir()
+    root.mkdir(parents=True, exist_ok=True)
+
+    archive_path = root / f"{drawing_id}.png"
+    latest_path = drawing_board_image_path()
+    archive_path.write_bytes(image_bytes)
+    latest_path.write_bytes(image_bytes)
+
+    metadata = {
+        "drawing_id": drawing_id,
+        "prompt": str(prompt)[:500],
+        "model": model,
+        "size": size,
+        "quality": quality,
+        "created_at": created_at,
+        "image_url": "/api/furniture/drawing-board/image/latest",
+    }
+    _write_json_atomic(drawing_board_metadata_path(), metadata)
+    return metadata
+
+
+def drawing_board_snapshot() -> dict[str, Any]:
+    """Compact latest-image view for the Drawing Board hover window."""
+    metadata_path = drawing_board_metadata_path()
+    image_path = drawing_board_image_path()
+    if not metadata_path.exists() or not image_path.exists():
+        return {"available": True, "has_image": False, "drawing": None}
+
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {
+            "available": False,
+            "has_image": False,
+            "message": f"drawing board store is unreadable: {exc}",
+            "drawing": None,
+        }
+
+    if not isinstance(metadata, dict):
+        return {
+            "available": False,
+            "has_image": False,
+            "message": "drawing board store has an invalid format",
+            "drawing": None,
+        }
+
+    return {
+        "available": True,
+        "has_image": True,
+        "drawing": {
+            "drawing_id": metadata.get("drawing_id"),
+            "prompt": metadata.get("prompt"),
+            "model": metadata.get("model"),
+            "size": metadata.get("size"),
+            "quality": metadata.get("quality"),
+            "created_at": metadata.get("created_at"),
+            "image_url": metadata.get("image_url")
+            or "/api/furniture/drawing-board/image/latest",
+        },
+    }
+
 # ── Hover-window snapshots ────────────────────────────────────────────────────
 
 

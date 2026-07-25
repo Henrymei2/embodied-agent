@@ -278,6 +278,21 @@ interface TimerWindowData {
   remaining: number;
 }
 
+interface DrawingBoardWindowData {
+  available: boolean;
+  has_image: boolean;
+  message?: string;
+  drawing: null | {
+    drawing_id?: string;
+    prompt?: string;
+    model?: string;
+    size?: string;
+    quality?: string;
+    created_at?: string;
+    image_url?: string;
+  };
+}
+
 interface ShelfWindowBook {
   title: string;
   author?: string;
@@ -356,6 +371,7 @@ const FURNITURE_FEED_ROUTES: Record<string, string> = {
   reading_status: "/api/furniture/reading",
   plan_status: "/api/furniture/plans",
   skill_status: "/api/furniture/skills",
+  drawing_board_image: "/api/furniture/drawing-board",
 };
 
 // Objects the backend refuses to remove, because the tools reachable at them
@@ -477,6 +493,7 @@ function FurnitureWindow({
   const provider = config?.provider;
   const todoFeed = useFurnitureFeed<TodoWindowData>(baseUrl, provider === "todo_list" ? provider : undefined, open, 15_000);
   const timerFeed = useFurnitureFeed<TimerWindowData>(baseUrl, provider === "timer_status" ? provider : undefined, open, 20_000);
+  const drawingBoardFeed = useFurnitureFeed<DrawingBoardWindowData>(baseUrl, provider === "drawing_board_image" ? provider : undefined, open, 20_000);
   const shelfFeed = useFurnitureFeed<ShelfWindowData>(baseUrl, provider === "bookshelf" ? provider : undefined, open, 30_000);
   const readingFeed = useFurnitureFeed<ReadingWindowData>(baseUrl, provider === "reading_status" ? provider : undefined, open, 20_000);
   const planFeed = useFurnitureFeed<PlanWindowData>(baseUrl, provider === "plan_status" ? provider : undefined, open, 15_000);
@@ -740,6 +757,35 @@ function FurnitureWindow({
                 </Text>
               )}
             </>
+          )}
+        </Box>
+      )}
+      {provider === "drawing_board_image" && (
+        <Box mt="12px" aria-live="polite">
+          {drawingBoardFeed.failed || drawingBoardFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {drawingBoardFeed.data?.message || "Drawing Board image is unavailable."}
+            </Text>
+          ) : !drawingBoardFeed.data ? (
+            <Spinner size="sm" aria-label="Loading Drawing Board image" />
+          ) : !drawingBoardFeed.data.has_image || !drawingBoardFeed.data.drawing?.image_url ? (
+            <Text fontSize="sm" color="gray.400">No image has been drawn yet.</Text>
+          ) : (
+            <Box>
+              <Image
+                src={`${baseUrl}${drawingBoardFeed.data.drawing.image_url}?t=${encodeURIComponent(drawingBoardFeed.data.drawing.created_at || "")}`}
+                alt={drawingBoardFeed.data.drawing.prompt || "Last Drawing Board image"}
+                borderRadius="8px"
+                maxH="180px"
+                objectFit="contain"
+                bg="blackAlpha.400"
+              />
+              {drawingBoardFeed.data.drawing.prompt && (
+                <Text mt="8px" fontSize="xs" color="gray.300" overflowWrap="anywhere">
+                  {drawingBoardFeed.data.drawing.prompt}
+                </Text>
+              )}
+            </Box>
           )}
         </Box>
       )}

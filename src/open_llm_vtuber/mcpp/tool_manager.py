@@ -50,6 +50,7 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "todo": "todo_list",
     "timer": "hourglass",
     "weather": "window",
+    "drawing_board": "drawing_board",
     "drive": "archive shelf",
     "gmail": "mailbox",
     "plan": "writing desk",
