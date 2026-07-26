@@ -118,6 +118,53 @@ def test_a_second_decision_on_the_same_plan_is_rejected(client):
     assert client.post(path, json={"decision": "declined"}).status_code == 404
 
 
+def test_skill_window_lists_drafts_and_the_route_is_the_only_approver(client):
+    from mcp_servers import skill_tools
+
+    skill_tools.draft_skill(
+        "Summarize a long thread",
+        purpose="Turn a long email thread into a short brief.",
+        when_to_use="The user asks what happened in a thread.",
+        steps=["Read oldest to newest", "List decisions"],
+    )
+
+    listed = client.get("/api/furniture/skills").json()
+    assert listed["pending_count"] == 1
+    assert listed["active_count"] == 0
+    assert listed["pending"][0]["slug"] == "summarize-a-long-thread"
+
+    response = client.post(
+        "/api/furniture/skills/summarize-a-long-thread/decision",
+        json={"decision": "approved"},
+    )
+
+    assert response.status_code == 200
+    assert client.get("/api/furniture/skills").json()["active_count"] == 1
+    # A second decision has nothing pending left to act on.
+    assert (
+        client.post(
+            "/api/furniture/skills/summarize-a-long-thread/decision",
+            json={"decision": "declined"},
+        ).status_code
+        == 404
+    )
+
+
+def test_skill_decision_route_validates_its_input(client):
+    assert (
+        client.post(
+            "/api/furniture/skills/whatever/decision", json={"decision": "maybe"}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/furniture/skills/Not A Slug/decision", json={"decision": "approved"}
+        ).status_code
+        == 400
+    )
+
+
 def test_furniture_windows_report_an_unreadable_store_instead_of_failing(
     client, tmp_path
 ):

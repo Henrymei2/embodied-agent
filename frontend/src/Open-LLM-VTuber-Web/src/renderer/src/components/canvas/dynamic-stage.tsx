@@ -171,6 +171,24 @@ interface PlanWindowData {
   recent: PlanWindowPlan | null;
 }
 
+interface SkillWindowSkill {
+  slug: string;
+  name: string;
+  purpose: string;
+  when_to_use: string;
+  steps: string[];
+  revision?: number;
+}
+
+interface SkillWindowData {
+  available: boolean;
+  message?: string;
+  pending: SkillWindowSkill[];
+  pending_count?: number;
+  active: SkillWindowSkill[];
+  active_count?: number;
+}
+
 // Routes backing the furniture hover windows. `room_layout` has none: it is
 // rendered from the stage document the frontend already holds.
 const FURNITURE_FEED_ROUTES: Record<string, string> = {
@@ -179,6 +197,7 @@ const FURNITURE_FEED_ROUTES: Record<string, string> = {
   bookshelf: "/api/furniture/bookshelf",
   reading_status: "/api/furniture/reading",
   plan_status: "/api/furniture/plans",
+  skill_status: "/api/furniture/skills",
 };
 
 // Objects the backend refuses to remove, because the tools reachable at them
@@ -304,17 +323,26 @@ function FurnitureWindow({
   const shelfFeed = useFurnitureFeed<ShelfWindowData>(baseUrl, provider === "bookshelf" ? provider : undefined, open, 30_000);
   const readingFeed = useFurnitureFeed<ReadingWindowData>(baseUrl, provider === "reading_status" ? provider : undefined, open, 20_000);
   const planFeed = useFurnitureFeed<PlanWindowData>(baseUrl, provider === "plan_status" ? provider : undefined, open, 15_000);
+  const skillFeed = useFurnitureFeed<SkillWindowData>(baseUrl, provider === "skill_status" ? provider : undefined, open, 15_000);
   const { stage } = useDynamicStage();
-  const [decidingPlan, setDecidingPlan] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   useSecondTick(open && provider === "timer_status");
 
-  const decidePlan = useCallback(async (planId: string, decision: "approved" | "declined") => {
-    setDecidingPlan(planId);
+  // Approving a plan or a skill is the user's decision alone, so it is the one
+  // furniture interaction that writes: everything else here only reads.
+  const decide = useCallback(async (
+    collection: "plans" | "skills",
+    id: string,
+    decision: "approved" | "declined",
+    reload: () => Promise<void>,
+  ) => {
+    setDecidingId(id);
     setDecisionError(null);
+    const noun = collection === "plans" ? "plan" : "skill";
     try {
       const response = await fetch(
-        `${baseUrl}/api/furniture/plans/${encodeURIComponent(planId)}/decision`,
+        `${baseUrl}/api/furniture/${collection}/${encodeURIComponent(id)}/decision`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -323,15 +351,15 @@ function FurnitureWindow({
       );
       if (!response.ok) {
         const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error || "the plan could not be updated");
+        throw new Error(payload.error || `the ${noun} could not be updated`);
       }
-      await planFeed.reload();
+      await reload();
     } catch (error) {
-      setDecisionError(error instanceof Error ? error.message : "the plan could not be updated");
+      setDecisionError(error instanceof Error ? error.message : `the ${noun} could not be updated`);
     } finally {
-      setDecidingPlan(null);
+      setDecidingId(null);
     }
-  }, [baseUrl, planFeed]);
+  }, [baseUrl]);
 
   const loadUnread = useCallback(async (pageToken?: string) => {
     if (provider !== "google_gmail_unread") return;
@@ -690,16 +718,16 @@ function FurnitureWindow({
                     <Button
                       size="xs"
                       colorPalette="green"
-                      disabled={decidingPlan === plan.plan_id}
-                      onClick={() => void decidePlan(plan.plan_id, "approved")}
+                      disabled={decidingId === plan.plan_id}
+                      onClick={() => void decide("plans", plan.plan_id, "approved", planFeed.reload)}
                     >
                       Approve
                     </Button>
                     <Button
                       size="xs"
                       variant="outline"
-                      disabled={decidingPlan === plan.plan_id}
-                      onClick={() => void decidePlan(plan.plan_id, "declined")}
+                      disabled={decidingId === plan.plan_id}
+                      onClick={() => void decide("plans", plan.plan_id, "declined", planFeed.reload)}
                     >
                       Decline
                     </Button>
@@ -708,6 +736,80 @@ function FurnitureWindow({
               ))}
               {decisionError && (
                 <Text fontSize="xs" color="orange.200">{decisionError}</Text>
+              )}
+            </>
+          )}
+        </Box>
+      )}
+      {provider === "skill_status" && (
+        <Box mt="12px" aria-live="polite">
+          {skillFeed.failed || skillFeed.data?.available === false ? (
+            <Text fontSize="sm" color="orange.200">
+              {skillFeed.data?.message || "Skills are unavailable."}
+            </Text>
+          ) : !skillFeed.data ? (
+            <Spinner size="sm" aria-label="Loading skills" />
+          ) : (
+            <>
+              {skillFeed.data.pending.map((skill) => (
+                <Box key={skill.slug} pb="10px" mb="10px" borderBottom="1px solid" borderColor="whiteAlpha.200">
+                  <Text fontSize="sm" color="gray.100" fontWeight="700" overflowWrap="anywhere">
+                    {skill.name}
+                    {Boolean(skill.revision && skill.revision > 1) && (
+                      <Text as="span" color="gray.500" fontSize="xs"> · revision {skill.revision}</Text>
+                    )}
+                  </Text>
+                  <Text fontSize="xs" color="gray.300" mt="2px" overflowWrap="anywhere">{skill.purpose}</Text>
+                  {skill.when_to_use && (
+                    <Text fontSize="xs" color="blue.200" mt="3px" overflowWrap="anywhere">
+                      When: {skill.when_to_use}
+                    </Text>
+                  )}
+                  {skill.steps.map((step, index) => (
+                    <Text key={`${skill.slug}-${index}`} fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                      {index + 1}. {step}
+                    </Text>
+                  ))}
+                  <Box mt="8px" display="flex" gap="8px">
+                    <Button
+                      size="xs"
+                      colorPalette="green"
+                      disabled={decidingId === skill.slug}
+                      onClick={() => void decide("skills", skill.slug, "approved", skillFeed.reload)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={decidingId === skill.slug}
+                      onClick={() => void decide("skills", skill.slug, "declined", skillFeed.reload)}
+                    >
+                      Decline
+                    </Button>
+                  </Box>
+                </Box>
+              ))}
+              {skillFeed.data.pending.length === 0 && (
+                <Text fontSize="sm" color="gray.400">No drafts waiting on you.</Text>
+              )}
+              {skillFeed.data.active.length > 0 && (
+                <>
+                  <Text fontSize="xs" color="gray.500" mt="10px" textTransform="uppercase">
+                    In use ({skillFeed.data.active_count})
+                  </Text>
+                  {skillFeed.data.active.map((skill) => (
+                    <Text key={skill.slug} fontSize="sm" color="gray.200" mt="4px" overflowWrap="anywhere">
+                      {skill.name}
+                      {skill.when_to_use && (
+                        <Text as="span" color="gray.500" fontSize="xs"> · {skill.when_to_use}</Text>
+                      )}
+                    </Text>
+                  ))}
+                </>
+              )}
+              {decisionError && (
+                <Text fontSize="xs" color="orange.200" mt="8px">{decisionError}</Text>
               )}
             </>
           )}

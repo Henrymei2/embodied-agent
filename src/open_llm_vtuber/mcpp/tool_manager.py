@@ -52,6 +52,7 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "gmail": "mailbox",
     "plan": "writing desk",
     "idle": "sofa",
+    "skills": "tool rack",
 }
 
 PROXIMITY_THRESHOLD = 150.0

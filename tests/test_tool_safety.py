@@ -212,6 +212,30 @@ def test_room_and_plan_tools_require_their_own_furniture(monkeypatch, tmp_path):
     assert _tool_names(manager.get_formatted_tools("OpenAI")) == ["move_to", "sit_down"]
 
 
+def test_skill_tools_require_the_tool_rack(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    assert save_stage_state("character", stage)[0]
+    manager = ToolManager(
+        formatted_tools_openai=[_openai_tool("move_to"), _openai_tool("draft_skill")],
+        initial_tools_dict={
+            "draft_skill": FormattedTool(input_schema={}, related_server="skills")
+        },
+        conf_uid="character",
+    )
+
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == ["move_to"]
+    assert manager.authorize_tool("draft_skill")[0] is False
+
+    _move_avatar(stage, "tool_rack")
+    assert save_stage_state("character", stage)[0]
+    assert _tool_names(manager.get_formatted_tools("OpenAI")) == [
+        "move_to",
+        "draft_skill",
+    ]
+    assert manager.authorize_tool("draft_skill")[0] is True
+
+
 def test_tool_access_prompt_lists_all_tools_and_locations(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     stage = get_default_stage("character")

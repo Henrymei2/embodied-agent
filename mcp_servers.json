@@ -44,6 +44,10 @@
         "command": "uv",
         "args": ["run", "python", "mcp_servers/idle_tools.py"]
       },
+      "skills": {
+        "command": "uv",
+        "args": ["run", "python", "mcp_servers/skill_tools.py"]
+      },
       "drive": {
         "command": "uv",
         "args": ["run", "python", "mcp_servers/drive_tools.py"]

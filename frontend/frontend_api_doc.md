@@ -145,11 +145,11 @@ spritesheet:
 New IDs are appended as complete nodes. `move_to` clears `pose` as part of the
 same update that moves the avatar, so a seated sprite is never shown mid-stride.
 
-## 5. Stage document v6
+## 5. Stage document v7
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "canvas": {
     "width": 960,
     "height": 540,
@@ -217,23 +217,26 @@ both validators. Supported dynamic providers:
 | `reading_status` | `reading chair` | `/api/furniture/reading` | The open book, its progress bar, and recent notes |
 | `plan_status` | `writing desk` | `/api/furniture/plans` | Pending plans with Approve and Decline buttons |
 | `room_layout` | `design board` | none | The stage document the frontend already holds |
+| `skill_status` | `tool rack` | `/api/furniture/skills` | Draft skills with Approve and Decline, and the skills in use |
 
 The `/api/furniture/*` GET routes are read-only projections of the same stores
 the agent edits through proximity-gated MCP tools. They return only what the
 panel renders — no file paths — and expose no way to mutate state.
 
-`POST /api/furniture/plans/{plan_id}/decision` with `{"decision": "approved"}`
-or `{"decision": "declined"}` is the single exception, and the only writer of a
-plan's verdict anywhere in the system. It applies to pending plans only, so a
-decided plan cannot be flipped, and no MCP tool can reach it.
+`POST /api/furniture/plans/{plan_id}/decision` and
+`POST /api/furniture/skills/{slug}/decision`, each with `{"decision": "approved"}`
+or `{"decision": "declined"}`, are the only exceptions — and the only writers of
+those verdicts anywhere in the system. Both apply to pending items only, so a
+decided plan or skill cannot be flipped, and no MCP tool can reach either route.
 
-Migration: a stored v1 through v5 stage is upgraded on load. Older documents also
+Migration: a stored v1 through v6 stage is upgraded on load. Older documents also
 gain any furniture added by newer default rooms, because a tool stays hidden
 while the object it is bound to is missing from the scene. A custom layout,
 including moved or removed objects, is otherwise preserved — except when the
 default room's `theme_revision` changes, which rebuilds the room from the
-defaults. v6 does exactly that: with twelve gated objects, the layout has to be
-rebuilt for each to keep its own 150-unit radius.
+defaults. v6 did exactly that: with a dozen gated objects, the layout had to be
+rebuilt for each to keep its own 150-unit radius. v7 adds the tool rack in the
+last wall position that still satisfies it, so v6 rooms migrate in place.
 
 ## 6. Connection synchronization
 

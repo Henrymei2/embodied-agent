@@ -31,12 +31,14 @@ reversible?
   retrieved into prompt context.
 - Soft evolution tracks bounded mood, familiarity, interaction counts, and
   milestones without rewriting executable code.
+- Skills drafted at the tool rack extend the agent's own instructions once the
+  user approves them; drafts are never retrieved into the prompt.
 
 ### Embodiment
 
-- Persistent 960x540 stage v6 laid out in wall, back, and front bands: window,
-  todo list, calendar, hourglass, design board, mailbox, computer, archive
-  shelf, bookshelf, writing desk, reading chair, bed, and sofa.
+- Persistent 960x540 stage v7 laid out in wall, back, and front bands: window,
+  todo list, calendar, hourglass, design board, mailbox, tool rack, computer,
+  archive shelf, bookshelf, writing desk, reading chair, bed, and sofa.
 - Sprite walk/idle/seated animation, textures, validated external/relative
   assets, movement, object queries, and reachability.
 - Safe room modification through `place_object`, `move_object`, and
@@ -48,7 +50,7 @@ reversible?
 
 - Every skill is bound to an object: computer, calendar, todo list, hourglass,
   window, archive shelf, mailbox, bookshelf, reading chair, writing desk, sofa,
-  and design board.
+  design board, and tool rack.
 - The default room keeps each gated object more than 150 units from every other
   one and starts the avatar clear of all of them, so one object never unlocks
   another's tools and the first use of any is preceded by a walk.
@@ -106,7 +108,7 @@ Persistent stage <---- validated result ---+
 | Just-in-time contextual help | Complete | coarse screen context, confidence/frequency gating, daily-memory task changes |
 | Browser | Complete | Playwright MCP registered and gated on the computer; visible session and result plumbing |
 | Books, plans, idling, room editing | Complete | bookshelf, reading chair, writing desk, sofa, and design board, each with its own tools and window |
-| Self-evolution | Safe subset complete | memory, affinities, mood/familiarity; unattended executable self-rewrite is excluded |
+| Self-evolution | Complete | agent-authored skills that change its own prompt, gated on user approval and enforced by a read-only skills mount; unattended executable self-rewrite is excluded |
 | 3D embodiment | Deferred | 2D is the supported production path |
 
 ## 5. External integration boundaries

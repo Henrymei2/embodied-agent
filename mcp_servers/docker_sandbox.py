@@ -14,6 +14,9 @@ This module runs each command inside a locked-down Docker container:
 * only the agent workspace is mounted  (at ``/workspace``, read-write) — the
                                        host filesystem is simply not present,
                                        so *no* path trick can reach it
+* ``/workspace/skills`` is read-only   approved skills are loaded into the
+                                       agent's own prompt, so a shell that could
+                                       write them could rewrite its instructions
 * ``--cap-drop ALL`` +                 no Linux capabilities, and a child can
   ``--security-opt no-new-privileges`` never gain privileges via setuid
 * ``--pids-limit`` / ``--memory`` /    fork-bomb / memory / CPU ceilings
@@ -123,7 +126,9 @@ def ensure_image(image: str = _IMAGE) -> None:
         )
 
 
-def _docker_run_args(container_name: str, workspace_root: Path, command: str) -> list[str]:
+def _docker_run_args(
+    container_name: str, workspace_root: Path, command: str
+) -> list[str]:
     """Build the locked-down `docker run` argument vector for one command."""
     return [
         "run",
@@ -154,6 +159,11 @@ def _docker_run_args(container_name: str, workspace_root: Path, command: str) ->
         # The ONLY host path exposed to the command: the agent workspace.
         "-v",
         f"{workspace_root}:{_CONTAINER_WORKSPACE}:rw",
+        # Approved skills are retrieved into the system prompt, so a shell that
+        # could write here could rewrite the agent's own instructions. The more
+        # specific mount wins, leaving the rest of the workspace writable.
+        "-v",
+        f"{workspace_root / 'skills'}:{_CONTAINER_WORKSPACE}/skills:ro",
         "-w",
         _CONTAINER_WORKSPACE,
         # Pin HOME into the workspace so ~ expansion resolves inside it. No other
@@ -180,6 +190,10 @@ def run_in_sandbox(command: str, workspace_root: Path, timeout: int) -> SandboxR
             "or set EMBODIED_AGENT_SANDBOX_DOCKER to the docker binary."
         )
     ensure_image()
+
+    # Docker would otherwise create the read-only skills mount source itself,
+    # as a directory the agent cannot use.
+    (workspace_root / "skills").mkdir(parents=True, exist_ok=True)
 
     container_name = f"embodied-bash-{uuid.uuid4().hex}"
     args = _docker_run_args(container_name, workspace_root, command)

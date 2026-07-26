@@ -291,12 +291,44 @@ def design_board() -> Grid:
     return grid
 
 
+def tool_rack() -> Grid:
+    """A pegboard of hanging tools — the agent's skills; 24x20 scaled to 120x100."""
+    grid = Grid(24, 20)
+    grid.rect(0, 0, 24, 19, WOOD)
+    grid.rect(1, 1, 22, 17, _hex("#a9743f"))
+    # Peg holes, so it reads as a pegboard rather than a plank.
+    for y in range(3, 17, 3):
+        for x in range(2, 22, 3):
+            grid.set(x, y, WOOD_DARK)
+
+    # A wrench, a hammer, a screwdriver and a saw hanging in a row.
+    metal, handle = _hex("#8a94a6"), _hex("#5b3a21")
+    grid.rect(4, 3, 2, 8, metal)
+    grid.rect(3, 3, 4, 2, metal)
+    grid.rect(4, 11, 2, 3, handle)
+
+    grid.rect(9, 3, 5, 2, metal)
+    grid.rect(11, 5, 2, 8, handle)
+
+    grid.rect(16, 3, 2, 2, PLUM)
+    grid.rect(16, 5, 2, 7, metal)
+
+    grid.rect(20, 4, 2, 9, metal)
+    for y in range(5, 13, 2):
+        grid.set(19, y, metal)
+    grid.rect(20, 13, 2, 2, handle)
+
+    grid.rect(0, 18, 24, 1, WOOD_DARK)
+    return grid
+
+
 FURNITURE: dict[str, tuple[Grid, int]] = {
     "bookshelf": (bookshelf(), 5),
     "reading-chair": (reading_chair(), 5),
     "writing-desk": (writing_desk(), 5),
     "sofa": (sofa(), 5),
     "design-board": (design_board(), 5),
+    "tool-rack": (tool_rack(), 5),
 }
 
 # Avatar spritesheet geometry: 4 columns of 48x64 frames, 8 directional rows.

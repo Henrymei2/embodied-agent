@@ -22,6 +22,7 @@ Every skill lives at an object, alongside the `computer`, `calendar`, and `bed`.
 | `writing desk` | `plan` | `write_plan`, `list_plans`, `get_plan`, `revise_plan`, `withdraw_plan` | `<workspace>/plans/plans.json` |
 | `sofa` | `idle` | `sit_down`, `stand_up` | none (avatar pose) |
 | `design board` | `scene` | `describe_room`, `place_object`, `move_object`, `remove_object` | the stage document |
+| `tool rack` | `skills` | `draft_skill`, `list_skills`, `get_skill`, `revise_skill`, `retire_skill` | `<workspace>/skills/` |
 
 Gating is declared per server in `SERVER_PROXIMITY_REQUIREMENTS`
 (`src/open_llm_vtuber/mcpp/tool_manager.py`), so a new tool added to one of
@@ -96,6 +97,14 @@ messages, scheduled tasks, and timers all still arrive. Walking clears the pose
 in the same stage update that moves the avatar, so a seated sprite can never be
 animated mid-stride.
 
+## Skills
+
+The tool rack is where the agent writes procedures for itself. An approved skill
+is retrieved into the system prompt, so approving one really does change how the
+agent behaves — and that is why only the user can. The file tools refuse to
+write under `skills/`, and the shell sandbox mounts it read-only, so the review
+gate is enforced rather than merely instructed. See [Skills](SKILLS.md).
+
 ## Room layout
 
 `describe_room`, `place_object`, `move_object`, and `remove_object` are bound to
@@ -105,13 +114,13 @@ because the tools reachable at them would become permanently unreachable.
 
 ## Hover windows
 
-`todo_list`, `hourglass`, `bookshelf`, `reading chair`, `writing desk`, the
-`calendar`, and the `mailbox` declare a `uiWindow` provider, so pointing at the
-object opens a panel showing what is behind it. Those panels read
-`/api/furniture/*`, which are read-only projections apart from the plan
-decision — the agent remains the only writer of the stores themselves, and only
-from the right spot in the room. The design board's panel needs no route at all:
-it renders the stage document the frontend already holds. See
+`todo_list`, `hourglass`, `bookshelf`, `reading chair`, `writing desk`, `tool
+rack`, the `calendar`, and the `mailbox` declare a `uiWindow` provider, so
+pointing at the object opens a panel showing what is behind it. Those panels
+read `/api/furniture/*`, which are read-only projections apart from the plan and
+skill decisions — the agent remains the only writer of the stores themselves,
+and only from the right spot in the room. The design board's panel needs no
+route at all: it renders the stage document the frontend already holds. See
 `frontend/frontend_api_doc.md` for the stage document contract.
 
 ## Configuration
@@ -128,6 +137,7 @@ object-gated server stays hidden until the agent walks to its furniture.
 `drive` and `gmail` additionally need Google authorization, and `playwright`
 needs `npx` on the PATH; a server whose runtime is missing is skipped at load.
 
-Stage v6 re-lays the room into wall, back, and front bands to keep the radius
-rule satisfiable with this much furniture, so its theme revision is bumped and
-stored rooms are rebuilt from the defaults on load.
+Stage v6 re-laid the room into wall, back, and front bands to keep the radius
+rule satisfiable with this much furniture, so its theme revision was bumped and
+stored rooms are rebuilt from the defaults on load. v7 adds the tool rack in
+the last wall position that still satisfies the rule, and migrates in place.

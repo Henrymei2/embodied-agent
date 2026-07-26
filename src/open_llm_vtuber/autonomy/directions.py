@@ -157,6 +157,22 @@ CANDIDATES: list[Candidate] = [
         relevance=_idle_boost,
     ),
     Candidate(
+        # Self-evolution: the agent proposes the change, the user commits it.
+        direction=Direction.GROWTH,
+        prompt=(
+            "Look back at something you recently worked out how to do, and decide "
+            "whether it is worth keeping. If it is, walk to the tool rack and "
+            "write it down with `draft_skill`: what it is for, when it applies, "
+            "and the steps. The user decides whether it becomes a skill, so keep "
+            "it concrete and honest about what did not work."
+        ),
+        usefulness=0.55,
+        intrusiveness=0.05,
+        risk=0.15,
+        delivery=SILENT,
+        relevance=_idle_boost,
+    ),
+    Candidate(
         direction=Direction.GROWTH,
         prompt=(
             "Continue the book you have open. Walk to the reading chair, read the "

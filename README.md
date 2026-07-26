@@ -6,15 +6,17 @@ scheduling, and consent-aware autonomous behavior.
 
 ## Current capabilities
 
-- **Embodied room:** persistent stage v6 with an animated avatar and thirteen
+- **Embodied room:** persistent stage v7 with an animated avatar and fourteen
   pieces of furniture — window, todo list, calendar, hourglass, design board,
-  mailbox, computer, archive shelf, bookshelf, writing desk, reading chair,
-  bed, and sofa — with validated textures and safe placement/removal.
+  mailbox, tool rack, computer, archive shelf, bookshelf, writing desk, reading
+  chair, bed, and sofa — with validated textures and safe placement/removal.
+  Every gated object keeps its own 150-unit radius and the avatar starts clear
+  of all of them, so using any object's tools always begins with a walk.
 - **Spatial tools:** `describe_room`, `get_object_position`, `list_objects`,
   `get_scene_status`, `move_to`, `place_object`, `move_object`, and
   `remove_object` through the scene MCP server, with room editing bound to the
   design board.
-- **Every skill is furniture-gated:** each tool server is hidden until the
+- **Every tool is furniture-gated:** each tool server is hidden until the
   avatar is within range of its object and re-authorized immediately before
   execution, so a stale schema or injected tool call can never skip the walk.
   See [Furniture tools](doc/FURNITURE_TOOLS.md) for the full object -> tool
@@ -31,6 +33,13 @@ scheduling, and consent-aware autonomous behavior.
   there is no tool that lets the agent authorize its own plan.
 - **Idling:** the agent can sit at the `sofa` to represent "nothing to do
   right now" without blocking messages, timers, or scheduled tasks.
+- **Skills the agent writes for itself:** at the `tool rack` it drafts a
+  procedure — what it is for, when it applies, the steps — and the user approves
+  or declines it from the hover window. Approved skills are retrieved into the
+  system prompt, so approval genuinely changes later behavior; drafts never are.
+  The gate is enforced, not just instructed: file tools refuse to write under
+  `skills/` and the shell sandbox mounts it read-only. See
+  [Skills](doc/SKILLS.md).
 - **Google Calendar, Drive, and Gmail:** OAuth-backed tools tied to the
   calendar, archive shelf, and mailbox objects respectively, each with
   connection status in its furniture window.
@@ -41,10 +50,12 @@ scheduling, and consent-aware autonomous behavior.
   frequency-gated proactive help. See
   [Screen context](doc/SCREEN_CONTEXT.md).
 - **Sandboxed execution:** shell/file tools run inside a Docker sandbox with
-  no network access, a read-only rootfs, and a workspace-only mount.
-- **Furniture windows:** safe, read-only hover/focus panels backed by
-  `/api/furniture/*` routes, so the agent remains the only writer of the
-  underlying stores.
+  no network access, a read-only rootfs, and a workspace-only mount, within
+  which the approved-skills directory is itself read-only.
+- **Furniture windows:** hover/focus panels backed by `/api/furniture/*` routes.
+  They are read-only projections of stores the agent alone writes, with exactly
+  two exceptions that run the other way: approving a plan or a skill, which only
+  the user can do.
 - **Persistent context:** contextual, daily, and long-term memory plus workspace
   knowledge retrieval and embodied-action recording.
 - **Agent runtime:** priority-queued user, scheduled, and autonomous work with
@@ -72,8 +83,8 @@ uv run run_server.py
 The server uses one character from `conf.yaml`; alternate-character switching
 is not part of the runtime.
 Every server in `mcp_servers.json` — bash, scene, screen, calendar, scheduler,
-todo, timer, weather, library, plan, idle, drive, gmail, playwright, time, and
-search — is available by default (`mcp_disabled_servers: []`); leaving this
+todo, timer, weather, library, plan, idle, skills, drive, gmail, playwright,
+time, and search — is available by default (`mcp_disabled_servers: []`); leaving this
 list empty does not widen what the agent can reach, since object-gated tools
 stay hidden until the avatar walks to the matching furniture.
 
@@ -104,6 +115,7 @@ npm run build:web
 - [Furniture tools](doc/FURNITURE_TOOLS.md)
 - [Frontend action protocol](frontend/frontend_api_doc.md)
 - [Presence Contract](doc/PRESENCE_CONTRACT.md)
+- [Skills and the approval gate](doc/SKILLS.md)
 - [Screen context](doc/SCREEN_CONTEXT.md)
 - [Google Calendar tools and OAuth setup](doc/CALENDAR_TOOLS.md)
 - [Configuration templates](config_templates/README.md)
@@ -120,7 +132,8 @@ npm run build:web
 - Presence signals contain idle/present/focus values only. Window titles,
   keystrokes, screenshots, and application contents are not collected by the
   Presence Contract or the screen-context pipeline.
-- Self-evolution is limited to memory, preferences, mood/familiarity, and
-  user-reviewed workspace artifacts. Unattended self-modification of executable
-  code is intentionally outside the trusted runtime.
+- Self-evolution goes through the user: the agent can propose skills that change
+  its own instructions, but only an approval at the tool rack activates one.
+  Unattended self-modification of executable code, tool definitions, or the
+  avatar's own spritesheet remains outside the trusted runtime.
 - 3D embodiment remains deferred; the production path is the validated 2D stage.

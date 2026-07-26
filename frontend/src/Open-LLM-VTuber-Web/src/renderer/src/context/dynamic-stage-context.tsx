@@ -57,6 +57,7 @@ export const UI_WINDOW_PROVIDERS = [
   "reading_status",
   "plan_status",
   "room_layout",
+  "skill_status",
 ] as const;
 
 export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];
@@ -98,7 +99,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 6;
+  version: 7;
   canvas: {
     width: number;
     height: number;
@@ -165,7 +166,7 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 6;
+const STAGE_VERSION = 7;
 const DEFAULT_MOVE_DURATION_MS = 900;
 const REACHABLE_DISTANCE = 150;
 // Keep in sync with STAGE_THEME_REVISION in stage_state_manager.py: the backend
@@ -555,6 +556,36 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       },
     },
     {
+      id: "tool_rack",
+      type: "panel",
+      label: "tool rack",
+      // The one wall spot left that keeps its own 150-unit radius.
+      x: 503,
+      y: 245,
+      width: 120,
+      height: 100,
+      zIndex: 2,
+      text: "tool rack",
+      texture: {
+        src: "./stage-assets/tool-rack.png",
+        fit: "contain",
+        alt: "tool rack",
+      },
+      uiWindow: {
+        title: "Skills",
+        body: "Skills the agent has written for itself, and drafts waiting on you.",
+        provider: "skill_status",
+      },
+      style: {
+        background: "rgba(75, 85, 99, 0.9)",
+        borderColor: "rgba(226, 232, 240, 0.9)",
+        color: "#ffffff",
+        borderRadius: 8,
+        fontSize: 13,
+        fontWeight: "700",
+      },
+    },
+    {
       id: "avatar",
       type: "avatar",
       label: "avatar",
@@ -794,7 +825,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (![1, 2, 3, 4, 5].includes(candidate.version as number)) {
+  if (![1, 2, 3, 4, 5, 6].includes(candidate.version as number)) {
     return candidate;
   }
 

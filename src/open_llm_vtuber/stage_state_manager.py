@@ -10,7 +10,7 @@ from loguru import logger
 from .utils.timezone import now_local
 
 
-STAGE_VERSION = 6
+STAGE_VERSION = 7
 STAGE_BASE_DIR = "stage_state"
 # Bumping this rebuilds every stored room from the defaults. v2 re-lays the room
 # into wall/back/front bands so each object keeps its own 150-unit radius: a
@@ -30,6 +30,7 @@ UI_WINDOW_PROVIDERS = (
     "reading_status",
     "plan_status",
     "room_layout",
+    "skill_status",
 )
 
 # Avatar postures. Anything else is rejected, and walking clears the pose, so a
@@ -465,6 +466,36 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 },
             },
             {
+                "id": "tool_rack",
+                "type": "panel",
+                "label": "tool rack",
+                # The one wall spot left that keeps its own 150-unit radius.
+                "x": 503,
+                "y": 245,
+                "width": 120,
+                "height": 100,
+                "zIndex": 2,
+                "text": "tool rack",
+                "texture": {
+                    "src": "./stage-assets/tool-rack.png",
+                    "fit": "contain",
+                    "alt": "tool rack",
+                },
+                "uiWindow": {
+                    "title": "Skills",
+                    "body": "Skills the agent has written for itself, and drafts waiting on you.",
+                    "provider": "skill_status",
+                },
+                "style": {
+                    "background": "rgba(75, 85, 99, 0.9)",
+                    "borderColor": "rgba(226, 232, 240, 0.9)",
+                    "color": "#ffffff",
+                    "borderRadius": 8,
+                    "fontSize": 13,
+                    "fontWeight": "700",
+                },
+            },
+            {
                 "id": "avatar",
                 "type": "avatar",
                 "label": "avatar",
@@ -576,7 +607,7 @@ def migrate_stage(stage: Any) -> Any:
     """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2, 3, 4, 5}:
+    if stage.get("version") not in {1, 2, 3, 4, 5, 6}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}

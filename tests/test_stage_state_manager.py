@@ -18,10 +18,10 @@ from src.open_llm_vtuber.stage_state_manager import (
 )
 
 
-def test_default_stage_is_v6_with_google_furniture():
+def test_default_stage_is_v7_with_google_furniture():
     stage = get_default_stage("conf-a")
 
-    assert stage["version"] == 6
+    assert stage["version"] == 7
     assert stage["metadata"]["theme_revision"] == STAGE_THEME_REVISION
     assert stage["canvas"]["texture"]["src"].endswith("bedroom-background.png")
     nodes = {node["id"]: node for node in stage["nodes"]}
@@ -49,6 +49,7 @@ def test_default_stage_carries_tool_furniture():
     assert nodes["reading_chair"]["uiWindow"]["provider"] == "reading_status"
     assert nodes["writing_desk"]["uiWindow"]["provider"] == "plan_status"
     assert nodes["design_board"]["uiWindow"]["provider"] == "room_layout"
+    assert nodes["tool_rack"]["uiWindow"]["provider"] == "skill_status"
     assert "provider" not in nodes["sofa"]["uiWindow"]
     assert nodes["sofa"]["texture"]["src"].endswith("sofa.png")
     assert nodes["avatar"]["spritesheet"]["animations"]["sit_down"]["row"] == 8
@@ -180,7 +181,7 @@ def test_nothing_is_reachable_from_where_the_avatar_starts():
         assert distance > PROXIMITY_THRESHOLD, f"{label} is reachable at spawn"
 
 
-def test_v1_stage_migrates_to_v6_and_preserves_positions():
+def test_v1_stage_migrates_to_v7_and_preserves_positions():
     v1_stage = get_default_stage("conf-a")
     v1_stage["version"] = 1
     v1_stage["nodes"] = [
@@ -201,7 +202,7 @@ def test_v1_stage_migrates_to_v6_and_preserves_positions():
     migrated = migrate_stage(v1_stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 6
+    assert migrated["version"] == 7
     assert nodes["avatar"]["x"] == 123
     assert nodes["avatar"]["y"] == 234
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
@@ -209,7 +210,7 @@ def test_v1_stage_migrates_to_v6_and_preserves_positions():
     assert validate_stage(v1_stage) == (True, [])
 
 
-def test_v2_stage_migrates_to_v6_with_calendar_window():
+def test_v2_stage_migrates_to_v7_with_calendar_window():
     stage = get_default_stage("conf-a")
     stage["version"] = 2
     nodes = {node["id"]: node for node in stage["nodes"]}
@@ -217,7 +218,7 @@ def test_v2_stage_migrates_to_v6_with_calendar_window():
 
     migrated = migrate_stage(stage)
 
-    assert migrated["version"] == 6
+    assert migrated["version"] == 7
     calendar = next(node for node in migrated["nodes"] if node["id"] == "calendar")
     assert calendar["uiWindow"]["provider"] == "google_calendar_status"
 
@@ -237,7 +238,7 @@ def test_v3_stage_gains_new_furniture_but_keeps_custom_layout():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 6
+    assert migrated["version"] == 7
     assert {"todo_list", "hourglass", "window"} <= set(nodes)
     assert nodes["bed"]["x"] == 321
     assert validate_stage(migrated) == (True, [])
@@ -256,7 +257,7 @@ def test_v4_stage_gains_google_furniture_and_keeps_custom_layout():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 6
+    assert migrated["version"] == 7
     assert {"archive_shelf", "mailbox"} <= set(nodes)
     assert nodes["calendar"]["x"] == 555
     assert validate_stage(migrated) == (True, [])
@@ -286,7 +287,7 @@ def test_v5_stage_gains_furniture_and_a_seated_avatar_animation():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 6
+    assert migrated["version"] == 7
     assert {
         "bookshelf",
         "reading_chair",
@@ -296,6 +297,22 @@ def test_v5_stage_gains_furniture_and_a_seated_avatar_animation():
     } <= set(nodes)
     assert nodes["avatar"]["x"] == 321
     assert "sit_down" in nodes["avatar"]["spritesheet"]["animations"]
+    assert validate_stage(migrated) == (True, [])
+
+
+def test_v6_stage_gains_the_tool_rack():
+    """A room saved before skills shipped must not stay locked out of them."""
+    stage = get_default_stage("conf-a")
+    stage["version"] = 6
+    stage["nodes"] = [node for node in stage["nodes"] if node["id"] != "tool_rack"]
+    next(node for node in stage["nodes"] if node["id"] == "sofa")["x"] = 700
+
+    migrated = migrate_stage(stage)
+    nodes = {node["id"]: node for node in migrated["nodes"]}
+
+    assert migrated["version"] == 7
+    assert nodes["tool_rack"]["uiWindow"]["provider"] == "skill_status"
+    assert nodes["sofa"]["x"] == 700
     assert validate_stage(migrated) == (True, [])
 
 

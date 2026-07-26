@@ -211,6 +211,30 @@ def _safe_path(path: str) -> Path:
     return resolve_workspace_path(path, _WORKSPACE_DIR)
 
 
+def _safe_write_path(path: str) -> Path:
+    """Resolve a path for writing, refusing the directories the agent may not edit.
+
+    `skills/` holds the procedures the user approved, and approved skills are
+    retrieved into the system prompt. Letting a file tool write there would let
+    the agent change its own instructions without review, so skills are edited
+    only through the tool rack, whose changes wait for approval. The shell
+    sandbox mounts the same directory read-only, so this is a clear error
+    message rather than the only line of defense.
+    """
+    target = _safe_path(path)
+    root = _workspace_root()
+    try:
+        relative = target.relative_to(root)
+    except ValueError:
+        return target
+    if relative.parts and relative.parts[0] == "skills":
+        raise WorkspaceAccessError(
+            "skills/ is read-only: draft or revise skills at the tool rack, "
+            "where the user approves them"
+        )
+    return target
+
+
 def _rel(path: Path) -> str:
     """Display a path relative to the workspace root when possible."""
     try:
@@ -407,9 +431,7 @@ def download_file(
                     continue
                 downloaded += len(chunk)
                 if downloaded > max_bytes:
-                    raise ValueError(
-                        f"download exceeded the {max_bytes}-byte limit"
-                    )
+                    raise ValueError(f"download exceeded the {max_bytes}-byte limit")
                 handle.write(chunk)
                 digest.update(chunk)
             handle.flush()
@@ -580,7 +602,7 @@ def write_file(path: str, content: str) -> str:
         content: Full text content to write.
     """
     try:
-        target = _safe_path(path)
+        target = _safe_write_path(path)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     try:
@@ -600,7 +622,7 @@ def append_to_file(path: str, content: str) -> str:
         content: Text to append.
     """
     try:
-        target = _safe_path(path)
+        target = _safe_write_path(path)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     try:
@@ -625,7 +647,7 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         new_string: Replacement text.
     """
     try:
-        target = _safe_path(path)
+        target = _safe_write_path(path)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     if not target.is_file():
@@ -691,7 +713,7 @@ def create_directory(path: str) -> str:
         path: Directory path relative to the workspace root.
     """
     try:
-        target = _safe_path(path)
+        target = _safe_write_path(path)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     try:
@@ -709,7 +731,7 @@ def delete_path(path: str) -> str:
         path: Path relative to the workspace root.
     """
     try:
-        target = _safe_path(path)
+        target = _safe_write_path(path)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     if target == _workspace_root():
@@ -739,8 +761,8 @@ def move_path(source: str, destination: str) -> str:
         destination: Target path relative to the workspace root.
     """
     try:
-        src = _safe_path(source)
-        dst = _safe_path(destination)
+        src = _safe_write_path(source)
+        dst = _safe_write_path(destination)
     except WorkspaceAccessError as exc:
         return f"Error: {exc}"
     if not src.exists():

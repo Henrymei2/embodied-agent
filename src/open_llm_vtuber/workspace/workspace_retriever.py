@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..skill_state import EXCLUDED_SKILL_SUBDIRS
 from .workspace_manager import ensure_workspace, resolve_workspace_path
 
 
@@ -154,6 +155,23 @@ def score_document(
     return score, "; ".join(reasons)
 
 
+def _is_unapproved_skill(path: Path, workspace_root: Path) -> bool:
+    """True for a skill the user has not approved.
+
+    Drafts and retired skills live under `skills/`, but must never reach the
+    prompt: retrieving a draft would let the agent change its own behavior by
+    writing a file, which is exactly what the review gate exists to prevent.
+    """
+    try:
+        relative = path.relative_to(workspace_root)
+    except ValueError:
+        return False
+    parts = relative.parts
+    return (
+        len(parts) > 2 and parts[0] == "skills" and parts[1] in EXCLUDED_SKILL_SUBDIRS
+    )
+
+
 def iter_candidate_files(
     workspace_dir: str | Path | None = None,
     include_dirs: list[str] | None = None,
@@ -172,6 +190,8 @@ def iter_candidate_files(
             if not path.is_file():
                 continue
             if path.suffix.lower() not in TEXT_FILE_SUFFIXES:
+                continue
+            if _is_unapproved_skill(path, workspace.root):
                 continue
 
             # Re-resolve to enforce workspace boundary even with symlinks.

@@ -18,6 +18,7 @@ from .furniture_state import (
     todo_snapshot,
 )
 from .service_context import ServiceContext
+from .skill_state import record_skill_decision, skill_snapshot
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
 from .google_integration import GoogleIntegrationError, GoogleIntegrationService
@@ -133,6 +134,40 @@ def init_furniture_routes() -> APIRouter:
     async def plan_window():
         return JSONResponse(
             await run_in_threadpool(plan_snapshot),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/skills")
+    async def skill_window():
+        return JSONResponse(
+            await run_in_threadpool(skill_snapshot),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/skills/{slug}/decision")
+    async def decide_skill(slug: str, payload: dict = Body(...)):
+        decision = payload.get("decision") if isinstance(payload, dict) else None
+        if decision not in {"approved", "declined"}:
+            return JSONResponse(
+                {"error": "decision must be 'approved' or 'declined'"},
+                status_code=400,
+            )
+        try:
+            skill = await run_in_threadpool(record_skill_decision, slug, decision)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except OSError:
+            logger.exception("Could not update the skill store")
+            return JSONResponse(
+                {"error": "the skill could not be updated"}, status_code=503
+            )
+        if skill is None:
+            return JSONResponse(
+                {"error": "no skill is awaiting a decision under that name"},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"slug": slug, "status": skill["status"]},
             headers={"Cache-Control": "no-store"},
         )
 

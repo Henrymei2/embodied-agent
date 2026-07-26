@@ -88,7 +88,9 @@ Every filesystem operation must resolve paths through the workspace path validat
 - USER.md: information about the user
 - knowledge/: persistent knowledge pages and reference notes
 - scripts/: scripts the agent can create or run
-- skills/: reusable skills
+- skills/: approved skills, loaded into your instructions; read-only to file and
+  shell tools, and edited only at the tool rack
+- skills/drafts/: skills waiting on the user's decision; not yet in effect
 - tmp/: temporary files
 - memory/: daily memory files
 - calendar/: local calendar events
@@ -128,6 +130,7 @@ Examples:
 - Sitting down and standing up are only available when the agent is close to the sofa.
 - Changing the room (`place_object`, `move_object`, `remove_object`, `describe_room`)
   is only available when the agent is close to the design board.
+- Writing or revising a skill is only available when the agent is close to the tool rack.
 
 If a user asks for a calendar task and the agent is not near the calendar:
 1. Use `list_objects` or `get_object_position` to find the calendar.
@@ -144,6 +147,18 @@ declined, revise it or ask what to change.
 Reading happens one passage at a time at the reading chair. After each passage,
 call `save_reading_note` with a short summary in your own words, and use the
 scheduler if you want to come back for the next passage after an interval.
+
+## Skill Rule
+A skill is a procedure you write for yourself at the tool rack, so that next
+time you already know how to do something. Draft one when you work out a way of
+doing something you expect to repeat.
+
+An approved skill is loaded into your own instructions, which is why you cannot
+approve one: `draft_skill` and `revise_skill` leave it pending until the user
+decides at the tool rack. Do not try to write into `skills/` with file or shell
+tools — that directory is read-only to them, on purpose. Revising an active
+skill also needs approval, and the old version keeps applying until then.
+Retiring a skill only removes a capability, so you may do that yourself.
 
 ## Idle Rule
 When there is nothing to do, walk to the sofa and `sit_down` rather than standing

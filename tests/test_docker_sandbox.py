@@ -46,10 +46,27 @@ def test_only_the_workspace_is_mounted():
     ws = "/home/u/embodied-agent"
     args = _args(ws=ws)
     mounts = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
-    # Exactly one bind mount: the workspace at /workspace, read-write. Compare
-    # against the OS-native rendering of the path (Docker gets str(Path)).
-    assert mounts == [f"{Path(ws)}:/workspace:rw"]
+    # Two bind mounts, both inside the workspace: the workspace itself
+    # read-write, and the approved skills read-only over the top of it. No other
+    # host path is exposed. Compare against the OS-native rendering of the path
+    # (Docker gets str(Path)).
+    assert mounts == [
+        f"{Path(ws)}:/workspace:rw",
+        f"{Path(ws) / 'skills'}:/workspace/skills:ro",
+    ]
     assert "-w" in args and args[args.index("-w") + 1] == "/workspace"
+
+
+def test_approved_skills_are_not_writable_by_the_shell():
+    """A shell that could edit skills/ could rewrite the agent's own prompt."""
+    args = _args(ws="/home/u/embodied-agent")
+    skills_mount = next(
+        args[i + 1]
+        for i, a in enumerate(args)
+        if a == "-v" and args[i + 1].endswith(":/workspace/skills:ro")
+    )
+
+    assert skills_mount.endswith(":ro")
 
 
 def test_no_host_environment_is_forwarded():
