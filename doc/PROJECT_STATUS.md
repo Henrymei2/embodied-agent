@@ -103,8 +103,8 @@ Persistent stage <---- validated result ---+
 
 | Original deliverable | Status | Evidence |
 | --- | --- | --- |
-| 2D room and navigation | Complete | stage v3, furniture windows, sprite transition, scene MCP, persistence |
-| Memory and personality | Complete | contextual/daily/long-term memory, retrieval, evolution state |
+| 2D room and navigation | Complete | stage v7, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
+| Memory and personality | Complete | contextual/daily/long-term memory, hybrid keyword/embedding retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
 | Autonomous behavior MVP | Complete | scored planner, directions, cadence, Presence Contract |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |

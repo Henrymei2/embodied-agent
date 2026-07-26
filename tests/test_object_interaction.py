@@ -122,6 +122,20 @@ async def test_the_handler_composes_a_turn_and_rate_limits_repeat_clicks(
     assert len(triggered) == 2
 
 
+def test_both_conversation_paths_store_the_gesture(room):
+    """Single and group sessions must agree on what a click looks like later."""
+    import inspect
+
+    from src.open_llm_vtuber.conversations import (
+        group_conversation,
+        single_conversation,
+    )
+
+    for module in (single_conversation, group_conversation):
+        source = inspect.getsource(module)
+        assert 'get("display_text")' in source, module.__name__
+
+
 async def test_the_conversation_turn_shows_the_gesture_not_the_instructions(room):
     """The transcript should read like something a person did."""
     from src.open_llm_vtuber.conversations import conversation_handler

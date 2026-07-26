@@ -377,6 +377,10 @@ class WebSocketHandler:
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
+        # Click times are keyed per (client, object), so a reconnecting client
+        # would otherwise leave one entry per object it ever touched.
+        for key in [key for key in self._object_click_times if key[0] == client_uid]:
+            del self._object_click_times[key]
 
         autonomy_task = self.autonomy_tasks.pop(client_uid, None)
         if autonomy_task and not autonomy_task.done():

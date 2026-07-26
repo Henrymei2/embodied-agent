@@ -138,6 +138,30 @@ def test_each_diary_entry_is_its_own_memory(workspace, semantic):
     assert "dishwasher" not in chunks[1]
 
 
+def test_the_whole_file_stays_searchable_not_just_its_first_entries(workspace):
+    """A chunk-count cap once made the tail of a long diary silently invisible."""
+    (workspace / "memory" / "2026-05-01.md").write_text(
+        "\n\n".join(
+            f"Entry {index}: something memorable involving topic{index}."
+            for index in range(120)
+        ),
+        encoding="utf-8",
+    )
+
+    for probe in ("topic0", "topic60", "topic119"):
+        assert retrieve_workspace_documents(probe, workspace_dir=workspace), probe
+
+
+def test_the_chunk_ceiling_cannot_discard_text_that_was_read():
+    from src.open_llm_vtuber.workspace import workspace_retriever as module
+
+    # The shortest possible chunk times the ceiling still covers everything the
+    # reader accepts, so the ceiling only ever bounds pathological input.
+    assert (
+        module.MAX_CHUNKS_PER_FILE * module.MIN_CHUNK_CHARS >= module.MAX_INDEXED_CHARS
+    )
+
+
 def test_chunking_keeps_paragraphs_whole():
     """Paragraphs pack together up to the limit, and are never cut in half."""
     first = "First paragraph. " * 12  # ~200 chars

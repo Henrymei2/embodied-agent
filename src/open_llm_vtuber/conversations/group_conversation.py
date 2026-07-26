@@ -91,13 +91,17 @@ async def process_group_conversation(
         skip_history = metadata and metadata.get("skip_history", False)
 
         if not skip_history:
+            # A composed turn (clicking an object) carries the phrasing the
+            # transcript should show; the instructions behind it are for the
+            # model only. Matches process_single_conversation.
+            remembered = (metadata or {}).get("display_text") or input_text
             for member_uid in group_members:
                 member_context = client_contexts[member_uid]
                 store_message(
                     conf_uid=member_context.character_config.conf_uid,
                     history_uid=member_context.history_uid,
                     role="human",
-                    content=input_text,
+                    content=remembered,
                     name=human_name,
                 )
         else:

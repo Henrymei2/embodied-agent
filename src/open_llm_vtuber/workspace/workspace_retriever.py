@@ -21,8 +21,13 @@ MAX_CHUNK_CHARS = 400
 # Kept tight: a short diary line like "We fixed the dishwasher." is a whole
 # memory, and merging it into the next one costs it its own match.
 MIN_CHUNK_CHARS = 40
-MAX_CHUNKS_PER_FILE = 40
 MAX_INDEXED_CHARS = 40_000
+# A ceiling only for pathological input, derived so it can never discard text
+# the reader accepted: the shortest possible chunk is MIN_CHUNK_CHARS, so this
+# many of them already covers MAX_INDEXED_CHARS. A tighter count would silently
+# make the tail of a long memory file unsearchable — the "it doesn't remember"
+# failure this whole path exists to avoid.
+MAX_CHUNKS_PER_FILE = MAX_INDEXED_CHARS // MIN_CHUNK_CHARS
 # A leading YAML metadata block, as skill files carry.
 _FRONTMATTER_RE = re.compile(r"^---\n.*?\n---\n?(.*)$", re.DOTALL)
 
@@ -322,6 +327,11 @@ def _embed_chunks(
             vectors[index] = vector
             cache.put(chunk_key(provider_name, chunk), vector)
 
+    if any(vector is None for vector in vectors):
+        # Callers index this list against `chunks`, so dropping a gap would
+        # silently score every later chunk against the wrong passage. Falling
+        # back to keywords for this file is the safe answer.
+        return None
     return [vector for vector in vectors if vector is not None]
 
 
