@@ -6,6 +6,7 @@ import pytest
 
 from mcp_servers import bash_tools, skill_tools
 from src.open_llm_vtuber import skill_state
+from src.open_llm_vtuber.workspace import embeddings
 from src.open_llm_vtuber.workspace.workspace_retriever import (
     retrieve_workspace_documents,
 )
@@ -14,8 +15,21 @@ from src.open_llm_vtuber.workspace.workspace_retriever import (
 @pytest.fixture(autouse=True)
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path))
+    # The gate is what is under test here; recall quality is covered in
+    # test_workspace_recall.py, and loading a model would only slow this down.
+    monkeypatch.setenv("EMBODIED_AGENT_EMBEDDINGS", "off")
+    embeddings.reset_provider()
     monkeypatch.setattr(bash_tools, "_WORKSPACE_DIR", str(tmp_path))
     return tmp_path
+
+
+def _skill_documents(retrieved):
+    """Only the documents that came from the skills directory."""
+    return [
+        document
+        for document in retrieved
+        if document.relative_path.replace("\\", "/").startswith("skills/")
+    ]
 
 
 def _draft(name: str = "Summarize a long thread") -> dict:
@@ -51,7 +65,7 @@ def test_a_pending_skill_is_never_retrieved_into_the_prompt(workspace):
         query="summarize a long thread", workspace_dir=workspace
     )
 
-    assert retrieved == []
+    assert not _skill_documents(retrieved)
 
 
 def test_an_approved_skill_is_retrieved_into_the_prompt(workspace):
@@ -62,9 +76,11 @@ def test_an_approved_skill_is_retrieved_into_the_prompt(workspace):
         query="summarize a long thread", workspace_dir=workspace
     )
 
-    paths = [document.relative_path.replace("\\", "/") for document in retrieved]
-    assert paths == ["skills/summarize-a-long-thread.md"]
-    assert "List decisions" in retrieved[0].content
+    skills = _skill_documents(retrieved)
+    assert [document.relative_path.replace("\\", "/") for document in skills] == [
+        "skills/summarize-a-long-thread.md"
+    ]
+    assert "List decisions" in skills[0].content
 
 
 def test_a_declined_skill_stays_a_draft(workspace):
@@ -75,7 +91,9 @@ def test_a_declined_skill_stays_a_draft(workspace):
     assert decided["status"] == "declined"
     assert (workspace / "skills" / "drafts" / "summarize-a-long-thread.md").exists()
     assert not (workspace / "skills" / "summarize-a-long-thread.md").exists()
-    assert retrieve_workspace_documents(query="thread", workspace_dir=workspace) == []
+    assert not _skill_documents(
+        retrieve_workspace_documents(query="thread", workspace_dir=workspace)
+    )
 
 
 def test_a_decision_only_applies_to_a_pending_skill():
@@ -115,7 +133,9 @@ def test_retiring_a_skill_needs_no_approval(workspace):
     skill_tools.retire_skill("summarize-a-long-thread", reason="No longer accurate.")
 
     assert (workspace / "skills" / "retired" / "summarize-a-long-thread.md").exists()
-    assert retrieve_workspace_documents(query="thread", workspace_dir=workspace) == []
+    assert not _skill_documents(
+        retrieve_workspace_documents(query="thread", workspace_dir=workspace)
+    )
 
 
 def test_duplicate_and_invalid_drafts_are_rejected():

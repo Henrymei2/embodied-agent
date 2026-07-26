@@ -8,6 +8,7 @@ from loguru import logger
 
 from ..chat_group import ChatGroupManager
 from ..chat_history_manager import store_message
+from ..object_interaction import describe_click
 from ..service_context import ServiceContext
 from .group_conversation import process_group_conversation
 from .single_conversation import process_single_conversation
@@ -63,6 +64,28 @@ async def handle_conversation_trigger(
                 {
                     "type": "full-text",
                     "text": "AI wants to speak something...",
+                }
+            )
+        )
+    elif msg_type == "object-interaction":
+        # The client sends only which object was clicked; the prompt is built
+        # from the stored stage, so this channel cannot inject text.
+        interaction = describe_click(
+            context.character_config.conf_uid, str(data.get("object_id", ""))
+        )
+        if interaction is None:
+            logger.info("Ignoring a click on an object that is not in the room.")
+            return
+        user_input = interaction["prompt"]
+        # Remembered like any other exchange, but under the phrasing a person
+        # would recognise rather than the instructions sent to the model.
+        metadata = {"display_text": interaction["display_text"]}
+
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "user-input-transcription",
+                    "text": interaction["display_text"],
                 }
             )
         )

@@ -167,8 +167,8 @@ same update that moves the avatar, so a seated sprite is never shown mid-stride.
 Supported node types: `shape`, `text`, `image`, `avatar`, and `panel`. A node
 requires a unique safe ID, numeric `x`, `y`, `width`, and `height`, and may have
 label/text/style, a safe image source, a furniture texture, an avatar
-spritesheet, a declarative `uiWindow`, or a `pose` of `standing` or `sitting`.
-The stage is capped at 80 nodes.
+spritesheet, a declarative `uiWindow`, a `pose` of `standing` or `sitting`, or
+an `interaction` of `{ "on_click": true }`. The stage is capped at 80 nodes.
 
 Nodes are painted by `zIndex`: wall and back-band furniture at 2, front-band
 furniture at 3, and the avatar at 4, so the avatar is never hidden behind the
@@ -238,7 +238,31 @@ defaults. v6 did exactly that: with a dozen gated objects, the layout had to be
 rebuilt for each to keep its own 150-unit radius. v7 adds the tool rack in the
 last wall position that still satisfies it, so v6 rooms migrate in place.
 
-## 6. Connection synchronization
+## 6. Clicking an object
+
+A node with `interaction: { "on_click": true }` answers a click by telling the
+agent the user pointed at it:
+
+```json
+{ "type": "object-interaction", "object_id": "bookshelf" }
+```
+
+That is the entire message. The prompt is composed on the backend from the
+*stored* stage document, so this channel carries an object id and nothing else —
+a click cannot put words in the user's mouth, and `interaction` deliberately
+has no field for text. An id that is not in the room is ignored.
+
+The turn is queued at user priority, and the transcript shows the gesture
+(`*points at the bookshelf*`) rather than the instructions sent to the model.
+The agent is told whether it is standing near that object, so it can walk over
+before using it. Repeat clicks on the same object inside three seconds are
+dropped, on both sides, so a room full of clickable things cannot become a
+queue of replies.
+
+Hovering still opens the object's window; the click is free to mean the more
+interesting thing.
+
+## 7. Connection synchronization
 
 On connection, the backend sends:
 

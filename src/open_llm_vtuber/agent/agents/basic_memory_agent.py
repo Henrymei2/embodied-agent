@@ -283,9 +283,7 @@ class BasicMemoryAgent(AgentInterface):
         if tool_manager:
             tool_access_prompt = tool_manager.build_tool_access_prompt()
             if tool_access_prompt:
-                base_system_prompt = (
-                    f"{base_system_prompt}\n\n{tool_access_prompt}"
-                )
+                base_system_prompt = f"{base_system_prompt}\n\n{tool_access_prompt}"
 
         latest_user_message = ""
 
@@ -463,8 +461,19 @@ class BasicMemoryAgent(AgentInterface):
                 skip_memory = True
 
             if not skip_memory:
+                # Some turns are composed for the model rather than typed by the
+                # user — clicking an object sends instructions about the click.
+                # Memory should hold what happened ("*points at the bookshelf*"),
+                # not the instructions that described it.
+                remembered = (
+                    input_data.metadata.get("display_text")
+                    if input_data.metadata
+                    else None
+                )
                 self._add_message(
-                    text_prompt if text_prompt else "[User provided image(s)]", "user"
+                    remembered
+                    or (text_prompt if text_prompt else "[User provided image(s)]"),
+                    "user",
                 )
         else:
             logger.warning("No content generated for user message.")

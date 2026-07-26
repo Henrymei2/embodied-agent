@@ -42,6 +42,14 @@ export interface StageNode {
   uiWindow?: FurnitureWindowConfig;
   style?: StageNodeStyle;
   pose?: StagePose;
+  interaction?: StageInteraction;
+}
+
+// What a click on an object does. Deliberately a flag and nothing else:
+// the prompt behind a click is composed on the backend from the stored
+// label, so the stage cannot carry text into a conversation.
+export interface StageInteraction {
+  on_click?: boolean;
 }
 
 // Live data sources a furniture hover window may render. Most are backed by a
@@ -197,6 +205,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 230,
       height: 190,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "computer",
       texture: {
         src: "./stage-assets/computer.png",
@@ -221,6 +230,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 110,
       height: 130,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "calendar",
       texture: {
         src: "./stage-assets/calendar.png",
@@ -250,6 +260,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 210,
       height: 150,
       zIndex: 3,
+      interaction: { on_click: true },
       text: "bed",
       texture: {
         src: "./stage-assets/bed.png",
@@ -274,6 +285,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 125,
       height: 110,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "archive shelf",
       texture: {
         src: "./stage-assets/archive-shelf.png",
@@ -298,6 +310,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 96,
       height: 88,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "mailbox",
       texture: {
         src: "./stage-assets/mailbox-empty.png",
@@ -334,6 +347,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 105,
       height: 125,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "todo list",
       texture: {
         src: "./stage-assets/todo-list.png",
@@ -363,6 +377,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 65,
       height: 90,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "hourglass",
       texture: {
         src: "./stage-assets/hourglass.png",
@@ -392,6 +407,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 185,
       height: 155,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "window",
       texture: {
         src: "./stage-assets/window.png",
@@ -420,6 +436,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 120,
       height: 150,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "bookshelf",
       texture: {
         src: "./stage-assets/bookshelf.png",
@@ -449,6 +466,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 120,
       height: 125,
       zIndex: 3,
+      interaction: { on_click: true },
       text: "reading chair",
       texture: {
         src: "./stage-assets/reading-chair.png",
@@ -478,6 +496,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 150,
       height: 120,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "writing desk",
       texture: {
         src: "./stage-assets/writing-desk.png",
@@ -507,6 +526,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 190,
       height: 105,
       zIndex: 3,
+      interaction: { on_click: true },
       text: "sofa",
       texture: {
         src: "./stage-assets/sofa.png",
@@ -535,6 +555,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 120,
       height: 110,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "design board",
       texture: {
         src: "./stage-assets/design-board.png",
@@ -565,6 +586,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 120,
       height: 100,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "tool rack",
       texture: {
         src: "./stage-assets/tool-rack.png",
@@ -594,6 +616,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 70,
       height: 92,
       zIndex: 4,
+      interaction: { on_click: true },
       text: "avatar",
       spritesheet: {
         src: "./stage-assets/avatar.png",
@@ -1018,6 +1041,19 @@ export const validateStageDocument = (candidate: unknown): {
       validateNodeStyle(node.style, String(id || index), errors);
       if (node.pose !== undefined && node.pose !== null && !AVATAR_POSES.includes(node.pose as StagePose)) {
         errors.push(`Node ${id || index} pose is not supported.`);
+      }
+      if (node.interaction !== undefined) {
+        if (!isRecord(node.interaction)) {
+          errors.push(`Node ${id || index} interaction must be an object.`);
+        } else {
+          Object.entries(node.interaction).forEach(([key, value]) => {
+            if (key !== "on_click") {
+              errors.push(`Node ${id || index} interaction.${key} is not allowed.`);
+            } else if (typeof value !== "boolean") {
+              errors.push(`Node ${id || index} interaction.on_click must be true or false.`);
+            }
+          });
+        }
       }
     });
   }

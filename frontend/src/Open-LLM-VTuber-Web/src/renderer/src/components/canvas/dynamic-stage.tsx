@@ -14,6 +14,8 @@ import { useChatHistory } from "@/context/chat-history-context";
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
 const MOVE_DURATION_MS = 900;
 const HOVER_DELAY_MS = 250;
+// Matches CLICK_COOLDOWN_SECONDS in src/open_llm_vtuber/object_interaction.py.
+const OBJECT_CLICK_COOLDOWN_MS = 3000;
 const CLOSE_DELAY_MS = 140;
 
 interface GoogleStatus {
@@ -842,6 +844,22 @@ function FurnitureWindow({
   );
 }
 
+/** Tell the backend the user pointed at this object, at most once per window. */
+function useObjectInteraction(node: StageNode) {
+  const { sendMessage } = useWebSocket();
+  const lastSent = useRef(0);
+
+  return useCallback(() => {
+    if (!node.interaction?.on_click) return;
+    // The backend enforces its own cooldown; this one keeps an impatient
+    // double-tap from crossing the wire twice in the first place.
+    const now = Date.now();
+    if (now - lastSent.current < OBJECT_CLICK_COOLDOWN_MS) return;
+    lastSent.current = now;
+    sendMessage({ type: "object-interaction", object_id: node.id });
+  }, [node.id, node.interaction?.on_click, sendMessage]);
+}
+
 function useFurnitureWindow(node: StageNode) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const openTimer = useRef<number | null>(null);
@@ -1169,14 +1187,31 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
   useEffect(() => {
     setTextureError(false);
   }, [displayNode.texture?.src]);
-  const interactionProps = node.uiWindow ? {
+  const pointAtObject = useObjectInteraction(node);
+  const clickable = Boolean(node.interaction?.on_click);
+  const handleClick = useCallback(() => {
+    // Hovering already opens the window, so a click is free to mean the more
+    // interesting thing: telling the agent you pointed at this.
+    if (clickable) pointAtObject();
+    else furniture.toggle();
+  }, [clickable, furniture, pointAtObject]);
+  const interactionProps = node.uiWindow || clickable ? {
     ref: furniture.anchorRef,
     tabIndex: 0,
     onMouseEnter: () => furniture.enter(false),
     onMouseLeave: furniture.leave,
     onFocus: () => furniture.enter(true),
     onBlur: furniture.leave,
-    onClick: furniture.toggle,
+    onClick: handleClick,
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleClick();
+      }
+    },
+    "aria-label": clickable
+      ? `${node.label || node.id} — point at this`
+      : node.label || node.id,
     cursor: "pointer",
   } : {};
   const popup = (

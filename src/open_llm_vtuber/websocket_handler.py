@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Callable, TypedDict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import json
+import time
 from enum import Enum
 import numpy as np
 from loguru import logger
@@ -22,6 +23,7 @@ from .chat_history_manager import (
     get_history_list,
 )
 from .config_manager.utils import scan_bg_directory
+from .object_interaction import CLICK_COOLDOWN_SECONDS
 from .conversations.conversation_handler import (
     handle_conversation_trigger,
     handle_group_interrupt,
@@ -39,7 +41,12 @@ class MessageType(Enum):
         "create-new-history",
         "delete-history",
     ]
-    CONVERSATION = ["mic-audio-end", "text-input", "ai-speak-signal"]
+    CONVERSATION = [
+        "mic-audio-end",
+        "text-input",
+        "ai-speak-signal",
+        "object-interaction",
+    ]
     CONTROL = ["interrupt-signal", "audio-play-start"]
     DATA = ["mic-audio-data"]
 
@@ -70,6 +77,8 @@ class WebSocketHandler:
         self.received_data_buffers: Dict[str, np.ndarray] = {}
         self.autonomy_tasks: Dict[str, asyncio.Task] = {}
         self.scheduler_tasks: Dict[str, asyncio.Task] = {}
+        # (client, object) -> when it was last clicked, for the cooldown.
+        self._object_click_times: Dict[tuple[str, str], float] = {}
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -89,6 +98,7 @@ class WebSocketHandler:
             "mic-audio-end": self._handle_conversation_trigger,
             "raw-audio-data": self._handle_raw_audio_data,
             "text-input": self._handle_conversation_trigger,
+            "object-interaction": self._handle_object_interaction,
             "ai-speak-signal": self._handle_conversation_trigger,
             "fetch-backgrounds": self._handle_fetch_backgrounds,
             "audio-play-start": self._handle_audio_play_start,
@@ -312,7 +322,7 @@ class WebSocketHandler:
             logger.warning("Message received without type")
             return
 
-        if msg_type in {"text-input", "mic-audio-end"}:
+        if msg_type in {"text-input", "mic-audio-end", "object-interaction"}:
             from .autonomy.observation import mark_user_activity
 
             mark_user_activity(client_uid)
@@ -658,6 +668,27 @@ class WebSocketHandler:
             current_conversation_tasks=self.current_conversation_tasks,
             broadcast_to_group=self.broadcast_to_group,
         )
+
+    async def _handle_object_interaction(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Handle the user clicking an object in the room.
+
+        Rate-limited per object: a room is a thing people poke at, and every
+        click costs an LLM turn. Repeated taps on the same object inside the
+        cooldown are dropped rather than queued, so an impatient user does not
+        end up with five replies about the bookshelf.
+        """
+        object_id = str(data.get("object_id", ""))
+        now = time.monotonic()
+        key = (client_uid, object_id)
+        last_click = self._object_click_times.get(key, 0.0)
+        if now - last_click < CLICK_COOLDOWN_SECONDS:
+            logger.debug(f"Ignoring a repeat click on {object_id!r}.")
+            return
+        self._object_click_times[key] = now
+
+        await self._handle_conversation_trigger(websocket, client_uid, data)
 
     async def _handle_fetch_backgrounds(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

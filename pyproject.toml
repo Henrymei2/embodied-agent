@@ -45,6 +45,7 @@ dependencies = [
     "letta-client>=0.1.100",
     "duckduckgo-mcp-server>=0.1.1",
     "faster-whisper>=1.2.1",
+    "sentence-transformers>=5.6.1",
 ]
 
 [project.optional-dependencies]

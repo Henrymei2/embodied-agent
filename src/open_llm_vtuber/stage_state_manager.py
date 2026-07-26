@@ -100,6 +100,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 230,
                 "height": 190,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "computer",
                 "texture": {
                     "src": "./stage-assets/computer.png",
@@ -124,6 +125,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 110,
                 "height": 130,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "calendar",
                 "texture": {
                     "src": "./stage-assets/calendar.png",
@@ -154,6 +156,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "height": 150,
                 # Front band: drawn over the furniture standing behind it.
                 "zIndex": 3,
+                "interaction": {"on_click": True},
                 "text": "bed",
                 "texture": {
                     "src": "./stage-assets/bed.png",
@@ -178,6 +181,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 125,
                 "height": 110,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "archive shelf",
                 "texture": {
                     "src": "./stage-assets/archive-shelf.png",
@@ -202,6 +206,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 96,
                 "height": 88,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "mailbox",
                 "texture": {
                     "src": "./stage-assets/mailbox-empty.png",
@@ -238,6 +243,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 105,
                 "height": 125,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "todo list",
                 "texture": {
                     "src": "./stage-assets/todo-list.png",
@@ -267,6 +273,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 65,
                 "height": 90,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "hourglass",
                 "texture": {
                     "src": "./stage-assets/hourglass.png",
@@ -296,6 +303,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 185,
                 "height": 155,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "window",
                 "texture": {
                     "src": "./stage-assets/window.png",
@@ -327,6 +335,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 120,
                 "height": 150,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "bookshelf",
                 "texture": {
                     "src": "./stage-assets/bookshelf.png",
@@ -356,6 +365,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 120,
                 "height": 125,
                 "zIndex": 3,
+                "interaction": {"on_click": True},
                 "text": "reading chair",
                 "texture": {
                     "src": "./stage-assets/reading-chair.png",
@@ -385,6 +395,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 150,
                 "height": 120,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "writing desk",
                 "texture": {
                     "src": "./stage-assets/writing-desk.png",
@@ -414,6 +425,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 190,
                 "height": 105,
                 "zIndex": 3,
+                "interaction": {"on_click": True},
                 "text": "sofa",
                 "texture": {
                     "src": "./stage-assets/sofa.png",
@@ -445,6 +457,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 120,
                 "height": 110,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "design board",
                 "texture": {
                     "src": "./stage-assets/design-board.png",
@@ -475,6 +488,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 120,
                 "height": 100,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "tool rack",
                 "texture": {
                     "src": "./stage-assets/tool-rack.png",
@@ -507,6 +521,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "height": 92,
                 # Above the front band, so the avatar is never hidden by furniture.
                 "zIndex": 4,
+                "interaction": {"on_click": True},
                 "text": "avatar",
                 "spritesheet": {
                     "src": "./stage-assets/avatar.png",
@@ -717,6 +732,25 @@ def _validate_state_textures(
         _validate_texture(texture, f"{node_id} stateTextures.{key}", errors)
 
 
+def _validate_interaction(interaction: Any, node_id: str, errors: list[str]) -> None:
+    """Allow only `on_click`, and only as a flag.
+
+    The prompt for a click is composed on the backend from the stored label, so
+    the stage document deliberately cannot carry any text for it: a room object
+    must not be able to put words into a conversation.
+    """
+    if interaction is None:
+        return
+    if not isinstance(interaction, dict):
+        errors.append(f"Node {node_id} interaction must be an object.")
+        return
+    for key, value in interaction.items():
+        if key != "on_click":
+            errors.append(f"Node {node_id} interaction.{key} is not allowed.")
+        elif not isinstance(value, bool):
+            errors.append(f"Node {node_id} interaction.on_click must be true or false.")
+
+
 def _validate_ui_window(ui_window: Any, node_id: str, errors: list[str]) -> None:
     if ui_window is None:
         return
@@ -905,6 +939,9 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             _validate_ui_window(node.get("uiWindow"), str(node_id or index), errors)
             _validate_spritesheet(
                 node.get("spritesheet"), str(node_id or index), errors
+            )
+            _validate_interaction(
+                node.get("interaction"), str(node_id or index), errors
             )
             if node.get("pose") not in (None, *AVATAR_POSES):
                 errors.append(f"Node {node_id or index} pose is not supported.")

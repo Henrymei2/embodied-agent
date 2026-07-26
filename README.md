@@ -58,6 +58,15 @@ scheduling, and consent-aware autonomous behavior.
   the user can do.
 - **Persistent context:** contextual, daily, and long-term memory plus workspace
   knowledge retrieval and embodied-action recording.
+- **Recall that survives paraphrase:** retrieval blends keyword overlap with a
+  local embedding model, so "did I ever mention my sister?" finds the note
+  about a sibling. Passages are indexed one memory at a time, weak matches are
+  refused, and with no model installed it degrades to the previous keyword
+  behavior. See [Memory recall](doc/MEMORY_RECALL.md).
+- **A room you can point at:** clicking any object tells the agent you pointed
+  at it, and it answers about that object — the room reads as shared rather
+  than as scenery. The click carries only an object id; the prompt is composed
+  from the stored stage.
 - **Agent runtime:** priority-queued user, scheduled, and autonomous work with
   workspace-sandboxed file and shell tools.
 - **Autonomous behavior:** a scored planner (usefulness, novelty,
@@ -125,6 +134,7 @@ npm run build:web
 - [Frontend action protocol](frontend/frontend_api_doc.md)
 - [Presence Contract](doc/PRESENCE_CONTRACT.md)
 - [Skills and the approval gate](doc/SKILLS.md)
+- [Memory recall](doc/MEMORY_RECALL.md)
 - [Demo mode: voice fallback and offline fixtures](doc/DEMO_MODE.md)
 - [Screen context](doc/SCREEN_CONTEXT.md)
 - [Google Calendar tools and OAuth setup](doc/CALENDAR_TOOLS.md)

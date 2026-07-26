@@ -26,6 +26,7 @@ from .routes import (
 from .service_context import ServiceContext
 from .config_manager.utils import Config
 from .google_integration import GoogleIntegrationService
+from .workspace import embeddings
 
 
 # Create a custom StaticFiles class that adds CORS headers
@@ -163,6 +164,10 @@ class WebSocketServer:
         """Asynchronously load the service context from config.
         Calling this function is needed if default_context_cache was not provided to the constructor."""
         await self.default_context_cache.load_from_config(self.config)
+        # Load the recall embedding model in the background: it takes tens of
+        # seconds the first time, and no conversation turn should wait for it.
+        # Until it is ready, workspace recall falls back to keyword matching.
+        embeddings.warm_up()
 
     @staticmethod
     def clean_cache():

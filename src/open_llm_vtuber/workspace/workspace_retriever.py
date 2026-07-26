@@ -3,9 +3,43 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 from ..skill_state import EXCLUDED_SKILL_SUBDIRS
+from .embedding_cache import EmbeddingCache, chunk_key
+from .embeddings import cosine_similarity, embed, get_provider
 from .workspace_manager import ensure_workspace, resolve_workspace_path
+
+# One memory's worth of context. Measured against all-MiniLM-L6-v2: a chunk
+# holding three unrelated diary entries scored 0.21-0.24 against a query about
+# one of them, where the entry on its own scored 0.34-0.40. Packing unrelated
+# paragraphs together is what blurs a match, so the budget is small enough that
+# a typical entry stays whole and alone.
+MAX_CHUNK_CHARS = 400
+# Below this a paragraph is a fragment (a date heading, a stray line) rather
+# than something to recall, so it rides along with the entry that follows.
+# Kept tight: a short diary line like "We fixed the dishwasher." is a whole
+# memory, and merging it into the next one costs it its own match.
+MIN_CHUNK_CHARS = 40
+MAX_CHUNKS_PER_FILE = 40
+MAX_INDEXED_CHARS = 40_000
+# A leading YAML metadata block, as skill files carry.
+_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---\n?(.*)$", re.DOTALL)
+
+# How the two signals mix once both are available.
+_KEYWORD_WEIGHT = 0.4
+_SEMANTIC_WEIGHT = 0.6
+# Keyword score at which the keyword component reaches half of its range.
+_KEYWORD_HALF_POINT = 8.0
+# Similarity a passage must reach to be recalled on meaning alone. Every text
+# resembles every other text a little, so without a floor the prompt fills with
+# whatever was merely nearby — which reads as a companion that misremembers.
+# From the same measurements: genuinely related pairs scored 0.22-0.40 and
+# unrelated ones stayed under 0.15.
+_MIN_SEMANTIC_SIMILARITY = 0.2
+# A bare heading ("# Daily Memory - 2026-07-25") can drift over that floor
+# without holding a memory at all, so meaning-only matches need some substance.
+_MIN_SEMANTIC_CHARS = 40
 
 
 TEXT_FILE_SUFFIXES = {
@@ -201,6 +235,96 @@ def iter_candidate_files(
     return candidates
 
 
+def strip_frontmatter(content: str) -> str:
+    """Drop a leading `---` metadata block.
+
+    Skill files open with YAML holding their name, purpose and timestamps. Those
+    words match a query as readily as the procedure does, so without this the
+    passage handed to the model is the file's header rather than its steps. The
+    metadata that matters is repeated in the body anyway.
+    """
+    match = _FRONTMATTER_RE.match(content)
+    return match.group(1) if match else content
+
+
+def split_into_chunks(
+    content: str,
+    max_chars: int = MAX_CHUNK_CHARS,
+) -> list[str]:
+    """Split a document into one chunk per remembered thing.
+
+    Whole-file matching answers "which file is about this", but what the prompt
+    needs is the passage that actually says it — one day in a month of diary
+    entries, not the month.
+
+    Paragraphs are therefore kept apart rather than packed together: three
+    unrelated entries sharing a chunk measured 0.21-0.24 against a query about
+    one of them, where that entry alone measured 0.34-0.40. Only fragments too
+    short to mean anything on their own — a bare date heading, a one-word line —
+    are merged forward, so they arrive as context on the entry they introduce.
+    """
+    paragraphs = [
+        block.strip() for block in re.split(r"\n\s*\n", content) if block.strip()
+    ]
+    chunks: list[str] = []
+    current = ""
+
+    for paragraph in paragraphs:
+        if len(paragraph) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            # An oversized paragraph is split on line boundaries as a last resort.
+            for line in paragraph.splitlines():
+                if len(current) + len(line) + 1 > max_chars and current:
+                    chunks.append(current)
+                    current = ""
+                current = f"{current}\n{line}".strip() if current else line
+            continue
+
+        merges_forward = (
+            current
+            and len(current) < MIN_CHUNK_CHARS
+            and len(current) + len(paragraph) + 2 <= max_chars
+        )
+        if merges_forward:
+            current = f"{current}\n\n{paragraph}"
+            continue
+        if current:
+            chunks.append(current)
+        current = paragraph
+
+    if current:
+        chunks.append(current)
+    return chunks[:MAX_CHUNKS_PER_FILE]
+
+
+def _embed_chunks(
+    chunks: Sequence[str],
+    cache: EmbeddingCache,
+    provider_name: str,
+) -> list[list[float]] | None:
+    """Embed chunks, reusing cached vectors and embedding only what is new."""
+    vectors: list[list[float] | None] = []
+    missing: list[tuple[int, str]] = []
+
+    for index, chunk in enumerate(chunks):
+        cached = cache.get(chunk_key(provider_name, chunk))
+        vectors.append(cached)
+        if cached is None:
+            missing.append((index, chunk))
+
+    if missing:
+        fresh = embed([chunk for _index, chunk in missing])
+        if fresh is None:
+            return None
+        for (index, chunk), vector in zip(missing, fresh):
+            vectors[index] = vector
+            cache.put(chunk_key(provider_name, chunk), vector)
+
+    return [vector for vector in vectors if vector is not None]
+
+
 def retrieve_workspace_documents(
     query: str,
     workspace_dir: str | Path | None = None,
@@ -208,38 +332,102 @@ def retrieve_workspace_documents(
     max_documents: int = 6,
     max_chars_per_document: int = 2_000,
 ) -> list[RetrievedWorkspaceDocument]:
-    """
-    Retrieve relevant workspace documents for a user query.
+    """Retrieve the workspace passages most relevant to a query.
 
-    This is the first RAG implementation:
-    - scans workspace context directories
-    - keyword-scores files
-    - returns the best matching snippets
+    Scoring is hybrid. Keyword overlap is precise about names, dates and IDs
+    that an embedding blurs; embeddings find the memory that means the same
+    thing in different words. Each contributes a normalized share, so recall
+    stays sensible when only one of them is available — and when no embedding
+    provider loads at all, this is exactly the keyword behavior it replaced.
     """
     workspace = ensure_workspace(workspace_dir)
     query_tokens = tokenize(query)
+    provider = get_provider() if query.strip() else None
+    query_vector = None
+    cache: EmbeddingCache | None = None
+
+    if provider is not None:
+        embedded_query = embed([query])
+        if embedded_query:
+            query_vector = embedded_query[0]
+            cache = EmbeddingCache(workspace.root)
 
     retrieved: list[RetrievedWorkspaceDocument] = []
 
     for path in iter_candidate_files(workspace.root, include_dirs):
-        content = read_text_file_safely(path, max_chars=max_chars_per_document)
+        content = read_text_file_safely(path, max_chars=MAX_INDEXED_CHARS)
         if not content.strip():
             continue
 
         relative_path = str(path.relative_to(workspace.root))
-        score, reason = score_document(query_tokens, relative_path, content)
+        body = strip_frontmatter(content)
+        if relative_path.replace("\\", "/").startswith("skills/"):
+            # A skill is one instruction, not a collection of memories: handing
+            # the model its title without its steps would be worse than not
+            # recalling it at all.
+            chunks = [body.strip()]
+        else:
+            chunks = split_into_chunks(body) or [body.strip()]
 
-        if score <= 0:
+        chunk_vectors: list[list[float]] | None = None
+        if query_vector is not None and cache is not None:
+            chunk_vectors = _embed_chunks(chunks, cache, provider.name)
+
+        best: tuple[float, str, str] | None = None
+        for index, chunk in enumerate(chunks):
+            keyword_score, reason = score_document(query_tokens, relative_path, chunk)
+            similarity = 0.0
+            if chunk_vectors is not None and index < len(chunk_vectors):
+                similarity = cosine_similarity(query_vector, chunk_vectors[index])
+                if keyword_score <= 0 and (
+                    similarity < _MIN_SEMANTIC_SIMILARITY
+                    or len(chunk.strip()) < _MIN_SEMANTIC_CHARS
+                ):
+                    # Nothing in common but a faint family resemblance.
+                    similarity = 0.0
+
+            combined = _combine(keyword_score, similarity)
+            if combined <= 0:
+                continue
+            if similarity > 0:
+                reason = (
+                    f"{reason}; semantic match {similarity:.2f}"
+                    if reason and reason != "no query overlap"
+                    else f"semantic match {similarity:.2f}"
+                )
+            if best is None or combined > best[0]:
+                best = (combined, chunk, reason)
+
+        if best is None:
             continue
 
+        combined, chunk, reason = best
         retrieved.append(
             RetrievedWorkspaceDocument(
                 relative_path=relative_path,
-                content=content.strip(),
-                score=score,
+                content=chunk[:max_chars_per_document].strip(),
+                score=round(combined, 4),
                 reason=reason,
             )
         )
 
+    if cache is not None:
+        cache.save()
+
     retrieved.sort(key=lambda item: item.score, reverse=True)
     return retrieved[:max_documents]
+
+
+def _combine(keyword_score: int, similarity: float) -> float:
+    """Blend the two signals onto one scale.
+
+    Keyword scores are unbounded counts, so they are squashed before mixing;
+    otherwise a page that repeats a common word would outrank the passage that
+    actually answers the question.
+    """
+    keyword_component = keyword_score / (keyword_score + _KEYWORD_HALF_POINT)
+    if similarity <= 0:
+        # No embeddings: keep the original ordering by leaving the keyword
+        # score's shape intact rather than flattening it into the blend.
+        return keyword_score
+    return round(_KEYWORD_WEIGHT * keyword_component + _SEMANTIC_WEIGHT * similarity, 6)

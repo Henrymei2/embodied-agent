@@ -28,7 +28,9 @@ reversible?
 - Contextual memory records the active topic and embodied tool actions.
 - Daily memories live under `memory/YYYY-MM-DD.md`.
 - Important summaries compact into `MEMORY.md`; workspace knowledge is
-  retrieved into prompt context.
+  retrieved into prompt context by keyword overlap blended with local
+  embeddings, one passage at a time, degrading to keywords when no embedding
+  provider is installed.
 - Soft evolution tracks bounded mood, familiarity, interaction counts, and
   milestones without rewriting executable code.
 - Skills drafted at the tool rack extend the agent's own instructions once the
@@ -43,6 +45,8 @@ reversible?
   assets, movement, object queries, and reachability.
 - Safe room modification through `place_object`, `move_object`, and
   `remove_object`, all bound to the design board.
+- Clicking an object starts a conversation turn about it, composed on the
+  backend from the stored stage rather than from client text.
 - Stage state synchronizes on connection and persists after live
   frontend actions.
 

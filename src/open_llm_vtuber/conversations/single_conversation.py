@@ -74,7 +74,10 @@ async def process_single_conversation(
                 conf_uid=context.character_config.conf_uid,
                 history_uid=context.history_uid,
                 role="human",
-                content=input_text,
+                # A composed turn (clicking an object) carries the phrasing the
+                # transcript should show; the instructions behind it are for the
+                # model only.
+                content=(metadata or {}).get("display_text") or input_text,
                 name=context.character_config.human_name,
             )
 
