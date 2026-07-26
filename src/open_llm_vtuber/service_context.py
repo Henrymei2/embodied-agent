@@ -143,6 +143,7 @@ class ServiceContext:
                     mcp_prompt_string,
                     openai_tools,
                     claude_tools,
+                    raw_tools_dict,
                 ) = await self.tool_adapter.get_tools(enabled_servers)
                 # Store the generated prompt string
                 self.mcp_prompt = mcp_prompt_string
@@ -153,11 +154,7 @@ class ServiceContext:
                     f"Dynamically formatted tools - OpenAI: {len(openai_tools)}, Claude: {len(claude_tools)}."
                 )
 
-                # 3. Initialize ToolManager with the fetched formatted tools
-
-                _, raw_tools_dict = await self.tool_adapter.get_server_and_tool_info(
-                    enabled_servers
-                )
+                # 3. Initialize ToolManager with the tools already fetched above.
                 self.tool_manager = ToolManager(
                     formatted_tools_openai=openai_tools,
                     formatted_tools_claude=claude_tools,

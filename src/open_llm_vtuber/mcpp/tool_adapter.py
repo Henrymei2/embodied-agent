@@ -224,8 +224,17 @@ class ToolAdapter:
 
     async def get_tools(
         self, enabled_servers: List[str]
-    ) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Run the dynamic fetching and formatting process."""
+    ) -> Tuple[
+        str, List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, FormattedTool]
+    ]:
+        """Run the dynamic fetching and formatting process.
+
+        The raw tool dictionary is returned alongside the formatted schemas
+        because building it means starting every MCP server and listing its
+        tools — a second or two each, and around half a minute in total. The
+        caller needs both, and asking twice doubled the wait before a newly
+        connected client saw anything.
+        """
         logger.info(
             f"MC: Running dynamic tool construction for servers: {enabled_servers}"
         )
@@ -235,4 +244,4 @@ class ToolAdapter:
         mcp_prompt_string = self.construct_mcp_prompt_string(servers_info)
         openai_tools, claude_tools = self.format_tools_for_api(formatted_tools_dict)
         logger.info("MC: Dynamic tool construction complete.")
-        return mcp_prompt_string, openai_tools, claude_tools
+        return mcp_prompt_string, openai_tools, claude_tools, formatted_tools_dict
