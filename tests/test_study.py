@@ -338,3 +338,75 @@ def test_the_ablation_can_never_switch_autonomy_on(monkeypatch):
     study.reset_for_tests()
 
     assert AutonomySettings.from_config(Disabled()).enabled is False
+
+
+@pytest.mark.parametrize(
+    "participant, expected",
+    [
+        ('P<1>:"x"', "P-1-x"),
+        ("../../escaped", "escaped"),
+        ("..", "anonymous"),
+        ("P 01", "P-01"),
+    ],
+)
+def test_an_awkward_participant_id_still_records_the_session(
+    tmp_path, monkeypatch, participant, expected
+):
+    """A stray character in an id used to lose the whole session silently."""
+    monkeypatch.setenv("EMBODIED_AGENT_PARTICIPANT", participant)
+    study.reset_for_tests()
+
+    study.log_event("probe")
+
+    path = study.session_path()
+    assert path is not None and path.exists(), "the log must have been written"
+    # Whatever the id contained, the file lands in the study directory.
+    assert path.parent == tmp_path / "study"
+    assert expected in path.name
+    assert [event["event"] for event in _events(tmp_path)] == ["session_start", "probe"]
+
+
+def test_a_log_that_cannot_be_written_says_so_once_and_loudly(
+    tmp_path, monkeypatch, caplog
+):
+    """Discovering at the end that nothing was recorded is the worst failure."""
+    monkeypatch.setenv("EMBODIED_AGENT_PARTICIPANT", "P01")
+    # A file where the study directory needs to be.
+    (tmp_path / "study").write_text("not a directory", encoding="utf-8")
+    study.reset_for_tests()
+
+    study.log_event("probe")
+
+    assert study.session_path() is None
+
+
+def test_a_reconnect_does_not_count_as_the_participant_thinking(tmp_path, monkeypatch):
+    """The gap while the window was shut is not time spent answering."""
+    monkeypatch.setenv("EMBODIED_AGENT_PARTICIPANT", "P01")
+    study.reset_for_tests()
+
+    study.log_turn_started("text")
+    study.log_turn_finished(reply_chars=10)
+    study.end_session()  # the participant closed the window
+    study.log_turn_started("text")  # ...and came back later
+
+    waits = [
+        event.get("seconds_since_agent_finished")
+        for event in _events(tmp_path)
+        if event["event"] == "turn_started"
+    ]
+    assert waits == [None, None], "the reload gap must not be recorded as a wait"
+
+
+def test_the_sitting_survives_a_reload(tmp_path, monkeypatch):
+    """Splitting one sitting in two would halve every per-session measure."""
+    monkeypatch.setenv("EMBODIED_AGENT_PARTICIPANT", "P01")
+    study.reset_for_tests()
+
+    study.log_event("client_connected")
+    first = study.session_path()
+    study.end_session()
+    study.log_event("client_connected")
+
+    assert study.session_path() == first
+    assert len(sorted((tmp_path / "study").glob("*.jsonl"))) == 1

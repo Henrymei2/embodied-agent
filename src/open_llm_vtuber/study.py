@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -50,8 +51,23 @@ _FALSY = {"0", "false", "no", "off"}
 MAX_VALUE_CHARS = 120
 
 
+_UNSAFE_IN_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def safe_participant(raw: str | None) -> str:
+    """Reduce a participant id to something that is certainly a filename.
+
+    The id comes from a launcher script or a hurried operator, and it lands in
+    a path. A `P<1>` used to mean the file could not be opened at all, which
+    lost the entire session and said so only in a log line; a `../..` used to
+    put it somewhere nobody would look for it.
+    """
+    cleaned = _UNSAFE_IN_NAME.sub("-", (raw or "").strip()).strip("-.")
+    return cleaned[:48] or "anonymous"
 
 
 @dataclass(frozen=True)
@@ -121,6 +137,7 @@ class _Session:
     started_at: datetime
     path: Path
     conditions: Conditions
+    warned: bool = False
 
 
 def conditions() -> Conditions:
@@ -171,7 +188,7 @@ def _open_session() -> "_Session | None":
 
     started = _utc_now()
     session_id = uuid4().hex
-    participant = (os.environ.get(_PARTICIPANT_ENV) or "anonymous").strip()[:64]
+    participant = safe_participant(os.environ.get(_PARTICIPANT_ENV))
     active = conditions()
 
     try:
@@ -179,8 +196,15 @@ def _open_session() -> "_Session | None":
         directory.mkdir(parents=True, exist_ok=True)
         stamp = started.strftime("%Y%m%dT%H%M%SZ")
         path = directory / f"{stamp}-{participant}-{session_id[:8]}.jsonl"
+        # Prove the file can actually be written now, while somebody is still
+        # watching the console. Finding out at the end of a session that every
+        # event was dropped is the one failure this module must not have.
+        with path.open("a", encoding="utf-8"):
+            pass
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Study: cannot open a session log; continuing without: {exc}")
+        logger.error(
+            f"Study: cannot write a session log, so this run records nothing: {exc}"
+        )
         return None
 
     _session = _Session(
@@ -226,8 +250,12 @@ def _write(session: "_Session", event: str, data: dict[str, Any]) -> None:
         with session.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:  # noqa: BLE001
-        # Instrumentation must never take the session down with it.
-        logger.warning(f"Study: dropped a '{event}' event: {exc}")
+        # Instrumentation must never take the session down with it. Keep
+        # trying, in case the cause was transient, but say so only once: a
+        # warning per event would bury the rest of the log.
+        if not session.warned:
+            session.warned = True
+            logger.warning(f"Study: dropped a '{event}' event and possibly more: {exc}")
 
 
 def log_event(event: str, **data: Any) -> None:
@@ -284,11 +312,17 @@ def end_session() -> None:
     carries the duration since the sitting began, so the last one written is
     the true length however many times the window was reopened.
     """
+    global _turn_started, _agent_finished
     with _lock:
         if _session is None:
             return
         seconds = (_utc_now() - _session.started_at).total_seconds()
         _write(_session, "session_end", {"duration_seconds": round(seconds, 1)})
+        # The sitting continues, but the turn clocks do not: whatever the
+        # participant was doing while the window was closed is not them taking
+        # their time to answer, and one such gap can move a median.
+        _turn_started = None
+        _agent_finished = None
 
 
 def session_path() -> Path | None:

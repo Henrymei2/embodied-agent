@@ -73,23 +73,27 @@ class Session:
     autonomy_dismissed: int = 0
     autonomy_snoozed: int = 0
 
+    # Each of these is None when nothing was measured, never 0. A recall hit
+    # rate of 0% means memory was asked and found nothing; no recall at all is
+    # a different fact, and a study table that renders both as 0 invites the
+    # wrong conclusion about the pillar being tested.
     @property
-    def click_share(self) -> float:
+    def click_share(self) -> float | None:
         """Share of user-started turns that began by touching the room."""
         started = self.clicks + self.voice_turns + self.text_turns
-        return 100.0 * self.clicks / started if started else 0.0
+        return 100.0 * self.clicks / started if started else None
 
     @property
-    def median_reply_wait(self) -> float:
-        return statistics.median(self.reply_waits) if self.reply_waits else 0.0
+    def median_reply_wait(self) -> float | None:
+        return statistics.median(self.reply_waits) if self.reply_waits else None
 
     @property
-    def recall_hit_rate(self) -> float:
-        return 100.0 * self.recall_hits / self.recalls if self.recalls else 0.0
+    def recall_hit_rate(self) -> float | None:
+        return 100.0 * self.recall_hits / self.recalls if self.recalls else None
 
     @property
-    def mean_top_score(self) -> float:
-        return statistics.fmean(self.top_scores) if self.top_scores else 0.0
+    def mean_top_score(self) -> float | None:
+        return statistics.fmean(self.top_scores) if self.top_scores else None
 
     def as_row(self) -> dict[str, Any]:
         row: dict[str, Any] = {}
@@ -169,10 +173,15 @@ def summarize(path: Path) -> Session | None:
     return summary if seen else None
 
 
+def _cell(value: Any) -> str:
+    """Render one value, distinguishing "nothing measured" from zero."""
+    return "-" if value is None else str(value)
+
+
 def print_table(sessions: list[Session]) -> None:
     headings = [heading for _key, heading in COLUMNS]
     rows = [
-        [str(session.as_row()[key]) for key, _heading in COLUMNS]
+        [_cell(session.as_row()[key]) for key, _heading in COLUMNS]
         for session in sessions
     ]
     widths = [
@@ -202,20 +211,30 @@ def print_by_condition(sessions: list[Session]) -> None:
     for condition in sorted(conditions):
         group = conditions[condition]
 
-        def mean(attribute: str) -> float:
-            return statistics.fmean(float(getattr(item, attribute)) for item in group)
+        def mean(attribute: str) -> float | None:
+            """Average over the sessions that measured this, or None if none did."""
+            values = [
+                float(getattr(item, attribute))
+                for item in group
+                if getattr(item, attribute) is not None
+            ]
+            return statistics.fmean(values) if values else None
+
+        def show(attribute: str, spec: str = "8.1f", width: int = 8) -> str:
+            value = mean(attribute)
+            return "-".rjust(width) if value is None else format(value, spec)
 
         print(
             f"\n{condition}  (n={len(group)})\n"
-            f"  minutes per session   {mean('minutes'):8.1f}\n"
-            f"  turns per session     {mean('turns'):8.1f}\n"
-            f"  object clicks         {mean('clicks'):8.1f}"
-            f"   ({mean('click_share'):.0f}% of user turns)\n"
-            f"  median reply wait     {mean('median_reply_wait'):8.1f}s\n"
-            f"  recall hit rate       {mean('recall_hit_rate'):8.0f}%\n"
-            f"  initiatives           {mean('autonomy_actions'):8.1f}"
-            f"   ({mean('autonomy_helpful'):.1f} helpful,"
-            f" {mean('autonomy_dismissed'):.1f} dismissed)"
+            f"  minutes per session   {show('minutes')}\n"
+            f"  turns per session     {show('turns')}\n"
+            f"  object clicks         {show('clicks')}"
+            f"   ({show('click_share', '.0f', 1)}% of user turns)\n"
+            f"  median reply wait     {show('median_reply_wait')}s\n"
+            f"  recall hit rate       {show('recall_hit_rate', '8.0f')}%\n"
+            f"  initiatives           {show('autonomy_actions')}"
+            f"   ({show('autonomy_helpful', '.1f', 1)} helpful,"
+            f" {show('autonomy_dismissed', '.1f', 1)} dismissed)"
         )
 
     if len(conditions) < 2:

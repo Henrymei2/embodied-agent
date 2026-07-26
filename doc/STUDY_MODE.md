@@ -36,7 +36,7 @@ $env:EMBODIED_AGENT_CONDITION = "memory=off,autonomy=off"; uv run run_server.py
 
 | Variable | Meaning |
 | --- | --- |
-| `EMBODIED_AGENT_PARTICIPANT` | Participant id. Recorded, and names the log file. |
+| `EMBODIED_AGENT_PARTICIPANT` | Participant id. Recorded, and names the log file. Anything awkward for a filename is reduced to `-`, so `P<1>` logs as `P-1` rather than failing to open. |
 | `EMBODIED_AGENT_CONDITION` | `pillar=on\|off`, comma separated. Omitted pillars stay on. |
 | `EMBODIED_AGENT_STUDY_LOG` | Force logging `1`/`0`, overriding the default. |
 
@@ -138,8 +138,14 @@ One row per session, then the same rows averaged by condition:
 ```
 session   participant  condition  minutes  turns  obj clicks  click %  recall hit %  initiatives  helpful
 96a7e439  P01          full       18.4     23     9           47.37    83.33         4            3
-33fc039e  P01          no-memory  11.2     14     3           23.08    0.0           4            1
+33fc039e  P01          no-memory  11.2     14     3           23.08    -             4            1
 ```
+
+A `-` means nothing was measured, and is never printed as `0`. The two say
+opposite things: a recall hit rate of `0` means memory was asked and came back
+empty, while `-` above means memory was switched off and the question was never
+put to it. In the CSV the same cell is empty, so it loads as `NaN` rather than
+as a zero that would drag an average down.
 
 | Measure | Speaks to |
 | --- | --- |
