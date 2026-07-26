@@ -210,6 +210,21 @@ class WebSocketHandler:
             json.dumps({"type": "full-text", "text": "Connection established"})
         )
 
+        from .study import conditions, log_event
+
+        log_event("client_connected")
+        # The frontend needs this before it renders: an embodiment ablation
+        # that still drew the room would not be an ablation.
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "study-condition",
+                    "condition": conditions().label,
+                    **conditions().as_dict(),
+                }
+            )
+        )
+
         await websocket.send_text(
             json.dumps(
                 {
@@ -373,10 +388,18 @@ class WebSocketHandler:
             send_group_update=self.send_group_update,
         )
 
+        from .study import end_session, log_event
+
+        log_event("client_disconnected")
+
         # Clean up other client data
         self.client_connections.pop(client_uid, None)
         self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
+        if not self.client_connections:
+            # A study session is one sitting with one participant, so it closes
+            # when the last window does rather than on every reconnect.
+            end_session()
         # Click times are keyed per (client, object), so a reconnecting client
         # would otherwise leave one entry per object it ever touched.
         for key in [key for key in self._object_click_times if key[0] == client_uid]:
@@ -692,6 +715,12 @@ class WebSocketHandler:
             return
         self._object_click_times[key] = now
 
+        from .study import log_event
+
+        # Reaching into the room is the embodiment pillar's clearest behavioral
+        # signal: a diorama gets looked at, a place gets touched.
+        log_event("object_click", object_id=object_id)
+
         await self._handle_conversation_trigger(websocket, client_uid, data)
 
     async def _handle_fetch_backgrounds(
@@ -926,6 +955,15 @@ class WebSocketHandler:
                     # Habit Engine: if a learned habit drove this action, the
                     # verdict is evidence for its promotion/retirement too.
                     self._forward_feedback_to_habit(presence, receipt_id, feedback)
+                    from .study import log_event
+
+                    # Whether initiative was welcome is the autonomy pillar's
+                    # outcome measure, and the user says so directly.
+                    log_event(
+                        "autonomy_feedback",
+                        receipt_id=receipt_id,
+                        feedback=feedback,
+                    )
 
         await websocket.send_text(
             json.dumps(

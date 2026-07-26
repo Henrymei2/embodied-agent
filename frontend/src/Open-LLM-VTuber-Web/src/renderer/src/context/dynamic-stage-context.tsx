@@ -32,6 +32,10 @@ export interface StageNode {
   y: number;
   width: number;
   height: number;
+  // How close the agent must stand to use this object, in world units.
+  // Omitted means "derive it from the footprint"; see world_model.py, which
+  // is the authority. Never above the room's reach_ceiling.
+  reach?: number;
   zIndex?: number;
   text?: string;
   src?: string;
@@ -43,6 +47,16 @@ export interface StageNode {
   style?: StageNodeStyle;
   pose?: StagePose;
   interaction?: StageInteraction;
+}
+
+// The room as something other than a picture: what a unit means, how far the
+// agent can reach, how fast it walks. Keep in sync with world_model.py, which
+// owns these defaults; a renderer that is not this one reads this block
+// instead of the canvas.
+export interface StageWorld {
+  units_per_meter?: number;
+  reach_ceiling?: number;
+  move_speed?: number;
 }
 
 // What a click on an object does. Deliberately a flag and nothing else:
@@ -107,7 +121,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 7;
+  version: 8;
   canvas: {
     width: number;
     height: number;
@@ -115,6 +129,7 @@ export interface DynamicStageDocument {
     texture?: StageTexture;
     theme?: Record<string, string>;
   };
+  world?: StageWorld;
   nodes: StageNode[];
   metadata: {
     conf_uid?: string;
@@ -127,6 +142,7 @@ export interface DynamicStageDocument {
 
 export interface StagePatch {
   canvas?: Partial<DynamicStageDocument["canvas"]>;
+  world?: StageWorld;
   nodes?: StageNode[];
   remove_node_ids?: string[];
   metadata?: Partial<DynamicStageDocument["metadata"]>;
@@ -150,6 +166,8 @@ export interface FrontendActionResult {
   objects?: StageNode[];
   agent_position?: StagePosition;
   reachable_objects?: string[];
+  arrived?: boolean;
+  duration_ms?: number;
   capabilities?: {
     actions: string[];
     node_types: StageNodeType[];
@@ -158,7 +176,8 @@ export interface FrontendActionResult {
     spritesheet: string;
     furniture_window: string;
     pose: string;
-    move_duration_ms: number;
+    world: string;
+    move: string;
     patch_shape: string;
   };
 }
@@ -166,6 +185,8 @@ export interface FrontendActionResult {
 interface DynamicStageContextValue {
   stage: DynamicStageDocument;
   validationErrors: string[];
+  /** How long the avatar's current leg takes, so the sprite and the CSS agree. */
+  motionDurationMs: number;
   setStageFromServer: (stage: unknown) => FrontendActionResult;
   handleFrontendAction: (
     request: FrontendActionRequest,
@@ -174,9 +195,17 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 7;
+const STAGE_VERSION = 8;
+// Keep in sync with world_model.py, which owns these.
+const UNITS_PER_METER = 100;
+const REACH_CEILING = 150;
+const MOVE_SPEED = 400;
+const PERSONAL_REACH = 60;
+// A hop should feel immediate and a room crossing should not stall the demo,
+// so a distance-derived walk is clamped at both ends.
+const MIN_MOVE_DURATION_MS = 250;
+const MAX_MOVE_DURATION_MS = 1800;
 const DEFAULT_MOVE_DURATION_MS = 900;
-const REACHABLE_DISTANCE = 150;
 // Keep in sync with STAGE_THEME_REVISION in stage_state_manager.py: the backend
 // rebuilds any stored room whose revision differs from its own.
 const STAGE_THEME_REVISION = "cozy-bedroom-v2";
@@ -194,6 +223,11 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       fit: "cover",
       alt: "cozy pixel-art bedroom",
     },
+  },
+  world: {
+    units_per_meter: UNITS_PER_METER,
+    reach_ceiling: REACH_CEILING,
+    move_speed: MOVE_SPEED,
   },
   nodes: [
     {
@@ -841,6 +875,56 @@ const validateSpritesheet = (spritesheet: unknown, nodeId: string, errors: strin
   }
 };
 
+// Returns the reach ceiling in force, so node reach can be checked against it.
+const validateWorld = (world: unknown, errors: string[]): number => {
+  if (world === undefined) return REACH_CEILING;
+  if (!isRecord(world)) {
+    errors.push("Stage world must be an object.");
+    return REACH_CEILING;
+  }
+
+  const limits: Record<string, [number, number]> = {
+    units_per_meter: [1, 10000],
+    reach_ceiling: [1, 4096],
+    move_speed: [1, 10000],
+  };
+  Object.keys(world).forEach((key) => {
+    if (!(key in limits)) errors.push(`Stage world.${key} is not allowed.`);
+  });
+  Object.entries(limits).forEach(([key, [low, high]]) => {
+    if (world[key] === undefined) return;
+    if (!isFiniteNumber(world[key]) || (world[key] as number) < low || (world[key] as number) > high) {
+      errors.push(`Stage world.${key} must be ${low}-${high}.`);
+    }
+  });
+
+  const ceiling = world.reach_ceiling;
+  return isFiniteNumber(ceiling) && ceiling >= 1 && ceiling <= 4096 ? ceiling : REACH_CEILING;
+};
+
+// A node may shrink its own reach but never claim more than the ceiling:
+// otherwise a placed object could be usable from across the room and hand the
+// agent every other object's tools from where it stands.
+const validateReach = (reach: unknown, nodeId: string, ceiling: number, errors: string[]) => {
+  if (reach === undefined) return;
+  if (!isFiniteNumber(reach) || reach <= 0) {
+    errors.push(`Node ${nodeId} reach must be a positive number.`);
+    return;
+  }
+  if (reach > ceiling) {
+    errors.push(`Node ${nodeId} reach cannot exceed ${ceiling}.`);
+  }
+};
+
+/** How close the agent must stand to an object that does not say. */
+export const derivedReach = (node: StageNode, ceiling = REACH_CEILING): number => {
+  if (isFiniteNumber(node.reach) && node.reach > 0) {
+    return Math.min(node.reach, ceiling);
+  }
+  const halfSpan = Math.max(Math.abs(node.width), Math.abs(node.height)) / 2;
+  return Math.min(ceiling, Math.round((PERSONAL_REACH + halfSpan) * 10) / 10);
+};
+
 const migrateStageDocument = (candidate: unknown): unknown => {
   if (!isRecord(candidate)) {
     return candidate;
@@ -848,7 +932,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (![1, 2, 3, 4, 5, 6].includes(candidate.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7].includes(candidate.version as number)) {
     return candidate;
   }
 
@@ -904,6 +988,12 @@ const migrateStageDocument = (candidate: unknown): unknown => {
     canvas: {
       ...defaults.canvas,
       ...(isRecord(candidate.canvas) ? candidate.canvas : {}),
+    },
+    // Merged rather than replaced, so a document written before the world
+    // block existed gains every setting instead of only the ones it names.
+    world: {
+      ...defaults.world,
+      ...(isRecord(candidate.world) ? candidate.world : {}),
     },
     nodes,
     metadata: {
@@ -992,6 +1082,8 @@ export const validateStageDocument = (candidate: unknown): {
     validateTexture(candidate.canvas.texture, "canvas", errors);
   }
 
+  const reachCeiling = validateWorld(candidate.world, errors);
+
   if (!Array.isArray(candidate.nodes)) {
     errors.push("Stage nodes must be an array.");
   } else if (candidate.nodes.length > 80) {
@@ -1039,6 +1131,7 @@ export const validateStageDocument = (candidate: unknown): {
       validateSpritesheet(node.spritesheet, String(id || index), errors);
       validateUiWindow(node.uiWindow, String(id || index), errors);
       validateNodeStyle(node.style, String(id || index), errors);
+      validateReach(node.reach, String(id || index), reachCeiling, errors);
       if (node.pose !== undefined && node.pose !== null && !AVATAR_POSES.includes(node.pose as StagePose)) {
         errors.push(`Node ${id || index} pose is not supported.`);
       }
@@ -1096,6 +1189,10 @@ const applyStagePatch = (
       ...current.canvas,
       ...(patch.canvas || {}),
     },
+    world: {
+      ...current.world,
+      ...(patch.world || {}),
+    },
     nodes: mergedNodes,
     metadata: {
       ...current.metadata,
@@ -1112,9 +1209,28 @@ const distanceBetween = (a: StagePosition, b: StagePosition) => {
   return Math.sqrt(deltaX * deltaX + deltaY * deltaY);
 };
 
+/** How long one leg of a walk should take, from how far it is. */
+const legDurationMs = (distance: number, stage: DynamicStageDocument) => {
+  const speed = stage.world?.move_speed || MOVE_SPEED;
+  return Math.round(
+    Math.min(MAX_MOVE_DURATION_MS, Math.max(MIN_MOVE_DURATION_MS, (distance / speed) * 1000)),
+  );
+};
+
+/** Read a waypoint list off an action's arguments, ignoring anything malformed. */
+const readWaypoints = (value: unknown): StagePosition[] => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => (
+    isRecord(entry) && isFiniteNumber(entry.x) && isFiniteNumber(entry.y)
+      ? [{ x: entry.x, y: entry.y }]
+      : []
+  ));
+};
+
 export function DynamicStageProvider({ children }: { children: React.ReactNode }) {
   const [stage, setStage] = useState<DynamicStageDocument>(() => createDefaultStage());
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [motionDurationMs, setMotionDurationMs] = useState(DEFAULT_MOVE_DURATION_MS);
   const stageRef = useRef(stage);
 
   const setStageSynced = useCallback((nextStage: DynamicStageDocument) => {
@@ -1215,8 +1331,9 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
             spritesheet: "avatar nodes may include spritesheet: { src, frameWidth, frameHeight, fps, animations, defaultAnimations }.",
             pose: "avatar nodes may include pose: standing | sitting. move_to clears it.",
             furniture_window: "nodes may include uiWindow: { title, body?, provider? }; providers are allowlisted.",
-            move_duration_ms: DEFAULT_MOVE_DURATION_MS,
-            patch_shape: "args.patch may include canvas, nodes, remove_node_ids, metadata. Node assets use safe URL/data-image/relative src strings.",
+            world: "world: { units_per_meter, reach_ceiling, move_speed }. A node may set reach, never above reach_ceiling; otherwise it is derived from the footprint.",
+            move: "move_to accepts args.waypoints: [{x, y}]; each leg is timed from world.move_speed and the result reports arrived and duration_ms.",
+            patch_shape: "args.patch may include canvas, world, nodes, remove_node_ids, metadata. Node assets use safe URL/data-image/relative src strings.",
           },
         };
 
@@ -1253,22 +1370,48 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
           };
         }
 
-        const nextStage = applyStagePatch(stageRef.current, {
-          nodes: stageRef.current.nodes.map((node) => (
-            node.id === "avatar"
-              // Walking stands the avatar up, so a seated sprite is never
-              // animated mid-stride.
-              ? { ...node, x: destination.x, y: destination.y, pose: undefined }
-            : node
-          )),
-        });
-        const result = commitStage(nextStage, action, requestId);
-        if (result.ok) {
+        // The caller may send a path; the destination is the last leg either
+        // way, so an old-style request still works and a future navmesh can
+        // route around the furniture without changing anything here.
+        const requested = readWaypoints(args.waypoints);
+        const path = requested.length > 0 ? requested : [destination];
+        const finalStop = path[path.length - 1];
+
+        let result: FrontendActionResult | null = null;
+        let elapsed = 0;
+        for (const waypoint of path) {
+          const avatar = stageRef.current.nodes.find((node) => node.id === "avatar");
+          const duration = legDurationMs(
+            avatar ? distanceBetween(avatar, waypoint) : 0,
+            stageRef.current,
+          );
+          const nextStage = applyStagePatch(stageRef.current, {
+            nodes: stageRef.current.nodes.map((node) => (
+              node.id === "avatar"
+                // Walking stands the avatar up, so a seated sprite is never
+                // animated mid-stride.
+                ? { ...node, x: waypoint.x, y: waypoint.y, pose: undefined }
+                : node
+            )),
+          });
+          // The sprite and the CSS tween read this, so both last exactly as
+          // long as the leg the agent is actually walking.
+          setMotionDurationMs(duration);
+          result = commitStage(nextStage, action, requestId);
+          if (!result.ok) return result;
+          elapsed += duration;
           await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, DEFAULT_MOVE_DURATION_MS);
+            window.setTimeout(resolve, duration);
           });
         }
-        return result;
+
+        const avatar = stageRef.current.nodes.find((node) => node.id === "avatar");
+        return {
+          ...(result as FrontendActionResult),
+          arrived: Boolean(avatar && distanceBetween(avatar, finalStop) <= 1),
+          duration_ms: elapsed,
+          position: { x: finalStop.x, y: finalStop.y },
+        };
       }
 
       case "list_objects": {
@@ -1290,6 +1433,7 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
 
       case "get_scene_status": {
         const avatar = stageRef.current.nodes.find((node) => node.id === "avatar");
+        const ceiling = stageRef.current.world?.reach_ceiling ?? REACH_CEILING;
         return {
           request_id: requestId,
           action,
@@ -1297,8 +1441,10 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
           agent_position: avatar ? { x: avatar.x, y: avatar.y } : undefined,
           reachable_objects: stageRef.current.nodes
             .filter((node) => node.id !== "avatar")
+            // Each object sets its own reach from its footprint, so a bed is
+            // usable from further away than an hourglass.
             .filter((node) => (
-              !avatar || distanceBetween(avatar, node) <= REACHABLE_DISTANCE
+              Boolean(avatar) && distanceBetween(avatar as StageNode, node) <= derivedReach(node, ceiling)
             ))
             .map((node) => node.label || node.id),
         };
@@ -1317,9 +1463,10 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
   const contextValue = useMemo<DynamicStageContextValue>(() => ({
     stage,
     validationErrors,
+    motionDurationMs,
     setStageFromServer,
     handleFrontendAction,
-  }), [handleFrontendAction, setStageFromServer, stage, validationErrors]);
+  }), [handleFrontendAction, motionDurationMs, setStageFromServer, stage, validationErrors]);
 
   return (
     <DynamicStageContext.Provider value={contextValue}>

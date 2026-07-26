@@ -4,9 +4,13 @@
 
 Every skill the agent has is bound to a piece of furniture, and the furniture
 has to answer one question: *why would the agent walk there?* A tool is only
-offered to the model when the avatar is within 150 stage units of its object,
-and the same check runs again immediately before the call executes, so a stale
-schema or an injected tool call cannot skip the walk.
+offered to the model when the avatar is within reach of its object, and the
+same check runs again immediately before the call executes, so a stale schema
+or an injected tool call cannot skip the walk.
+
+Reach is per object, derived from how big the thing is — 105 units for the
+hourglass, 150 for the bed — and can never exceed the 150-unit ceiling. See
+[the world model](WORLD_MODEL.md).
 
 Every skill lives at an object, alongside the `computer`, `calendar`, and `bed`.
 
@@ -30,11 +34,12 @@ these servers inherits the object requirement automatically. Two servers serve
 more than one object — `library` and `scene` — so their tools are named
 individually in `PROXIMITY_REQUIREMENTS`, which takes precedence.
 
-The default room keeps every gated object more than 150 units from every other
-one, and starts the avatar clear of all of them; both are enforced by
-`tests/test_stage_state_manager.py`. Standing at one object therefore never
-unlocks another object's tools, and the first use of any object-bound tool is
-always preceded by a walk.
+The default room keeps every gated object more than 150 units — the reach
+ceiling, so more than any object's reach can ever be — from every other one,
+and starts the avatar clear of all of them; both are enforced by
+`tests/test_stage_state_manager.py` and `tests/test_world_model.py`. Standing at
+one object therefore never unlocks another object's tools, and the first use of
+any object-bound tool is always preceded by a walk.
 
 ## Todo list
 
@@ -140,4 +145,6 @@ needs `npx` on the PATH; a server whose runtime is missing is skipped at load.
 Stage v6 re-laid the room into wall, back, and front bands to keep the radius
 rule satisfiable with this much furniture, so its theme revision was bumped and
 stored rooms are rebuilt from the defaults on load. v7 adds the tool rack in
-the last wall position that still satisfies the rule, and migrates in place.
+the last wall position that still satisfies the rule, and migrates in place. v8
+moves distance and reach into the world model without moving any furniture, so
+it migrates in place as well.

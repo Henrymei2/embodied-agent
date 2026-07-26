@@ -11,6 +11,11 @@ Research question: can an AI companion be continuously useful and spatially
 legible while making every autonomous interruption finite, explainable, and
 reversible?
 
+The system can now be run with any one of those pillars switched off, and
+records what the user did in each case, so the question can be answered with
+evidence rather than a demonstration. See [STUDY_MODE.md](STUDY_MODE.md) —
+including what that evidence cannot settle on its own.
+
 ## 2. Implemented system
 
 ### Agent module
@@ -38,11 +43,18 @@ reversible?
 
 ### Embodiment
 
-- Persistent 960x540 stage v7 laid out in wall, back, and front bands: window,
+- Persistent 960x540 stage v8 laid out in wall, back, and front bands: window,
   todo list, calendar, hourglass, design board, mailbox, tool rack, computer,
   archive shelf, bookshelf, writing desk, reading chair, bed, and sofa.
+- A renderer-agnostic world model holds position, reach, paths, and arrival, so
+  tools and the spatial gate no longer read presentation data. Distances are
+  world units at a declared scale, and each object derives its own reach from
+  its footprint.
 - Sprite walk/idle/seated animation, textures, validated external/relative
   assets, movement, object queries, and reachability.
+- Walking is a waypoint path timed by distance and confirmed against the saved
+  room, so an interrupted walk is reported rather than assumed to have
+  finished.
 - Safe room modification through `place_object`, `move_object`, and
   `remove_object`, all bound to the design board.
 - Clicking an object starts a conversation turn about it, composed on the
@@ -55,9 +67,10 @@ reversible?
 - Every skill is bound to an object: computer, calendar, todo list, hourglass,
   window, archive shelf, mailbox, bookshelf, reading chair, writing desk, sofa,
   design board, and tool rack.
-- The default room keeps each gated object more than 150 units from every other
-  one and starts the avatar clear of all of them, so one object never unlocks
-  another's tools and the first use of any is preceded by a walk.
+- The default room keeps each gated object more than 150 units — the reach
+  ceiling, which no object may exceed — from every other one and starts the
+  avatar clear of all of them, so one object never unlocks another's tools and
+  the first use of any is preceded by a walk.
 - Gating occurs at schema exposure and again at execution time.
 - Missing/invalid scene identity fails closed for object-gated tools.
 - Objects whose removal would strand their tools cannot be removed.
@@ -81,6 +94,17 @@ reversible?
 - The frontend exposes the Presence Contract indicator and receipt controls in
   window mode.
 
+### Measurement
+
+- Each pillar — embodiment, memory, autonomy — can be ablated for a session
+  from the environment, and each ablation removes the pillar without removing
+  the agent's capabilities or its character.
+- An append-only session log records turn sources, reply latency, object
+  clicks, recall hits, blocked tool calls, and initiative verdicts, in
+  categories rather than content: no message text is ever written.
+- `scripts/study_report.py` reduces the logs to one row per session and a
+  per-condition comparison. See [STUDY_MODE.md](STUDY_MODE.md).
+
 ## 3. Component flow
 
 ```text
@@ -103,7 +127,7 @@ Persistent stage <---- validated result ---+
 
 | Original deliverable | Status | Evidence |
 | --- | --- | --- |
-| 2D room and navigation | Complete | stage v7, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
+| 2D room and navigation | Complete | stage v8, world model, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
 | Memory and personality | Complete | contextual/daily/long-term memory, hybrid keyword/embedding retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
 | Autonomous behavior MVP | Complete | scored planner, directions, cadence, Presence Contract |
@@ -113,7 +137,8 @@ Persistent stage <---- validated result ---+
 | Browser | Complete | Playwright MCP registered and gated on the computer; visible session and result plumbing |
 | Books, plans, idling, room editing | Complete | bookshelf, reading chair, writing desk, sofa, and design board, each with its own tools and window |
 | Self-evolution | Complete | agent-authored skills that change its own prompt, gated on user approval and enforced by a read-only skills mount; unattended executable self-rewrite is excluded |
-| 3D embodiment | Deferred | 2D is the supported production path |
+| Evidence for the research question | Instrumented | per-pillar ablations, an append-only content-free session log, and a per-condition report; self-report from participants is still required, see [STUDY_MODE.md](STUDY_MODE.md) |
+| 3D embodiment | Deferred, unblocked | the renderer coupling that made it a rewrite is gone; see [WORLD_MODEL.md](WORLD_MODEL.md) |
 
 ## 5. External integration boundaries
 
@@ -130,8 +155,14 @@ repository rather than unfinished local code:
   actually be read; other books can be shelved but not opened.
 - Raw screen/application awareness would materially expand privacy scope. The
   current protocol deliberately accepts only coarse presence signals.
-- 3D/Unity would be a separate renderer and asset pipeline, not a safe incremental
-  change to the validated 2D stage.
+- 3D/Unity remains a separate renderer and asset pipeline. What it is no longer
+  is a rewrite of everything above the renderer: spatial reasoning now lives in
+  a world model that a 3D scene can supply, walking is a waypoint contract
+  rather than a CSS tween, and furniture windows are anchored to a projected
+  room position rather than to a DOM box. What is left is renderer work —
+  assets, a loader for `World`, an elevation axis, pathfinding, and a camera
+  projection — none of which the research question needs, which is why it stays
+  deferred. [WORLD_MODEL.md](WORLD_MODEL.md) has the checklist.
 
 ## 6. Acceptance gates
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..study import conditions, log_event
 from .workspace_manager import ensure_workspace
 from .workspace_retriever import (
     RetrievedWorkspaceDocument,
@@ -83,25 +84,54 @@ def build_workspace_prompt_context(
     - relevant daily memories/files
     """
     workspace = ensure_workspace(workspace_dir)
+    # The memory ablation removes what makes the companion *persistent* —
+    # accumulated summaries, learned user facts, and recall of past days —
+    # while leaving AGENT.md and RULE.md in place, so the character and its
+    # rules are the same in every condition and only memory varies.
+    remembers = conditions().memory
 
     sections: list[str] = []
 
     if include_core_files:
-        agent_content = read_core_file(workspace.agent_file)
-        rule_content = read_core_file(workspace.rule_file)
-        memory_content = read_core_file(workspace.memory_file)
-        user_content = read_core_file(workspace.user_file)
+        sections.append(format_section("AGENT", read_core_file(workspace.agent_file)))
+        sections.append(format_section("RULES", read_core_file(workspace.rule_file)))
+        if remembers:
+            sections.append(
+                format_section("MEMORY", read_core_file(workspace.memory_file))
+            )
+            sections.append(
+                format_section("USER INFORMATION", read_core_file(workspace.user_file))
+            )
 
-        sections.append(format_section("AGENT", agent_content))
-        sections.append(format_section("RULES", rule_content))
-        sections.append(format_section("MEMORY", memory_content))
-        sections.append(format_section("USER INFORMATION", user_content))
-
-    retrieved_documents = retrieve_workspace_documents(
-        query=user_message,
-        workspace_dir=workspace.root,
-        max_documents=max_retrieved_documents,
+    retrieved_documents = (
+        retrieve_workspace_documents(
+            query=user_message,
+            workspace_dir=workspace.root,
+            max_documents=max_retrieved_documents,
+        )
+        if remembers
+        else []
     )
+
+    if user_message:
+        # Recall is the memory pillar's observable behavior: did asking about
+        # something surface anything, and how well did it match?
+        log_event(
+            "memory_recall",
+            enabled=remembers,
+            query_chars=len(user_message),
+            documents=len(retrieved_documents),
+            top_score=round(retrieved_documents[0].score, 3)
+            if retrieved_documents
+            else 0.0,
+            # Which shelf it came from — memory, knowledge, skills — never
+            # which file. Separators differ by platform, so normalize first.
+            top_source=retrieved_documents[0]
+            .relative_path.replace("\\", "/")
+            .split("/")[0]
+            if retrieved_documents
+            else None,
+        )
 
     grouped_documents = split_retrieved_documents(retrieved_documents)
 

@@ -55,5 +55,6 @@ Input timestamps require ISO 8601 offsets. Listed all-day events use date-valued
 error until Google is connected; the legacy workspace `events.json` is neither
 read nor modified.
 
-Calendar tools remain exposed only when the avatar is within 150 stage units of
-the calendar, and proximity is checked again immediately before execution.
+Calendar tools remain exposed only when the avatar is within reach of the
+calendar — 125 world units, derived from its size — and proximity is checked
+again immediately before execution. See [the world model](WORLD_MODEL.md).

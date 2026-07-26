@@ -1,6 +1,5 @@
 import copy
 import json
-import math
 import os
 import re
 from typing import Any
@@ -8,9 +7,15 @@ from typing import Any
 from loguru import logger
 
 from .utils.timezone import now_local
+from .world_model import (
+    REACH_CEILING as WORLD_REACH_CEILING,
+    World,
+    default_world_block,
+    world_from_stage,
+)
 
 
-STAGE_VERSION = 7
+STAGE_VERSION = 8
 STAGE_BASE_DIR = "stage_state"
 # Bumping this rebuilds every stored room from the defaults. v2 re-lays the room
 # into wall/back/front bands so each object keeps its own 150-unit radius: a
@@ -90,6 +95,10 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "alt": "cozy pixel-art bedroom",
             },
         },
+        # What the drawing above actually means, for anything that is not
+        # drawing it. See world_model.py; a node may override `reach`, which
+        # is otherwise derived from its footprint.
+        "world": default_world_block(),
         "nodes": [
             {
                 "id": "computer",
@@ -613,7 +622,7 @@ def _uses_default_sheet(node: dict[str, Any], default_node: dict[str, Any]) -> b
 
 
 def migrate_stage(stage: Any) -> Any:
-    """Return a v6 stage document, preserving existing layout and assets.
+    """Return a current stage document, preserving existing layout and assets.
 
     Every supported older version also gains the furniture introduced by newer
     default rooms: a tool stays hidden while the object it is bound to is absent
@@ -622,7 +631,7 @@ def migrate_stage(stage: Any) -> Any:
     """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2, 3, 4, 5, 6}:
+    if stage.get("version") not in {1, 2, 3, 4, 5, 6, 7}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
@@ -689,6 +698,12 @@ def migrate_stage(stage: Any) -> Any:
             **defaults["canvas"],
             **(stage.get("canvas") if isinstance(stage.get("canvas"), dict) else {}),
         },
+        # Merged rather than replaced, so a document written before the world
+        # block existed gains every setting instead of only the ones it names.
+        "world": {
+            **defaults["world"],
+            **(stage.get("world") if isinstance(stage.get("world"), dict) else {}),
+        },
         "nodes": nodes,
         "metadata": {
             **defaults["metadata"],
@@ -730,6 +745,58 @@ def _validate_state_textures(
             errors.append(f"Node {node_id} stateTextures.{key} is not supported.")
             continue
         _validate_texture(texture, f"{node_id} stateTextures.{key}", errors)
+
+
+def _validate_world(world: Any, errors: list[str]) -> float:
+    """Check the renderer-agnostic block and return the reach ceiling in force.
+
+    Absent is fine: the world model falls back to its own defaults, which are
+    the values the room has always been gated on.
+    """
+    if world is None:
+        return WORLD_REACH_CEILING
+    if not isinstance(world, dict):
+        errors.append("Stage world must be an object.")
+        return WORLD_REACH_CEILING
+
+    limits = {
+        "units_per_meter": (1.0, 10000.0),
+        "reach_ceiling": (1.0, 4096.0),
+        "move_speed": (1.0, 10000.0),
+    }
+    for key in world:
+        if key not in limits:
+            errors.append(f"Stage world.{key} is not allowed.")
+
+    for key, (low, high) in limits.items():
+        if key not in world:
+            continue
+        value = world[key]
+        if not _is_number(value) or value < low or value > high:
+            errors.append(f"Stage world.{key} must be {low:g}-{high:g}.")
+
+    ceiling = world.get("reach_ceiling")
+    if _is_number(ceiling) and 1.0 <= ceiling <= 4096.0:
+        return float(ceiling)
+    return WORLD_REACH_CEILING
+
+
+def _validate_reach(
+    reach: Any, node_id: str, ceiling: float, errors: list[str]
+) -> None:
+    """A node may shrink its own reach but never claim more than the ceiling.
+
+    This is the rule that keeps the room's spatial gate honest: without it a
+    placed object could declare a reach spanning the room and hand the agent
+    every other object's tools from where it stands.
+    """
+    if reach is None:
+        return
+    if not _is_number(reach) or reach <= 0:
+        errors.append(f"Node {node_id} reach must be a positive number.")
+        return
+    if reach > ceiling:
+        errors.append(f"Node {node_id} reach cannot exceed {ceiling:g}.")
 
 
 def _validate_interaction(interaction: Any, node_id: str, errors: list[str]) -> None:
@@ -894,6 +961,8 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             errors.append("Canvas background is invalid.")
         _validate_texture(canvas.get("texture"), "canvas", errors)
 
+    reach_ceiling = _validate_world(stage.get("world"), errors)
+
     nodes = stage.get("nodes")
     if not isinstance(nodes, list):
         errors.append("Stage nodes must be an array.")
@@ -942,6 +1011,9 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
             )
             _validate_interaction(
                 node.get("interaction"), str(node_id or index), errors
+            )
+            _validate_reach(
+                node.get("reach"), str(node_id or index), reach_ceiling, errors
             )
             if node.get("pose") not in (None, *AVATAR_POSES):
                 errors.append(f"Node {node_id or index} pose is not supported.")
@@ -998,33 +1070,32 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
     return get_default_stage(conf_uid)
 
 
+def load_world(conf_uid: str) -> World:
+    """Load the persisted room as the renderer-agnostic world."""
+    return world_from_stage(load_stage_state(conf_uid))
+
+
 def get_reachable_objects(
     conf_uid: str,
-    distance: float = 150.0,
+    distance: float | None = None,
 ) -> list[str]:
-    """Return object labels within ``distance`` of the persisted avatar."""
+    """Return the labels of objects the persisted avatar can currently use.
+
+    Each object decides its own reach from its footprint, so a bed is usable
+    from further away than an hourglass. ``distance`` overrides that for
+    callers asking a different question ("what is within 300 units?"); the
+    proximity gate itself always passes None.
+    """
     if not conf_uid:
         raise ValueError("conf_uid cannot be empty")
-    if isinstance(distance, bool) or not isinstance(distance, (int, float)):
-        raise ValueError("distance must be numeric")
-    if distance < 0:
-        raise ValueError("distance cannot be negative")
+    if distance is not None:
+        if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+            raise ValueError("distance must be numeric")
+        if distance < 0:
+            raise ValueError("distance cannot be negative")
+        distance = float(distance)
 
-    nodes = load_stage_state(conf_uid).get("nodes", [])
-    avatar = next(
-        (node for node in nodes if node.get("id") == "avatar"),
-        None,
-    )
-    if avatar is None:
-        return []
-
-    ax, ay = avatar["x"], avatar["y"]
-    return [
-        node.get("label") or node.get("id")
-        for node in nodes
-        if node.get("id") != "avatar"
-        and math.dist((ax, ay), (node["x"], node["y"])) <= float(distance)
-    ]
+    return load_world(conf_uid).reachable_labels(within=distance)
 
 
 def save_stage_state(

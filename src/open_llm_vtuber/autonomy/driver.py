@@ -167,6 +167,18 @@ async def _dispatch(
         logger.debug(f"autonomy: presence contract blocked dispatch: {exc}")
         return False
 
+    from ..study import log_event
+
+    log_event(
+        "autonomy_action",
+        receipt_id=receipt.receipt_id,
+        direction=decision.direction.value,
+        action=decision.action,
+        score=round(decision.score, 3),
+        cost=receipt.attention_cost,
+        budget_left=round(presence.budget_balance, 2),
+    )
+
     metadata = {
         "autonomous": True,
         "direction": decision.direction.value if decision.direction else None,

@@ -127,11 +127,17 @@ class AutonomySettings:
         Resilient by design: reads an optional ``autonomy_config`` attribute so
         the loop works even against configs that predate this feature.
         """
+        from ..study import conditions
+
+        # The ablation overrides configuration in one direction only: it can
+        # switch initiative off for a session, never on.
+        permitted = conditions().autonomy
+
         cfg = getattr(system_config, "autonomy_config", None)
         if cfg is None:
-            return cls()
+            return cls(enabled=permitted)
         return cls(
-            enabled=bool(getattr(cfg, "enabled", True)),
+            enabled=bool(getattr(cfg, "enabled", True)) and permitted,
             tick_seconds=int(getattr(cfg, "tick_seconds", 900)),
             interruption_frequency=str(
                 getattr(cfg, "interruption_frequency", "medium")

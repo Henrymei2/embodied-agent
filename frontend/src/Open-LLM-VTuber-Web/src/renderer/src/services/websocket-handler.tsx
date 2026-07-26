@@ -21,6 +21,7 @@ import { useInterrupt } from '@/hooks/utils/use-interrupt';
 import { useBrowser } from '@/context/browser-context';
 import { useDynamicStage } from '@/context/dynamic-stage-context';
 import { PresenceState, usePresence } from '@/context/presence-context';
+import { useStudyCondition } from '@/context/study-condition-context';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -45,6 +46,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { setBrowserViewData } = useBrowser();
   const { handleFrontendAction, setStageFromServer } = useDynamicStage();
   const { updateState: updatePresenceState, receiveReceipt } = usePresence();
+  const { setConditionFromServer } = useStudyCondition();
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -132,6 +134,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             });
           }
         }
+        break;
+      case 'study-condition':
+        setConditionFromServer(message);
         break;
       case 'presence-state':
         updatePresenceState(message as PresenceState);
@@ -311,7 +316,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, setConditionFromServer, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

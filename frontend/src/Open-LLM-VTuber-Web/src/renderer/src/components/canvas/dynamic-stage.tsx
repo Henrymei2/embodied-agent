@@ -1,9 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Box, Button, Image, Spinner, Text } from "@chakra-ui/react";
 import {
   StageDirection,
   StageNode,
+  StagePosition,
   StageSpriteAnimation,
   StageSpritesheet,
   useDynamicStage,
@@ -12,7 +21,6 @@ import { useWebSocket } from "@/context/websocket-context";
 import { useChatHistory } from "@/context/chat-history-context";
 
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
-const MOVE_DURATION_MS = 900;
 const HOVER_DELAY_MS = 250;
 // Matches CLICK_COOLDOWN_SECONDS in src/open_llm_vtuber/object_interaction.py.
 const OBJECT_CLICK_COOLDOWN_MS = 3000;
@@ -41,6 +49,20 @@ interface UnreadPage {
 }
 
 const statusCache = new Map<string, { expires: number; value: GoogleStatus }>();
+
+/** Where a point in the room lands on the screen.
+ *
+ * Furniture windows are positioned from this rather than from the object's
+ * own DOM box, which is the one thing a 3D renderer could not supply: swap
+ * this projection for a camera and the windows keep following their objects.
+ */
+interface StageViewport {
+  project: (point: StagePosition) => { left: number; top: number } | null;
+}
+
+const StageViewportContext = createContext<StageViewport>({ project: () => null });
+
+const useStageViewport = () => useContext(StageViewportContext);
 
 const GMAIL_MUTATION_TOOLS = new Set([
   "mark_email_read",
@@ -298,18 +320,17 @@ const formatDue = (due?: string | null): string | null => {
 
 function FurnitureWindow({
   node,
-  anchor,
   open,
   onEnter,
   onLeave,
 }: {
   node: StageNode;
-  anchor: HTMLElement | null;
   open: boolean;
   onEnter: () => void;
   onLeave: () => void;
 }) {
   const { baseUrl } = useWebSocket();
+  const { project } = useStageViewport();
   const [status, setStatus] = useState<GoogleStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [unreadMessages, setUnreadMessages] = useState<UnreadMessage[]>([]);
@@ -443,14 +464,18 @@ function FurnitureWindow({
     return () => window.removeEventListener("focus", refresh);
   }, [loadStatus, open, provider]);
 
-  if (!open || !anchor || !config) return null;
-  const rect = anchor.getBoundingClientRect();
+  if (!open || !config) return null;
+  // Anchored to the object's position in the room, projected to the screen —
+  // not to the element that happens to be drawing it.
+  const above = project({ x: node.x, y: node.y - node.height / 2 });
+  const below = project({ x: node.x, y: node.y + node.height / 2 });
+  if (!above || !below) return null;
   const width = 288;
-  const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left + rect.width / 2 - width / 2));
-  const showBelow = rect.top < 190;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, above.left - width / 2));
+  const showBelow = above.top < 190;
   const position = showBelow
-    ? { top: rect.bottom + 10 }
-    : { bottom: window.innerHeight - rect.top + 10 };
+    ? { top: below.top + 10 }
+    : { bottom: window.innerHeight - above.top + 10 };
 
   const authorize = () => {
     const url = new URL(
@@ -996,8 +1021,10 @@ function SpritesheetView({
   );
 }
 
-function useAvatarAnimation(node: StageNode) {
+function useAvatarAnimation(node: StageNode, moveDurationMs: number) {
   const previousPositionRef = useRef({ x: node.x, y: node.y });
+  const durationRef = useRef(moveDurationMs);
+  durationRef.current = moveDurationMs;
   const timeoutRef = useRef<number | null>(null);
   const [direction, setDirection] = useState<StageDirection>("down");
   const [isMoving, setIsMoving] = useState(false);
@@ -1022,10 +1049,12 @@ function useAvatarAnimation(node: StageNode) {
     if (timeoutRef.current !== null) {
       window.clearTimeout(timeoutRef.current);
     }
+    // The walk cycle lasts exactly as long as the leg being walked, so a short
+    // hop no longer plays a full-length stride.
     timeoutRef.current = window.setTimeout(() => {
       setIsMoving(false);
       timeoutRef.current = null;
-    }, MOVE_DURATION_MS);
+    }, durationRef.current);
 
     return undefined;
   }, [node.x, node.y]);
@@ -1071,9 +1100,9 @@ function FallbackAvatar({ node }: { node: StageNode }) {
   );
 }
 
-function AvatarNodeContent({ node }: { node: StageNode }) {
+function AvatarNodeContent({ node, moveDurationMs }: { node: StageNode; moveDurationMs: number }) {
   const style = node.style || {};
-  const animationName = useAvatarAnimation(node);
+  const animationName = useAvatarAnimation(node, moveDurationMs);
 
   return (
     <>
@@ -1171,10 +1200,11 @@ function StageBoxContent({
   );
 }
 
-function StageNodeView({ node, canvasWidth, canvasHeight }: {
+function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
   node: StageNode;
   canvasWidth: number;
   canvasHeight: number;
+  moveDurationMs: number;
 }) {
   const style = node.style || {};
   const furniture = useFurnitureWindow(node);
@@ -1217,7 +1247,6 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
   const popup = (
     <FurnitureWindow
       node={node}
-      anchor={furniture.anchorRef.current}
       open={furniture.open}
       onEnter={() => furniture.enter(true)}
       onLeave={furniture.leave}
@@ -1265,13 +1294,13 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
         aria-label={node.label || node.id}
         minWidth="46px"
         minHeight="68px"
-        transition="left 900ms ease-in-out, top 900ms ease-in-out"
+        transition={`left ${moveDurationMs}ms ease-in-out, top ${moveDurationMs}ms ease-in-out`}
         display="flex"
         flexDirection="column"
         alignItems="center"
         justifyContent="flex-end"
       >
-        <AvatarNodeContent node={node} />
+        <AvatarNodeContent node={node} moveDurationMs={moveDurationMs} />
         {popup}
       </Box>
     );
@@ -1306,10 +1335,28 @@ function StageNodeView({ node, canvasWidth, canvasHeight }: {
 }
 
 export default function DynamicStage(): JSX.Element {
-  const { stage } = useDynamicStage();
+  const { stage, motionDurationMs } = useDynamicStage();
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const { width: canvasWidth, height: canvasHeight } = stage.canvas;
+
+  // One mapping from the room to the screen, shared by the objects and by the
+  // windows that point at them, so the two can never disagree.
+  const viewport = useMemo<StageViewport>(() => ({
+    project: (point: StagePosition) => {
+      const surface = surfaceRef.current;
+      if (!surface || !canvasWidth || !canvasHeight) return null;
+      const rect = surface.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return null;
+      return {
+        left: rect.left + (point.x / canvasWidth) * rect.width,
+        top: rect.top + (point.y / canvasHeight) * rect.height,
+      };
+    },
+  }), [canvasHeight, canvasWidth]);
 
   return (
     <Box
+      ref={surfaceRef}
       width="100%"
       height="100%"
       position="relative"
@@ -1354,17 +1401,20 @@ export default function DynamicStage(): JSX.Element {
         )}
       </Box>
 
-      {stage.nodes
-        .slice()
-        .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
-        .map((node) => (
-          <StageNodeView
-            key={node.id}
-            node={node}
-            canvasWidth={stage.canvas.width}
-            canvasHeight={stage.canvas.height}
-          />
-        ))}
+      <StageViewportContext.Provider value={viewport}>
+        {stage.nodes
+          .slice()
+          .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
+          .map((node) => (
+            <StageNodeView
+              key={node.id}
+              node={node}
+              canvasWidth={canvasWidth}
+              canvasHeight={canvasHeight}
+              moveDurationMs={motionDurationMs}
+            />
+          ))}
+      </StageViewportContext.Provider>
     </Box>
   );
 }

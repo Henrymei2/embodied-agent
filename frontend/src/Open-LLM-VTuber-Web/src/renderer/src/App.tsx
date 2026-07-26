@@ -30,12 +30,19 @@ import DynamicStage from "./components/canvas/dynamic-stage";
 import { DynamicStageProvider } from "./context/dynamic-stage-context";
 import { PresenceProvider } from "./context/presence-context";
 import PresenceIndicator from "./components/canvas/presence-indicator";
+import {
+  StudyConditionProvider,
+  useStudyCondition,
+} from "./context/study-condition-context";
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(true);
   const [isFooterCollapsed, setIsFooterCollapsed] = useState(false);
   const { mode } = useMode();
   const isElectron = window.api !== undefined;
+  // In the embodiment ablation there is no room: the same companion, the same
+  // tools, without a place. Everything else on screen is unchanged.
+  const { condition } = useStudyCondition();
 
   useEffect(() => {
     const handleResize = () => {
@@ -90,13 +97,15 @@ function AppContent(): JSX.Element {
 
   return (
     <>
-      <Box
-        {...(mode === "window"
-          ? getResponsiveSceneWindowStyle(showSidebar)
-          : scenePetStyle)}
-      >
-        <DynamicStage />
-      </Box>
+      {condition.embodiment && (
+        <Box
+          {...(mode === "window"
+            ? getResponsiveSceneWindowStyle(showSidebar)
+            : scenePetStyle)}
+        >
+          <DynamicStage />
+        </Box>
+      )}
 
       {/* Conditional Rendering of Window UI */}
       {mode === "window" && (
@@ -180,10 +189,12 @@ function AppWithGlobalStyles(): JSX.Element {
                           <BrowserProvider>
                             <DynamicStageProvider>
                               <PresenceProvider>
-                                <WebSocketHandler>
-                                  <Toaster />
-                                  <AppContent />
-                                </WebSocketHandler>
+                                <StudyConditionProvider>
+                                  <WebSocketHandler>
+                                    <Toaster />
+                                    <AppContent />
+                                  </WebSocketHandler>
+                                </StudyConditionProvider>
                               </PresenceProvider>
                             </DynamicStageProvider>
                           </BrowserProvider>

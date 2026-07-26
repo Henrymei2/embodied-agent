@@ -47,11 +47,53 @@ validation fails, the frontend receives the last authoritative `stage-state`.
 | Action | Arguments | Result |
 | --- | --- | --- |
 | `get_object_position` | `name: string` | `position: {x, y}` |
-| `move_to` | `target: string` or numeric `x`, `y` | validated stage `state` after the 900 ms movement |
+| `move_to` | `target: string` or numeric `x`, `y`, plus optional `waypoints` | validated stage `state`, `arrived`, `duration_ms`, `position` |
 | `list_objects` | optional numeric `distance` | `objects: StageNode[]` |
 | `get_scene_status` | none | `agent_position`, `reachable_objects` |
 
-Reachability means a center-to-center distance of at most 150 stage units.
+Reachability is per object: each one is usable from within its own `reach`,
+which it may declare and otherwise derives from its footprint, so a bed can be
+used from further away than an hourglass. No object's reach may exceed
+`world.reach_ceiling`. See [the world model](../doc/WORLD_MODEL.md).
+
+### `move_to`
+
+`args.waypoints` is a list of `{x, y}` the avatar walks in order; without it
+the destination is the only leg. Each leg lasts its own distance divided by
+`world.move_speed`, clamped to 250–1800 ms, so a short hop no longer takes as
+long as crossing the room.
+
+```json
+{
+  "type": "frontend_action_request",
+  "request_id": "walk-1",
+  "action": "move_to",
+  "args": {
+    "x": 600,
+    "y": 370,
+    "waypoints": [{ "x": 600, "y": 370 }]
+  }
+}
+```
+
+```json
+{
+  "type": "frontend_action_result",
+  "request_id": "walk-1",
+  "result": {
+    "ok": true,
+    "arrived": true,
+    "duration_ms": 620,
+    "position": { "x": 600, "y": 370 },
+    "state": {}
+  }
+}
+```
+
+The backend does not take `ok` for an answer: after the stage is persisted it
+re-reads the room and confirms the avatar is actually within two units of the
+destination, so a walk that was interrupted is reported as one rather than
+silently treated as an arrival.
 
 ### `get_object_position`
 
@@ -119,7 +161,7 @@ Reachability means a center-to-center distance of at most 150 stage units.
 | --- | --- | --- |
 | `stage_get_state` | none | Return the current stage document |
 | `stage_set_state` | `state` | Replace the stage after validation |
-| `stage_patch_state` | `patch` | Merge canvas/nodes/metadata or remove node IDs |
+| `stage_patch_state` | `patch` | Merge canvas/world/nodes/metadata or remove node IDs |
 | `stage_reset_state` | optional `conf_uid` | Restore the default stage |
 | `stage_list_capabilities` | none | Return supported actions, nodes, and limits |
 
@@ -128,6 +170,7 @@ Patch shape:
 ```json
 {
   "canvas": { "background": "#0f172a" },
+  "world": { "move_speed": 300 },
   "nodes": [],
   "remove_node_ids": ["plant_stand"],
   "metadata": { "updated_by": "example" }
@@ -145,15 +188,20 @@ spritesheet:
 New IDs are appended as complete nodes. `move_to` clears `pose` as part of the
 same update that moves the avatar, so a seated sprite is never shown mid-stride.
 
-## 5. Stage document v7
+## 5. Stage document v8
 
 ```json
 {
-  "version": 7,
+  "version": 8,
   "canvas": {
     "width": 960,
     "height": 540,
     "background": "linear-gradient(135deg, #dbeafe, #fef3c7)"
+  },
+  "world": {
+    "units_per_meter": 100,
+    "reach_ceiling": 150,
+    "move_speed": 400
   },
   "nodes": [],
   "metadata": {
@@ -164,11 +212,26 @@ same update that moves the avatar, so a seated sprite is never shown mid-stride.
 }
 ```
 
+`canvas` describes the picture; `world` describes the room. Distance, reach,
+and walking speed are read from `world`, never from the canvas, which is what
+lets a different renderer draw the same room. One unit is a centimetre at the
+shipped scale, so the room is 9.6m by 5.4m and a reach of 105 is just over an
+arm's length. The block is optional: a document without it is read with the
+shipped defaults, which are the values the room has always been gated on.
+
 Supported node types: `shape`, `text`, `image`, `avatar`, and `panel`. A node
 requires a unique safe ID, numeric `x`, `y`, `width`, and `height`, and may have
 label/text/style, a safe image source, a furniture texture, an avatar
-spritesheet, a declarative `uiWindow`, a `pose` of `standing` or `sitting`, or
-an `interaction` of `{ "on_click": true }`. The stage is capped at 80 nodes.
+spritesheet, a declarative `uiWindow`, a `pose` of `standing` or `sitting`, an
+`interaction` of `{ "on_click": true }`, or a `reach`. The stage is capped at
+80 nodes.
+
+`reach` is how close the agent must stand to use the object, in world units. A
+node may lower its own; a node claiming more than `world.reach_ceiling` is
+rejected by both validators, because an object usable from across the room
+would hand the agent every other object's tools from where it stands. Omitted,
+it is derived from the footprint as `60 + max(width, height) / 2`, capped at
+the ceiling.
 
 Nodes are painted by `zIndex`: wall and back-band furniture at 2, front-band
 furniture at 3, and the avatar at 4, so the avatar is never hidden behind the
@@ -229,14 +292,17 @@ or `{"decision": "declined"}`, are the only exceptions — and the only writers 
 those verdicts anywhere in the system. Both apply to pending items only, so a
 decided plan or skill cannot be flipped, and no MCP tool can reach either route.
 
-Migration: a stored v1 through v6 stage is upgraded on load. Older documents also
+Migration: a stored v1 through v7 stage is upgraded on load. Older documents also
 gain any furniture added by newer default rooms, because a tool stays hidden
 while the object it is bound to is missing from the scene. A custom layout,
 including moved or removed objects, is otherwise preserved — except when the
 default room's `theme_revision` changes, which rebuilds the room from the
 defaults. v6 did exactly that: with a dozen gated objects, the layout had to be
 rebuilt for each to keep its own 150-unit radius. v7 adds the tool rack in the
-last wall position that still satisfies it, so v6 rooms migrate in place.
+last wall position that still satisfies it, so v6 rooms migrate in place. v8
+adds the `world` block and per-object `reach`, both of which are read with
+defaults when absent, so v7 rooms migrate in place too — the block is merged
+field by field rather than replaced, and nothing moves.
 
 ## 6. Clicking an object
 

@@ -98,6 +98,20 @@ async def handle_conversation_trigger(
     images = data.get("images")
     session_emoji = np.random.choice(EMOJI_LIST)
 
+    from ..study import log_turn_started
+
+    # How the turn was started, never what it said. Whether a participant
+    # reaches for the room, the microphone, or the text box is exactly the
+    # comparison an embodiment condition is trying to make.
+    log_turn_started(
+        {
+            "ai-speak-signal": "autonomous",
+            "object-interaction": "object_click",
+            "text-input": "text",
+        }.get(msg_type, "voice"),
+        has_images=bool(images),
+    )
+
     # Determine priority: user-initiated requests beat proactive/background ones
     priority = PRIORITY_PROACTIVE if msg_type == "ai-speak-signal" else PRIORITY_USER
 

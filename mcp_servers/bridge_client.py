@@ -29,10 +29,16 @@ def get_conf_uid() -> str:
     return os.environ.get("EMBODIED_AGENT_CONF_UID", DEFAULT_CONF_UID)
 
 
-def post_frontend_action_sync(
+def post_frontend_action_result_sync(
     action: str,
     args: dict[str, Any],
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, dict[str, Any]]:
+    """Run a frontend action and return what the frontend reported back.
+
+    The third element is the frontend's own result object — how far the avatar
+    actually walked, where it ended up — which is what lets a tool verify an
+    outcome instead of trusting that the request was accepted.
+    """
     backend_url = os.environ.get("EMBODIED_AGENT_BACKEND_URL", DEFAULT_BACKEND_URL)
     url = f"{backend_url.rstrip('/')}/internal/frontend-action"
     body = json.dumps(
@@ -62,13 +68,30 @@ def post_frontend_action_sync(
         try:
             payload = json.loads(exc.read().decode("utf-8"))
         except Exception:  # noqa: BLE001
-            return False, f"backend returned HTTP {exc.code}"
+            return False, f"backend returned HTTP {exc.code}", {}
     except Exception as exc:  # noqa: BLE001
-        return False, f"could not reach backend frontend-action bridge: {exc}"
+        return False, f"could not reach backend frontend-action bridge: {exc}", {}
 
+    result = payload.get("result")
+    result = result if isinstance(result, dict) else {}
     if payload.get("ok"):
-        return True, None
-    return False, payload.get("error") or "frontend action failed"
+        return True, None, result
+    return False, payload.get("error") or "frontend action failed", result
+
+
+def post_frontend_action_sync(
+    action: str,
+    args: dict[str, Any],
+) -> tuple[bool, str | None]:
+    ok, error, _result = post_frontend_action_result_sync(action, args)
+    return ok, error
+
+
+async def post_frontend_action_result(
+    action: str,
+    args: dict[str, Any],
+) -> tuple[bool, str | None, dict[str, Any]]:
+    return await asyncio.to_thread(post_frontend_action_result_sync, action, args)
 
 
 async def post_frontend_action(

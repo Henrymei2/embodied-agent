@@ -197,7 +197,92 @@ def test_describe_room_lists_objects_and_marks_fixed_furniture(monkeypatch):
 
     described = scene_tools.describe_room()
 
-    assert "Canvas is 960x540." in described
+    assert "Room is 960x540 units (100 units per metre)." in described
     assert "computer (label=computer" in described
     assert "fixed" in described
     assert "avatar" not in described
+    # A bed is not an hourglass: each object says how close is close enough.
+    assert "reach 150" in described
+    assert "reach 105" in described
+
+
+def _walking_room(monkeypatch, *, arrive: bool):
+    """A room whose avatar moves only if the frontend actually walks it there."""
+    stage = get_default_stage("character")
+    avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
+    sent: dict = {}
+
+    async def post(action, args):
+        sent["action"] = action
+        sent["args"] = args
+        if arrive:
+            avatar["x"], avatar["y"] = args["x"], args["y"]
+        return True, None, {"ok": True, "arrived": arrive, "duration_ms": 400}
+
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", post)
+    return stage, sent
+
+
+async def test_move_to_sends_a_path_and_confirms_arrival(monkeypatch):
+    stage, sent = _walking_room(monkeypatch, arrive=True)
+    bookshelf = next(node for node in stage["nodes"] if node["id"] == "bookshelf")
+
+    result = await scene_tools.move_to("bookshelf")
+
+    assert result == "OK: arrived at bookshelf (x=600, y=370)."
+    assert sent["action"] == "move_to"
+    # A path, not just a destination: the renderer walks the legs it is given.
+    assert sent["args"]["waypoints"] == [{"x": bookshelf["x"], "y": bookshelf["y"]}]
+    assert (sent["args"]["x"], sent["args"]["y"]) == (bookshelf["x"], bookshelf["y"])
+
+
+async def test_move_to_reports_a_walk_that_did_not_finish(monkeypatch):
+    """An accepted request is not an arrival; the room is what decides."""
+    _walking_room(monkeypatch, arrive=False)
+
+    result = await scene_tools.move_to("bookshelf")
+
+    assert result.startswith("Error: the walk to bookshelf did not finish")
+    assert "x=60, y=515" in result
+
+
+async def test_move_to_an_unknown_object_never_reaches_the_frontend(monkeypatch):
+    stage = get_default_stage("character")
+
+    async def should_not_post(_action, _args):
+        raise AssertionError("an unknown target must not reach the frontend")
+
+    monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", should_not_post)
+
+    assert await scene_tools.move_to("trapdoor") == (
+        "Error: no object found with label 'trapdoor'; cannot move there."
+    )
+
+
+def test_the_bridge_hands_back_what_the_frontend_reported(monkeypatch):
+    """Verifying an outcome needs the frontend's answer, not just its receipt."""
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b'{"ok": true, "result": {"arrived": true, "duration_ms": 620}}'
+
+    monkeypatch.setattr(
+        bridge_client.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: Response(),
+    )
+
+    ok, error, result = bridge_client.post_frontend_action_result_sync("move_to", {})
+
+    assert (ok, error) == (True, None)
+    assert result["duration_ms"] == 620
+    # The older two-value call still works for tools that only need success.
+    assert bridge_client.post_frontend_action_sync("move_to", {}) == (True, None)

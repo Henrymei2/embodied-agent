@@ -176,4 +176,10 @@ async def process_single_conversation(
         )
         raise
     finally:
+        from ..study import log_turn_finished
+
+        # Closes the turn whether it completed, errored, or was interrupted, so
+        # the reply-latency measure is never left waiting on a turn that ended
+        # badly.
+        log_turn_finished(len(full_response))
         cleanup_conversation(tts_manager, session_emoji)

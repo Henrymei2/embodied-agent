@@ -10,6 +10,7 @@ from src.open_llm_vtuber.mcpp.tool_manager import (
     SERVER_PROXIMITY_REQUIREMENTS,
 )
 from src.open_llm_vtuber.stage_state_manager import (
+    STAGE_VERSION,
     get_default_stage,
     load_stage_state,
     migrate_stage,
@@ -18,10 +19,10 @@ from src.open_llm_vtuber.stage_state_manager import (
 )
 
 
-def test_default_stage_is_v7_with_google_furniture():
+def test_default_stage_is_current_with_google_furniture():
     stage = get_default_stage("conf-a")
 
-    assert stage["version"] == 7
+    assert stage["version"] == STAGE_VERSION
     assert stage["metadata"]["theme_revision"] == STAGE_THEME_REVISION
     assert stage["canvas"]["texture"]["src"].endswith("bedroom-background.png")
     nodes = {node["id"]: node for node in stage["nodes"]}
@@ -181,7 +182,7 @@ def test_nothing_is_reachable_from_where_the_avatar_starts():
         assert distance > PROXIMITY_THRESHOLD, f"{label} is reachable at spawn"
 
 
-def test_v1_stage_migrates_to_v7_and_preserves_positions():
+def test_v1_stage_migrates_forward_and_preserves_positions():
     v1_stage = get_default_stage("conf-a")
     v1_stage["version"] = 1
     v1_stage["nodes"] = [
@@ -202,7 +203,7 @@ def test_v1_stage_migrates_to_v7_and_preserves_positions():
     migrated = migrate_stage(v1_stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     assert nodes["avatar"]["x"] == 123
     assert nodes["avatar"]["y"] == 234
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
@@ -210,7 +211,7 @@ def test_v1_stage_migrates_to_v7_and_preserves_positions():
     assert validate_stage(v1_stage) == (True, [])
 
 
-def test_v2_stage_migrates_to_v7_with_calendar_window():
+def test_v2_stage_migrates_forward_with_calendar_window():
     stage = get_default_stage("conf-a")
     stage["version"] = 2
     nodes = {node["id"]: node for node in stage["nodes"]}
@@ -218,7 +219,7 @@ def test_v2_stage_migrates_to_v7_with_calendar_window():
 
     migrated = migrate_stage(stage)
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     calendar = next(node for node in migrated["nodes"] if node["id"] == "calendar")
     assert calendar["uiWindow"]["provider"] == "google_calendar_status"
 
@@ -238,7 +239,7 @@ def test_v3_stage_gains_new_furniture_but_keeps_custom_layout():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     assert {"todo_list", "hourglass", "window"} <= set(nodes)
     assert nodes["bed"]["x"] == 321
     assert validate_stage(migrated) == (True, [])
@@ -257,7 +258,7 @@ def test_v4_stage_gains_google_furniture_and_keeps_custom_layout():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     assert {"archive_shelf", "mailbox"} <= set(nodes)
     assert nodes["calendar"]["x"] == 555
     assert validate_stage(migrated) == (True, [])
@@ -287,7 +288,7 @@ def test_v5_stage_gains_furniture_and_a_seated_avatar_animation():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     assert {
         "bookshelf",
         "reading_chair",
@@ -310,7 +311,7 @@ def test_v6_stage_gains_the_tool_rack():
     migrated = migrate_stage(stage)
     nodes = {node["id"]: node for node in migrated["nodes"]}
 
-    assert migrated["version"] == 7
+    assert migrated["version"] == STAGE_VERSION
     assert nodes["tool_rack"]["uiWindow"]["provider"] == "skill_status"
     assert nodes["sofa"]["x"] == 700
     assert validate_stage(migrated) == (True, [])

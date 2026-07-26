@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from loguru import logger
 
+from ..study import conditions, log_event
+from ..world_model import REACH_CEILING
 from .types import FormattedTool
 
 # Tools that require the agent to be physically close to a specific object.
@@ -55,7 +57,11 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     "skills": "tool rack",
 }
 
-PROXIMITY_THRESHOLD = 150.0
+# Each object decides how close the agent must be from its own footprint (see
+# world_model.py). This is the ceiling none of them may exceed, and the
+# separation the default room keeps between any two gated objects, so standing
+# at one can never unlock another's tools.
+PROXIMITY_THRESHOLD = REACH_CEILING
 TOOL_DESCRIPTION_LIMIT = 140
 
 
@@ -105,10 +111,8 @@ class ToolManager:
         try:
             from ..stage_state_manager import get_reachable_objects
 
-            return get_reachable_objects(
-                self.conf_uid,
-                distance=PROXIMITY_THRESHOLD,
-            )
+            # No distance argument: each object's own reach decides.
+            return get_reachable_objects(self.conf_uid)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 f"TM: Could not resolve scene proximity; failing closed: {exc}"
@@ -117,6 +121,12 @@ class ToolManager:
 
     def get_required_object(self, tool_name: str) -> str | None:
         """Return the object required by a tool or its providing MCP server."""
+        if not conditions().embodiment:
+            # Without the room there is nowhere to walk, so gating a tool on a
+            # place would only remove a capability. The ablation must vary
+            # embodiment, not what the agent can do.
+            return None
+
         required_object = PROXIMITY_REQUIREMENTS.get(tool_name)
         if required_object is not None:
             return required_object
@@ -208,9 +218,18 @@ class ToolManager:
     def authorize_tool(self, tool_name: str) -> tuple[bool, str | None]:
         """Enforce an object gate immediately before tool execution."""
         required_object = self.get_required_object(tool_name)
-        if required_object is None:
-            return True, None
-        if required_object in self.get_reachable_objects():
+        allowed = required_object is None or required_object in (
+            self.get_reachable_objects()
+        )
+        # Every attempt, allowed or not: how often the room actually turned the
+        # agent away is one of the things a study wants to know.
+        log_event(
+            "tool_call",
+            tool=tool_name,
+            requires=required_object,
+            allowed=allowed,
+        )
+        if allowed:
             return True, None
         return (
             False,
