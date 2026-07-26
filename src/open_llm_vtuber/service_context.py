@@ -18,7 +18,7 @@ from .mcpp.tool_executor import ToolExecutor
 from .mcpp.tool_adapter import ToolAdapter
 
 from .asr.asr_factory import ASRFactory
-from .tts.tts_factory import TTSFactory
+from .tts.fallback_tts import build_tts_engine
 from .vad.vad_factory import VADFactory
 from .agent.agent_factory import AgentFactory
 from .translate.translate_factory import TranslateFactory
@@ -377,10 +377,21 @@ class ServiceContext:
     def init_asr(self, asr_config: ASRConfig) -> None:
         if not self.asr_engine or (self.character_config.asr_config != asr_config):
             logger.info(f"Initializing ASR: {asr_config.asr_model}")
-            self.asr_engine = ASRFactory.get_asr_system(
-                asr_config.asr_model,
-                **getattr(asr_config, asr_config.asr_model).model_dump(),
-            )
+            try:
+                self.asr_engine = ASRFactory.get_asr_system(
+                    asr_config.asr_model,
+                    **getattr(asr_config, asr_config.asr_model).model_dump(),
+                )
+            except Exception as exc:  # noqa: BLE001 - a missing model must not
+                # take the whole companion down: the room, memory, tools and
+                # typed conversation all work without speech recognition.
+                self.asr_engine = None
+                logger.error(
+                    f"ASR ({asr_config.asr_model}) failed to load: {exc}. "
+                    "Voice input is disabled for this session; everything else "
+                    "still works. Run `uv run python scripts/check_voice.py` for "
+                    "the specific cause and fix."
+                )
             # saving config should be done after successful initialization
             self.character_config.asr_config = asr_config
         else:
@@ -389,10 +400,7 @@ class ServiceContext:
     def init_tts(self, tts_config: TTSConfig) -> None:
         if not self.tts_engine or (self.character_config.tts_config != tts_config):
             logger.info(f"Initializing TTS: {tts_config.tts_model}")
-            self.tts_engine = TTSFactory.get_tts_engine(
-                tts_config.tts_model,
-                **getattr(tts_config, tts_config.tts_model.lower()).model_dump(),
-            )
+            self.tts_engine = build_tts_engine(tts_config)
             # saving config should be done after successful initialization
             self.character_config.tts_config = tts_config
         else:

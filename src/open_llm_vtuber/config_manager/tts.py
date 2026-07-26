@@ -589,7 +589,15 @@ class TTSConfig(I18nMixin):
         "elevenlabs_tts",
         "cartesia_tts",
         "piper_tts",
+        "pyttsx3_tts",
     ] = Field(..., alias="tts_model")
+
+    # Spoken when the engine above cannot be reached. `pyttsx3_tts` uses the
+    # operating system's own voices, so it needs no network and no download.
+    # Set to null to keep failures silent instead.
+    tts_fallback_model: Optional[
+        Literal["pyttsx3_tts", "sherpa_onnx_tts", "piper_tts"]
+    ] = Field("pyttsx3_tts", alias="tts_fallback_model")
 
     azure_tts: Optional[AzureTTSConfig] = Field(None, alias="azure_tts")
     bark_tts: Optional[BarkTTSConfig] = Field(None, alias="bark_tts")
@@ -616,6 +624,11 @@ class TTSConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "tts_model": Description(en="Text-to-speech model to use"),
+        "tts_fallback_model": Description(
+            en="Local engine used when the main TTS engine is unreachable "
+            "(default: pyttsx3_tts, which needs no network). Set to null to "
+            "deliver text without audio instead."
+        ),
         "azure_tts": Description(en="Configuration for Azure TTS"),
         "bark_tts": Description(en="Configuration for Bark TTS"),
         "edge_tts": Description(en="Configuration for Edge TTS"),

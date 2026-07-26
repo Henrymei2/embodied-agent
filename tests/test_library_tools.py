@@ -54,8 +54,13 @@ async def test_list_books_annotates_readable_results(monkeypatch):
     payload = json.loads(await library_tools.list_books("frankenstein"))
 
     assert payload["count"] == 2
-    # Titles are matched on their normalized form, subtitle and all.
-    assert payload["books"][0]["readable"] is False
+    # The two services disagree about the subtitle — Open Library lists
+    # "Frankenstein" where Gutendex has "Frankenstein; Or, The Modern
+    # Prometheus" — and the match has to survive that, or the best-known book
+    # in the demo comes back unreadable.
+    assert payload["books"][0]["readable"] is True
+    assert payload["books"][0]["text_source_id"] == 84
+    # An unrelated title must not be swept in by the same relaxation.
     assert payload["books"][1]["readable"] is False
 
 

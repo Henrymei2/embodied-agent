@@ -296,6 +296,12 @@ character_config:
   # =================== Text to Speech ===================
   tts_config:
     tts_model: 'edge_tts'
+    # Spoken when the engine above cannot be reached — a blocked region,
+    # a captive portal, or plain bad wifi would otherwise leave the companion
+    # silent. 'pyttsx3_tts' uses the operating system's own voices, so it needs
+    # no network and no download. Set to null to deliver text without audio.
+    # Verify both paths with: uv run python scripts/check_voice.py --offline
+    tts_fallback_model: 'pyttsx3_tts'
     # text to speech model options:
     #   'azure_tts', 'pyttsx3_tts', 'edge_tts', 'bark_tts',
     #   'cosyvoice_tts', 'melo_tts', 'coqui_tts', 'piper_tts',

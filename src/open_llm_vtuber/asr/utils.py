@@ -73,6 +73,14 @@ def download_and_extract(url: str, output_dir: str) -> Path:
 
     # Check if the extracted directory already exists
     if extracted_dir_path.exists():
+        if not is_model_dir_complete(extracted_dir_path, Path(file_path)):
+            # Re-downloading over a half-extracted directory would silently
+            # produce the same broken model, so stop with the fix instead.
+            raise RuntimeError(
+                f"The model at {extracted_dir_path} is a partial extraction. "
+                f"Delete that directory and {file_path}, then start again to "
+                "download a fresh copy."
+            )
         logger.info(
             f"✅ The directory {extracted_dir_path} already exists. I would assume that the model is already downloaded and we are ready to go. Skipping download and extraction."
         )
@@ -118,6 +126,33 @@ def download_and_extract(url: str, output_dir: str) -> Path:
         return Path(file_path)
 
 
+def is_model_dir_complete(model_dir: Path, archive_path: Path | None = None) -> bool:
+    """True when a model directory can be trusted as a finished extraction.
+
+    An interrupted download or a truncated archive leaves the directory in
+    place holding a partial `model.onnx`, which every later check happily
+    accepts until the engine fails deep inside ONNX with "No graph was found in
+    the protobuf" — a message that says nothing about which file to delete.
+
+    Two things give it away. The weights may be missing entirely; and because a
+    successful extraction deletes its archive, an archive still sitting beside
+    the directory means the extraction never finished. A truncated `.onnx` of
+    plausible size cannot be detected here — that is what `scripts/check_voice.py`
+    is for — but these two cases cover an interrupted download.
+    """
+    if archive_path is not None and archive_path.exists():
+        return False
+    try:
+        weights = [
+            path
+            for path in model_dir.rglob("*.onnx")
+            if path.is_file() and path.stat().st_size > 0
+        ]
+    except OSError:
+        return False
+    return bool(weights)
+
+
 def check_and_extract_local_file(url: str, output_dir: str) -> Path | None:
     """
     Check if a local file exists and extract it if it is a tar.bz2 archive.
@@ -138,10 +173,19 @@ def check_and_extract_local_file(url: str, output_dir: str) -> Path | None:
     extracted_dir = Path(output_dir) / file_name.replace(".tar.bz2", "")
 
     if extracted_dir.exists():
-        logger.info(
-            f"✅ Extracted directory exists: {extracted_dir}, no operation needed."
+        if is_model_dir_complete(extracted_dir, compressed_path):
+            logger.info(
+                f"✅ Extracted directory exists: {extracted_dir}, no operation needed."
+            )
+            return extracted_dir
+        # A half-extracted directory looks finished, and the engine only
+        # discovers otherwise as an opaque protobuf error much later.
+        logger.error(
+            f"❌ Model directory {extracted_dir} is a partial extraction. "
+            f"Delete it and {compressed_path}, then start the server again to "
+            "download a fresh copy."
         )
-        return extracted_dir
+        return None
 
     if compressed_path.exists() and file_name.endswith(".tar.bz2"):
         logger.info(f"🔍 Found local archive file: {compressed_path}")
@@ -154,7 +198,11 @@ def check_and_extract_local_file(url: str, output_dir: str) -> Path | None:
             os.remove(compressed_path)  # Remove the compressed file
             return extracted_dir
         except Exception as e:
-            logger.error(f"Fail to extract file: {str(e)}")
+            logger.error(
+                f"❌ Failed to extract {compressed_path}: {e}. The archive is "
+                "truncated or corrupt; delete it (and any partially extracted "
+                f"{extracted_dir}) so it can be downloaded again."
+            )
             return None
 
     logger.warning(f"Local file not found or not a tar.bz2 archive: {compressed_path}")

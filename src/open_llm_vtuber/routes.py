@@ -480,6 +480,15 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
             if len(audio_array) == 0:
                 raise ValueError("Empty audio data")
 
+            if default_context_cache.asr_engine is None:
+                return Response(
+                    content=json.dumps(
+                        {"error": "Speech recognition is unavailable on this server."}
+                    ),
+                    status_code=503,
+                    media_type="application/json",
+                )
+
             text = await default_context_cache.asr_engine.async_transcribe_np(
                 audio_array
             )

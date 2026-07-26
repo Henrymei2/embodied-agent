@@ -29,6 +29,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.fixtures import cached_json, fixture_key
+
 _GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _TIMEOUT_SECONDS = 10.0
@@ -79,6 +81,15 @@ def _describe_code(code: Any) -> str:
 
 
 def _fetch_json_sync(url: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Fetch from Open-Meteo, or from a recording when the demo needs it to."""
+    endpoint = "geocode" if url == _GEOCODE_URL else "forecast"
+    key = fixture_key(
+        endpoint, *(f"{name}={value}" for name, value in sorted(params.items()))
+    )
+    return cached_json("weather", key, lambda: _request_json(url, params))
+
+
+def _request_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{url}?{urllib.parse.urlencode(params)}",
         headers={"Accept": "application/json"},

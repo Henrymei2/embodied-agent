@@ -39,6 +39,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from mcp_servers.bridge_client import post_frontend_action
+from mcp_servers.fixtures import cached_json, cached_text, fixture_key
 from src.open_llm_vtuber.furniture_state import (
     active_session,
     book_text_path,
@@ -51,6 +52,9 @@ _GUTENDEX_URL = "https://gutendex.com/books"
 # Only these hosts may be contacted, including for a book's text download.
 _ALLOWED_TEXT_HOSTS = frozenset({"gutenberg.org", "www.gutenberg.org"})
 
+# Gutendex answers 403 to the default `Python-urllib/x.y` agent, which silently
+# cost every book its readable copy. Identify the project instead.
+_USER_AGENT = "embodied-agent/1.0 (+https://github.com/Henrymei2/embodied-agent)"
 _TIMEOUT_SECONDS = 20.0
 _MAX_JSON_BYTES = 512 * 1024
 _MAX_TEXT_BYTES = 2 * 1024 * 1024
@@ -88,9 +92,18 @@ def _validate_text(value: Any, field: str, maximum: int) -> str:
 
 
 def _fetch_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Fetch from the book services, or from a recording when demoing offline."""
+    endpoint = "openlibrary" if url == _OPEN_LIBRARY_URL else "gutendex"
+    key = fixture_key(
+        endpoint, *(f"{name}={value}" for name, value in sorted(params.items()))
+    )
+    return cached_json("library", key, lambda: _request_json(url, params))
+
+
+def _request_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{url}?{urllib.parse.urlencode(params)}",
-        headers={"Accept": "application/json"},
+        headers={"Accept": "application/json", "User-Agent": _USER_AGENT},
         method="GET",
     )
     try:
@@ -118,12 +131,32 @@ def _normalize_title(title: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(title or "").lower()).strip()
 
 
+def _title_keys(title: Any) -> list[str]:
+    """Normalized forms a title may be matched on, most specific first.
+
+    The two services disagree about subtitles — Open Library lists
+    "Frankenstein" where Gutendex has "Frankenstein; Or, The Modern
+    Prometheus" — so the part before a subtitle separator is matched as well.
+    Dropping the subtitle is safe in a way that loose containment is not:
+    "Frankenstein in Baghdad" still reduces to itself and cannot collide.
+    """
+    full = _normalize_title(title)
+    keys = [full] if full else []
+    head = _normalize_title(re.split(r"[;:]", str(title or ""), maxsplit=1)[0])
+    if head and head != full:
+        keys.append(head)
+    return keys
+
+
 def _gutendex_matches(query: str) -> dict[str, dict[str, Any]]:
     """Map normalized title -> readable Gutenberg copy for one search."""
     try:
         payload = _fetch_json(_GUTENDEX_URL, {"search": query})
-    except ValueError:
-        # Browsing must still work when only the full-text service is down.
+    except ValueError as exc:
+        # Browsing must still work when only the full-text service is down, but
+        # a silent {} here reads as "nothing is readable", which is the same
+        # answer an outage gives — so say which it was.
+        print(f"library: full-text lookup unavailable ({exc})", file=sys.stderr)
         return {}
 
     matches: dict[str, dict[str, Any]] = {}
@@ -136,10 +169,9 @@ def _gutendex_matches(query: str) -> dict[str, dict[str, Any]]:
         text_url = _plain_text_url(book.get("formats"))
         if not text_url:
             continue
-        matches.setdefault(
-            _normalize_title(book.get("title")),
-            {"text_source_id": book["id"], "text_url": text_url},
-        )
+        entry = {"text_source_id": book["id"], "text_url": text_url}
+        for key in _title_keys(book.get("title")):
+            matches.setdefault(key, entry)
     return matches
 
 
@@ -173,8 +205,16 @@ def _is_allowed_text_url(url: str) -> bool:
 def _download_text(url: str) -> str:
     if not _is_allowed_text_url(url):
         raise ValueError("book text is not hosted on an allowed service")
+    # A book is downloaded once per reader anyway; recording it lets a demo
+    # open one with the network unplugged.
+    return cached_text("library", fixture_key("text", url), lambda: _request_text(url))
+
+
+def _request_text(url: str) -> str:
     request = urllib.request.Request(
-        url, headers={"Accept": "text/plain"}, method="GET"
+        url,
+        headers={"Accept": "text/plain", "User-Agent": _USER_AGENT},
+        method="GET",
     )
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
@@ -290,7 +330,14 @@ def _list_books(query: str, limit: int) -> str:
             if not isinstance(document, dict):
                 continue
             authors = document.get("author_name")
-            match = readable.get(_normalize_title(document.get("title")))
+            match = next(
+                (
+                    readable[key]
+                    for key in _title_keys(document.get("title"))
+                    if key in readable
+                ),
+                None,
+            )
             books.append(
                 {
                     "title": str(document.get("title", ""))[:_MAX_TITLE],

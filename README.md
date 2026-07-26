@@ -68,11 +68,16 @@ scheduling, and consent-aware autonomous behavior.
   preferences from explicit feedback.
 - **Multi-client-safe routing:** live frontend actions are bound to the exact
   client and the single configured character identity that initiated them.
+- **Survives a bad network:** a local TTS engine speaks when the remote one
+  cannot be reached, a failed speech-recognition model disables voice input
+  instead of the server, and the API-backed furniture can replay recorded
+  responses. See [Demo mode](doc/DEMO_MODE.md).
 
 ## Quick start
 
 Requirements: Python 3.10-3.12, `uv`, and Node.js for frontend development.
-FFmpeg is recommended for audio formats handled through pydub.
+FFmpeg is recommended: without it the remote TTS engine's MP3 cannot be
+decoded, and the companion falls back to the local system voice.
 
 ```powershell
 uv sync
@@ -103,6 +108,10 @@ ruff check .
 ruff format --check .
 pytest -q
 
+# before a demo: can it speak, and can it speak without a network?
+uv run python scripts/check_voice.py
+uv run python scripts/check_voice.py --offline
+
 Set-Location frontend/src/Open-LLM-VTuber-Web
 npm run lint
 npm run typecheck
@@ -116,6 +125,7 @@ npm run build:web
 - [Frontend action protocol](frontend/frontend_api_doc.md)
 - [Presence Contract](doc/PRESENCE_CONTRACT.md)
 - [Skills and the approval gate](doc/SKILLS.md)
+- [Demo mode: voice fallback and offline fixtures](doc/DEMO_MODE.md)
 - [Screen context](doc/SCREEN_CONTEXT.md)
 - [Google Calendar tools and OAuth setup](doc/CALENDAR_TOOLS.md)
 - [Configuration templates](config_templates/README.md)

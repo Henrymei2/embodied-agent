@@ -1,0 +1,48 @@
+{
+  "numFound": 4028,
+  "start": 0,
+  "numFoundExact": true,
+  "num_found": 4028,
+  "documentation_url": "https://openlibrary.org/dev/docs/api/search",
+  "q": "frankenstein",
+  "offset": null,
+  "docs": [
+    {
+      "author_name": [
+        "Mary Shelley"
+      ],
+      "first_publish_year": 1818,
+      "title": "Frankenstein; or, The Modern Prometheus"
+    },
+    {
+      "author_name": [
+        "Mary Shelley"
+      ],
+      "first_publish_year": 1818,
+      "title": "Mary Shelley's Frankenstein; or, the Modern Prometheus (1818 text)"
+    },
+    {
+      "author_name": [
+        "Dean Koontz",
+        "Kevin J. Anderson"
+      ],
+      "first_publish_year": 2005,
+      "title": "Dean Koontz's Frankenstein"
+    },
+    {
+      "author_name": [
+        "Coco Mellors"
+      ],
+      "first_publish_year": 2022,
+      "title": "Cleopatra and Frankenstein"
+    },
+    {
+      "author_name": [
+        "Dean Koontz",
+        "Edward Gorman"
+      ],
+      "first_publish_year": 2005,
+      "title": "Dean Koontz's Frankenstein"
+    }
+  ]
+}
