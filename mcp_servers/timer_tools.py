@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import sys
-import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -28,12 +27,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from mcp.server.fastmcp import FastMCP
 
-from src.open_llm_vtuber.furniture_state import (
-    delete_task,
-    is_timer,
-    load_tasks,
-    mutate_tasks,
-    timer_remaining_seconds,
+from src.open_llm_vtuber.autonomy.agenda import (
+    ScheduleSpec,
+    create_entry,
+    get_agenda_store,
 )
 from src.open_llm_vtuber.utils.timezone import now_local
 
@@ -52,12 +49,15 @@ def _iso(moment: datetime) -> str:
     return moment.isoformat(timespec="seconds")
 
 
-def _describe(task: dict[str, Any], now: datetime) -> dict[str, Any]:
-    remaining = timer_remaining_seconds(task, now)
+def _describe(task: Any, now: datetime) -> dict[str, Any]:
+    due = datetime.fromisoformat(task.schedule.next_run)
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=now.tzinfo)
+    remaining = max(0, int((due - now).total_seconds()))
     return {
-        "timer_id": task.get("id"),
-        "label": task.get("label", ""),
-        "due_at": task.get("next_run"),
+        "timer_id": task.id,
+        "label": task.metadata.get("label", ""),
+        "due_at": task.schedule.next_run,
         "remaining_seconds": remaining,
         "remaining_human": f"{remaining // 60}m {remaining % 60}s",
     }
@@ -96,30 +96,39 @@ def set_timer(minutes: float, label: str = "") -> str:
         clean_label = _validate_label(label)
 
         now = now_local()
-        timer_id = uuid.uuid4().hex[:8]
         spoken = f"'{clean_label}' " if clean_label else ""
-        timer = {
-            "id": timer_id,
-            "kind": "timer",
-            "label": clean_label,
-            "prompt": (
+        prompt = (
                 f"The {spoken}timer you set {duration:g} minute(s) ago just "
                 "finished. Tell the user briefly that it is up."
+        )
+        store = get_agenda_store()
+        pending = [
+            entry
+            for entry in store.load().entries
+            if entry.schedule and entry.schedule.timer and entry.status == "queued"
+        ]
+        if len(pending) >= _MAX_TIMERS:
+            raise ValueError(f"at most {_MAX_TIMERS} timers can be pending")
+        timer = create_entry(
+            kind="scheduled",
+            title=clean_label or "Timer",
+            description=prompt,
+            origin="timer",
+            evidence_refs=["timer:user-or-agent-request"],
+            completion_condition="Notify the user once when the timer expires.",
+            time_budget_seconds=120,
+            status="queued",
+            report_policy="on_completion",
+            schedule=ScheduleSpec(
+                next_run=_iso(now + timedelta(minutes=duration)),
+                priority=_TIMER_PRIORITY,
+                report=True,
+                timer=True,
+                prompt=prompt,
             ),
-            "priority": _TIMER_PRIORITY,
-            "interval_seconds": None,
-            "report": True,
-            "next_run": _iso(now + timedelta(minutes=duration)),
-            "created_at": _iso(now),
-            "run_count": 0,
-        }
-
-        def add_timer(tasks: dict[str, dict[str, Any]]) -> None:
-            if sum(1 for task in tasks.values() if is_timer(task)) >= _MAX_TIMERS:
-                raise ValueError(f"at most {_MAX_TIMERS} timers can be pending")
-            tasks[timer_id] = timer
-
-        mutate_tasks(add_timer)
+            metadata={"label": clean_label},
+        )
+        store.add(timer)
         return json.dumps(
             {"ok": True, "timer": _describe(timer, now)},
             ensure_ascii=False,
@@ -137,7 +146,9 @@ def list_timers() -> str:
     try:
         now = now_local()
         timers = [
-            _describe(task, now) for task in load_tasks().values() if is_timer(task)
+            _describe(task, now)
+            for task in get_agenda_store().load().entries
+            if task.schedule and task.schedule.timer and task.status == "queued"
         ]
         timers.sort(key=lambda timer: timer["remaining_seconds"])
         return json.dumps({"timers": timers}, ensure_ascii=False)
@@ -151,8 +162,17 @@ def cancel_timer(timer_id: str) -> str:
     try:
         if not isinstance(timer_id, str) or not timer_id or len(timer_id) > 80:
             raise ValueError("timer_id must be a non-empty string")
-        if not delete_task(timer_id, predicate=is_timer):
+        entry = next(
+            (
+                item
+                for item in get_agenda_store().load().entries
+                if item.id == timer_id and item.schedule and item.schedule.timer
+            ),
+            None,
+        )
+        if entry is None:
             raise ValueError(f"timer '{timer_id}' was not found")
+        get_agenda_store().remove_queued(timer_id)
         return json.dumps({"ok": True, "timer_id": timer_id})
     except (OSError, TypeError, ValueError) as exc:
         return f"Error: {exc}"

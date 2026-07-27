@@ -3,7 +3,7 @@ import {
   Box, Button, Flex, HStack, IconButton, Menu, Text,
 } from '@chakra-ui/react';
 import {
-  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers, FiCalendar, FiZap,
+  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers, FiCalendar, FiList, FiZap,
 } from 'react-icons/fi';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,6 +15,7 @@ import HistoryDrawer from './history-drawer';
 import { useSidebar } from '@/hooks/sidebar/use-sidebar';
 import GroupDrawer from './group-drawer';
 import ScheduledEventsDrawer from './scheduled-events-drawer';
+import AgendaDrawer from './agenda-drawer';
 import { ModeType } from '@/context/mode-context';
 
 // Type definitions
@@ -140,6 +141,15 @@ const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode
           <FiCalendar />
         </IconButton>
       </ScheduledEventsDrawer>
+      <AgendaDrawer>
+        <IconButton
+          {...sidebarStyles.sidebar.utilityButton}
+          aria-label="Global agenda"
+          title="Global agenda"
+        >
+          <FiList />
+        </IconButton>
+      </AgendaDrawer>
       <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
       <IconButton
         {...sidebarStyles.sidebar.utilityButton}

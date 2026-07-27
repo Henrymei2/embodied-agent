@@ -2,8 +2,9 @@
 
 ## Status
 
-This document is an architecture and research specification. It describes
-functionality that is proposed but not yet implemented.
+This document describes the implemented global-agenda architecture. The
+authoritative local store is `agenda/agenda.json`; the frontend exposes its
+timeline and controls through the agenda sidebar drawer.
 
 ## Goal
 
@@ -104,10 +105,9 @@ choose a question
 ```
 
 Tool results are made available to the agent as soon as they return. The system
-may separately preserve a plausible embodied duration before displaying an
-effect or declaring the activity experientially complete. Artificially
-withholding a completed tool result from the LLM is not required and would make
-cancellation, reasoning, and user-priority work less reliable.
+separately preserves a configurable plausible embodied duration before
+displaying an effect or declaring the activity experientially complete. User
+preemption cancels that display wait without discarding the result.
 
 ### 3. Agenda loop: minutes to hours and event-driven
 
@@ -421,19 +421,19 @@ govern the second decision.
 
 ## Relationship to existing systems
 
-### Scheduler
+### Scheduling
 
-The scheduler remains the reliable clock and recurrence mechanism. A scheduled
-task becomes an agenda commitment when it is due. The agenda adds semantic
-continuity; it does not replace accurate wakeups, timers, or recurrence
-storage.
+The agenda is the reliable clock and recurrence store. One-time tasks,
+recurring tasks, timers, reminders, idle completion, and reconsideration
+wakeups share the versioned agenda schema. Atomic due claims create linked
+occurrence entries and prevent duplicate firing. Scheduled commitments continue
+to run while self-generated chaining is paused.
 
-### Autonomy planner
+### Previous autonomy planner
 
-The current planner scores fixed directions and dispatches isolated prompts.
-Under this architecture, those directions can help generate or score agenda
-proposals. The agenda owns the longer lifecycle across multiple prompts and
-tool calls.
+The fixed-direction planner and Habit Engine were removed. The structured
+intention generator proposes one grounded successor and the agenda owns its
+full lifecycle across prompts and tool calls.
 
 ### Priority queue
 
