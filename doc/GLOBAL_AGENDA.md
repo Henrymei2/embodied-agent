@@ -1,0 +1,514 @@
+# Global Agenda and Continuous Behavioral Chain
+
+## Status
+
+This document is an architecture and research specification. It describes
+functionality that is proposed but not yet implemented.
+
+## Goal
+
+The global agenda gives the embodied agent continuity across otherwise separate
+LLM requests. It is a persistent timeline of high-level intentions: what the
+agent did, what it is doing, and what it currently expects to do next.
+
+The research hypothesis is stronger than ordinary proactive-assistant behavior:
+
+> Given memory, an embodied environment, tools, and its own recent activity, can
+> an LLM generate a meaningful behavioral chain with no predetermined terminal
+> task?
+
+The chain is intentionally open-ended. Each individual intention remains
+bounded, inspectable, interruptible, and subject to the project's existing
+approval boundaries, but completing one autonomous intention causes the system
+to seek another. The experiment is whether locally bounded decisions can form a
+long-running sequence that appears coherent and human-like rather than
+repetitive, random, or merely busy.
+
+This is not achieved by making one task run forever. It is achieved by linking
+finite intentions:
+
+```text
+check mail
+  -> investigate a topic mentioned in a message
+  -> save a note
+  -> continue a book related to the topic
+  -> take a one-minute break
+  -> notice an upcoming calendar event
+  -> prepare a draft for it
+  -> ...
+```
+
+An idle period can be one link in the chain, but "there is nothing worth doing"
+is not the normal terminal conclusion. Even a small room can support reading,
+research, reflection, planning, organizing, observing, practicing, following
+up, and forming connections between past experiences. The planner should keep
+looking for a grounded next pursuit and use bounded idle when rest, waiting, or
+delayed reconsideration is itself the most coherent next behavior.
+
+## Product behavior
+
+The agenda is the temporal counterpart of the room:
+
+- The room makes the agent's current location and available capabilities
+  spatially legible.
+- The agenda makes its past, present, and anticipated behavior temporally
+  legible.
+
+A UI may render it as:
+
+```text
+Past                         Present                     Future
+-----------------------------------------------------------------------
+done  Checked unread mail    active  Fishing research   queued  Rest 1m
+done  Continued a book               2/3 sources read   timed   Calendar at 4pm
+```
+
+The agenda records semantic pursuits, not every tool call. "Explore fishing
+information relevant to the user" is an agenda entry. Walking to the computer,
+searching, opening sources, and writing a note are execution steps belonging to
+that entry.
+
+At most one intention owns the foreground. Other entries may be queued,
+scheduled, suspended, completed, abandoned, or failed.
+
+## Three execution timescales
+
+Behavior is divided into three layers.
+
+### 1. Embodiment loop: seconds
+
+The embodiment loop controls movement, posture, animation, and plausible time
+spent interacting with furniture. It does not need an LLM.
+
+Examples:
+
+- walk from the mailbox to the computer;
+- remain seated while reading;
+- visibly use the writing desk;
+- stand up when an interruption arrives;
+- settle on the sofa during a short idle intention.
+
+### 2. Activity loop: seconds to minutes
+
+The activity loop advances the current high-level intention through
+interruptible steps:
+
+```text
+choose a question
+  -> move to the computer
+  -> search
+  -> inspect a source
+  -> inspect another source
+  -> write a note
+  -> evaluate the completion condition
+```
+
+Tool results are made available to the agent as soon as they return. The system
+may separately preserve a plausible embodied duration before displaying an
+effect or declaring the activity experientially complete. Artificially
+withholding a completed tool result from the LLM is not required and would make
+cancellation, reasoning, and user-priority work less reliable.
+
+### 3. Agenda loop: minutes to hours and event-driven
+
+The agenda loop chooses or proposes the next high-level intention. It wakes
+when:
+
+- the current autonomous intention completes;
+- the current intention fails without a deterministic recovery;
+- a bounded idle intention ends;
+- a scheduled commitment becomes due;
+- a meaningful workspace or environment event arrives;
+- a user task finishes and suspended work must be reconsidered;
+- the future agenda is stale;
+- a fallback review time is reached.
+
+It does not invoke the LLM for every animation or tool step.
+
+## Components
+
+```text
+workspace memory + agenda + time + presence + capabilities
+                              |
+                              v
+                    Agenda Context Builder
+                              |
+                              v
+                    LLM Intention Generator
+                              |
+                              v
+                      Agenda Policy Gate
+                              |
+                              v
+                        Global Agenda
+                              |
+                              v
+                     Executive / Dispatcher
+                              |
+                              v
+                       Activity Executor
+                              |
+                  +-----------+-----------+
+                  |                       |
+                  v                       v
+          furniture and tools      activity events
+                                          |
+                                          +----> Global Agenda
+```
+
+### Global Agenda
+
+The agenda persists the recent timeline, the foreground intention, suspended
+work, a small near-future queue, and scheduled commitments.
+
+### Agenda Context Builder
+
+The context builder retrieves planning evidence. It must not send the entire
+workspace to the model. A growing workspace would make that expensive, noisy,
+and less useful.
+
+The planning context should include:
+
+- the active intention and a compact progress summary;
+- recent completed, failed, abandoned, and idle intentions;
+- suspended intentions;
+- imminent scheduled commitments;
+- approved plans and active goals;
+- relevant long-term and daily-memory passages;
+- retrieved user interests and preferences;
+- current time, presence, focus mode, and coarse screen context;
+- available furniture and capabilities;
+- recent rejected or repetitive proposals;
+- resource and attention budgets.
+
+Memory claims used to motivate an intention should carry a reference to their
+retrieved evidence. The planner must not turn an invented user interest into
+autonomous work.
+
+### LLM Intention Generator
+
+The generator answers one question:
+
+> Given the agent's agenda, current situation, relevant workspace context, and
+> available capabilities, what is its next novel, grounded, bounded, high-level
+> intention?
+
+The generator proposes exactly one next intention. It does not authorize the
+proposal, execute tools, extend its own budget, or decide that an external side
+effect is safe.
+
+### Agenda Policy Gate
+
+The policy gate deterministically checks:
+
+- the proposal has a completion condition;
+- its time and resource costs are bounded;
+- its required capabilities exist;
+- it is not a semantic duplicate of recent or queued work;
+- its motivation is grounded in supplied context;
+- it does not cross an approval boundary;
+- it fits around scheduled commitments;
+- its reporting policy respects the Presence Contract;
+- it can be interrupted safely.
+
+A rejected proposal is recorded with a compact reason and the generator is
+asked for a materially different one. Rejection retries must be capped per
+planning pass so a broken model cannot create a tight request loop. After that
+cap, the executive inserts a short idle/reconsideration intention and tries
+again later. This preserves the open-ended behavioral experiment without
+turning validation failure into uncontrolled compute consumption.
+
+### Executive
+
+The executive owns lifecycle and priority. The LLM proposes intentions; the
+executive decides when an accepted intention runs, suspends, resumes, or ends.
+
+### Activity Executor
+
+The activity executor decomposes an intention into embodied and tool-using
+steps, records progress, evaluates its completion condition, and emits lifecycle
+events back to the agenda.
+
+## Agenda entry
+
+A persisted entry may use this shape:
+
+```yaml
+id: intention_20260727_004
+kind: pursuit
+title: Explore fishing information relevant to the user
+description: Find one useful or interesting development related to fishing.
+origin: autonomous
+motivation:
+  type: user_interest
+  evidence_refs:
+    - memory/2026-07-26.md#fishing
+
+status: active
+created_at: 2026-07-27T14:20:00-05:00
+started_at: 2026-07-27T14:22:00-05:00
+ended_at: null
+
+time_budget_seconds: 900
+completion_condition: Review at most three reliable sources and save a note.
+progress_summary: Two sources reviewed; no note saved yet.
+preferred_object: computer
+required_capabilities:
+  - web_research
+
+risk: low
+requires_approval: false
+interruptibility: high
+resume_policy: after_user_task
+report_policy: if_noteworthy
+parent_id: null
+```
+
+Core kinds:
+
+| Kind | Meaning |
+| --- | --- |
+| `pursuit` | Self-contained research, reading, reflection, preparation, or work |
+| `idle` | Bounded rest, observation, waiting, or availability |
+| `scheduled` | A commitment tied to a time or external event |
+| `user` | The current user-authored task |
+
+Lifecycle:
+
+```text
+proposed -> queued -> active -> completed
+                      |  |
+                      |  +-> failed
+                      |  +-> abandoned
+                      v
+                  suspended -> queued
+```
+
+Completed means the declared condition was met. Abandoned means the pursuit was
+stopped because it became irrelevant, was explicitly canceled, repeatedly
+failed, or no longer justified its cost. Both remain useful evidence for future
+novelty checks.
+
+## Intention-generation contract
+
+The generator should return structured data:
+
+```json
+{
+  "kind": "pursuit",
+  "title": "Explore recent fishing information",
+  "description": "Find one development connected to the user's interest.",
+  "motivation": {
+    "type": "user_interest",
+    "evidence_refs": ["memory/2026-07-26.md#fishing"]
+  },
+  "novelty": "No recent agenda entry explored this interest.",
+  "expected_value": "May produce a relevant fact or resource.",
+  "completion_condition": "Review at most three reliable sources and save a short note.",
+  "time_budget_seconds": 900,
+  "preferred_object": "computer",
+  "required_capabilities": ["web_research"],
+  "report_policy": "if_noteworthy",
+  "risk": "low"
+}
+```
+
+Idle uses the same contract:
+
+```json
+{
+  "kind": "idle",
+  "title": "Take a short break",
+  "description": "Rest on the sofa while remaining interruptible.",
+  "motivation": {
+    "type": "recovery",
+    "evidence_refs": ["agenda:intention_20260727_003"]
+  },
+  "novelty": "A recovery interval follows several completed pursuits.",
+  "expected_value": "Creates pacing before the next planning pass.",
+  "completion_condition": "Remain available for 60 seconds.",
+  "time_budget_seconds": 60,
+  "preferred_object": "sofa",
+  "required_capabilities": ["sit_down"],
+  "report_policy": "silent",
+  "risk": "low"
+}
+```
+
+Idle is not a terminal answer. When its completion condition is reached, it
+wakes the agenda loop and becomes another item in the behavioral history.
+
+## Novelty and meaningfulness
+
+Novelty does not mean randomness. A proposed pursuit should be both dissimilar
+to recent agenda entries and connected to at least one grounding source:
+
+- a user interest;
+- an unfinished or suspended activity;
+- an approved goal or plan;
+- an upcoming calendar commitment;
+- a new mailbox or workspace event;
+- a gap or contradiction found in existing knowledge;
+- a connection between remembered subjects;
+- a capability the agent has reason to practice;
+- a room or knowledge-maintenance need;
+- recovery after sustained activity.
+
+The experiment should retain proposals and outcomes so meaningfulness can be
+evaluated rather than assumed. Useful measures include:
+
+- semantic repetition rate;
+- percentage of pursuits with valid grounding evidence;
+- completion, abandonment, and failure rates;
+- average chain length between user interventions;
+- productive activity time versus idle and transition time;
+- number of distinct furniture objects and capabilities used;
+- user feedback on reported outcomes;
+- compute and tool cost per completed pursuit;
+- frequency of pursuits that create a durable artifact;
+- coherence between an intention and the one preceding it.
+
+The desired failure modes are also research results. A long chain that becomes
+repetitive, self-referential, trivial, or disconnected from the user is not
+human-like continuity merely because it is infinite.
+
+## User preemption
+
+A user task always takes foreground priority. It does not automatically erase
+the autonomous intention:
+
+```text
+autonomous pursuit active
+        |
+        | user request
+        v
+autonomous pursuit suspended
+        |
+        v
+user task active
+        |
+        | user task completes
+        v
+executive re-evaluates suspended pursuit
+        +-> resume
+        +-> leave queued behind a commitment
+        +-> abandon if no longer relevant
+```
+
+An explicit instruction to stop the autonomous pursuit abandons it. Otherwise,
+suspension and later resumption are important demonstrations of continuity.
+
+User-authored work retains priority zero in the existing per-client LLM queue.
+Autonomous agenda work remains passive or proactive according to whether it
+will enter the user's attention.
+
+## Reporting versus doing
+
+An intention may be meaningful without producing an interruption. Every entry
+declares a reporting policy:
+
+| Policy | Behavior |
+| --- | --- |
+| `silent` | Perform and record the pursuit without speaking |
+| `if_noteworthy` | Report only when the result passes a relevance threshold |
+| `on_completion` | Report the bounded result when finished |
+| `ask_first` | Obtain approval before execution or external effect |
+
+"Search today's technology news and report it" therefore has two decisions:
+whether the research is a worthwhile autonomous pursuit, and whether its result
+is worth spending the user's attention. The Presence Contract continues to
+govern the second decision.
+
+## Relationship to existing systems
+
+### Scheduler
+
+The scheduler remains the reliable clock and recurrence mechanism. A scheduled
+task becomes an agenda commitment when it is due. The agenda adds semantic
+continuity; it does not replace accurate wakeups, timers, or recurrence
+storage.
+
+### Autonomy planner
+
+The current planner scores fixed directions and dispatches isolated prompts.
+Under this architecture, those directions can help generate or score agenda
+proposals. The agenda owns the longer lifecycle across multiple prompts and
+tool calls.
+
+### Priority queue
+
+The existing queue continues to serialize LLM work. User tasks preempt agenda
+work. Agenda state makes interrupted autonomous work resumable rather than
+forgettable.
+
+### Furniture and world model
+
+An intention may name a preferred object, but all existing proximity gates
+still apply. The activity executor must walk to the appropriate furniture
+before a bound tool becomes visible or executable.
+
+### Plans and approval
+
+An agenda intention is not equivalent to a user-approved plan. Low-risk,
+reversible research, reading, reflection, and drafting may run autonomously.
+External communication, destructive changes, commitments on the user's behalf,
+and other consequential actions retain their existing approval boundaries.
+
+### Presence Contract
+
+Silent autonomous activity and user-facing interruption remain separate.
+Continuous private behavior must not imply continuous demands on the user's
+attention. Receipts, focus mode, snooze, affinity, and attention budgets remain
+in force.
+
+## Proposed module boundaries
+
+```text
+src/open_llm_vtuber/autonomy/
+  agenda.py             # persistence, entries, lifecycle, timeline queries
+  agenda_context.py     # targeted workspace and memory retrieval
+  agenda_planner.py     # structured LLM intention proposal
+  agenda_policy.py      # validation, novelty, budgets, approval rules
+  executive.py          # foreground ownership, preemption, resume selection
+  activity.py           # step execution and progress/completion events
+  driver.py             # event and fallback-cadence orchestration
+```
+
+The agenda store should be local, bounded, and human-readable. Older completed
+entries can be compacted into summaries while recent entries retain enough
+structure for novelty and coherence evaluation.
+
+## Initial implementation slice
+
+The first version should:
+
+1. Persist recent entries, one active entry, suspended entries, and a small
+   future queue.
+2. Support `pursuit`, `idle`, `scheduled`, and `user` entry kinds.
+3. Require every autonomous entry to have grounding, a time budget, and a
+   completion condition.
+4. Generate one proposal when the active autonomous entry completes or the
+   agenda otherwise needs reconsideration.
+5. Validate the proposal deterministically before accepting it.
+6. Suspend autonomous work when a user task arrives and reconsider it
+   afterward.
+7. Advance pursuits through interruptible embodied steps.
+8. Treat bounded idle as a normal link that schedules the next reconsideration,
+   never as termination of the chain.
+9. Preserve scheduler accuracy, tool proximity, queue priority, approval
+   boundaries, and the Presence Contract.
+10. Record enough non-content behavioral data to evaluate chain coherence,
+    repetition, grounding, cost, and productive time.
+
+## Research invariant
+
+The central invariant is:
+
+> When the agent is running and autonomy is enabled, its present behavior has an
+> agenda entry, and completing that entry leads to a bounded attempt to produce
+> the next grounded intention.
+
+This guarantees continuity of deliberation without granting any individual
+task unlimited time, authority, or resources. The resulting behavior chain may
+be indefinitely extensible; whether an LLM can keep that chain meaningful is
+the question the system is designed to test.
