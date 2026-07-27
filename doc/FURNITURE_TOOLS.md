@@ -17,7 +17,7 @@ Every skill lives at an object, alongside the `computer`, `calendar`, and `bed`.
 | Object | Server | Tools | State |
 | --- | --- | --- | --- |
 | `todo_list` | `todo` | `list_todos`, `add_todo`, `update_todo`, `complete_todo`, `remove_todo` | `<workspace>/todo/todos.json` |
-| `hourglass` | `timer` | `set_timer`, `list_timers`, `cancel_timer` | `<workspace>/scheduler_tasks.json` |
+| `hourglass` | `timer` | `set_timer`, `list_timers`, `cancel_timer` | `<workspace>/agenda/agenda.json` |
 | `window` | `weather` | `get_current_weather`, `get_weather_forecast` | none (live API) |
 | `archive shelf` | `drive` | Google Drive tools | Google account |
 | `mailbox` | `gmail` | Gmail tools | Google account |
@@ -71,7 +71,7 @@ at 500 items, and query results are bounded.
 
 ## Timers
 
-A timer is a one-shot scheduled task written into the scheduler's store, so the
+A timer is a one-shot scheduled entry written into the global agenda, so the
 background loop that already polls that file is what fires it. When a timer
 comes due the agent is woken once, tells the user, and the task is deleted.
 

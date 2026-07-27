@@ -139,8 +139,26 @@ async def handle_conversation_trigger(
     else:
         # Route through the priority queue instead of creating a task directly
         queue = get_queue(client_uid)
-        await queue.enqueue(
-            coro=process_single_conversation(
+        agenda_entry = None
+        executive = None
+        if msg_type != "ai-speak-signal":
+            from ..autonomy.executive import get_executive
+
+            executive = get_executive(client_uid)
+            if executive is not None:
+                if isinstance(user_input, str):
+                    title = " ".join(user_input.strip().split())[:120]
+                else:
+                    title = "Voice request"
+                agenda_entry = await executive.preempt_for_user(
+                    title or "Help the user"
+                )
+
+        async def agenda_finished(failed: bool) -> None:
+            if executive is not None and agenda_entry is not None:
+                await executive.finish_user(agenda_entry.id, failed=failed)
+
+        conversation = process_single_conversation(
                 context=context,
                 websocket_send=websocket.send_text,
                 client_uid=client_uid,
@@ -148,10 +166,22 @@ async def handle_conversation_trigger(
                 images=images,
                 session_emoji=session_emoji,
                 metadata=metadata,
-            ),
-            priority=priority,
-            label=f"{msg_type} ({session_emoji})",
-        )
+            )
+        if agenda_entry is None:
+            await queue.enqueue(
+                coro=conversation,
+                priority=priority,
+                label=f"{msg_type} ({session_emoji})",
+            )
+        else:
+            await queue.enqueue(
+                coro=conversation,
+                priority=priority,
+                label=f"{msg_type} ({session_emoji})",
+                entry_id=agenda_entry.id,
+                work_class="user",
+                on_finished=agenda_finished,
+            )
 
 
 async def handle_individual_interrupt(

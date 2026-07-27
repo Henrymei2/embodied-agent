@@ -1,64 +1,42 @@
-"""Autonomous behavior engine for the embodied agent.
+"""Persistent global agenda and Presence Contract."""
 
-Implements the scope's daily-planner / routines loop: the agent periodically
-decides, on its own initiative, whether to act along a behavioral direction
-(curiosity, care, housekeeping, growth, social presence, work) and how to
-deliver it (silently, by asking permission, by speaking briefly, or not at all),
-subject to configurable interruption controls.
-"""
-
-from .directions import Direction
-from .driver import autonomy_loop
-from .habits import (
-    HabitStore,
-    LearnedHabit,
-    RelevanceGates,
-    get_or_create_habit_store,
-    parse_habit_proposal,
-    reflect_and_propose,
+from .agenda import (
+    AgendaEntry,
+    AgendaEvent,
+    AgendaState,
+    AgendaStore,
+    CompletionCondition,
+    ExecutionCheckpoint,
+    Motivation,
+    ProposalRejection,
+    ResourceBudget,
+    ScheduleSpec,
+    create_entry,
+    get_agenda_store,
 )
-from .observation import Observation
-from .planner import (
-    ACT_ASK,
-    ACT_NOTHING,
-    ACT_SILENT,
-    ACT_SPEAK,
-    AutonomyPlanner,
-    PlannerDecision,
-)
-from .presence import (
-    DISMISSED,
-    HELPFUL,
-    SNOOZED,
-    PresenceLedger,
-    PresenceReceipt,
-    attention_cost,
-)
+from .driver import agenda_loop, autonomy_loop
+from .executive import AgendaExecutive, get_executive
+from .presence import PresenceLedger, PresenceReceipt
 from .settings import AutonomySettings
-from .state import AutonomyState
 
 __all__ = [
-    "ACT_ASK",
-    "ACT_NOTHING",
-    "ACT_SILENT",
-    "ACT_SPEAK",
-    "AutonomyPlanner",
+    "AgendaEntry",
+    "AgendaEvent",
+    "AgendaExecutive",
+    "AgendaState",
+    "AgendaStore",
     "AutonomySettings",
-    "AutonomyState",
-    "Direction",
-    "HabitStore",
-    "LearnedHabit",
-    "Observation",
-    "PlannerDecision",
+    "CompletionCondition",
+    "ExecutionCheckpoint",
+    "Motivation",
     "PresenceLedger",
     "PresenceReceipt",
-    "RelevanceGates",
-    "HELPFUL",
-    "DISMISSED",
-    "SNOOZED",
-    "attention_cost",
+    "ProposalRejection",
+    "ResourceBudget",
+    "ScheduleSpec",
+    "agenda_loop",
     "autonomy_loop",
-    "get_or_create_habit_store",
-    "parse_habit_proposal",
-    "reflect_and_propose",
+    "create_entry",
+    "get_agenda_store",
+    "get_executive",
 ]

@@ -1,62 +1,25 @@
-"""Runtime settings for autonomous behavior, including interruption controls.
-
-The three interruption controls from the project scope are exposed here as
-human-friendly enums (low/medium/high, quiet/proactive/talkative,
-strict/balanced/loose) and mapped to the numeric knobs the planner actually
-uses. Keeping the mapping in one place makes the behavior easy to tune.
-"""
+"""Runtime settings for the continuous global agenda."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# interruption_frequency -> (base act probability, min seconds between spoken
-# interruptions, intrusiveness sensitivity multiplier).
-_FREQUENCY_MAP: dict[str, tuple[float, float, float]] = {
-    "low": (0.25, 3600.0, 1.4),
-    "medium": (0.50, 1800.0, 1.0),
-    "high": (0.80, 600.0, 0.6),
-}
-
-# Minimum wall-clock gap between completed autonomous jobs. Meaningful
-# observation events may wake the planner early, but must not multiply the
-# number of actions merely because the frontend publishes more heartbeats.
-_ACTION_GAP_MAP: dict[str, float] = {
-    "low": 3600.0,
-    "medium": 900.0,
-    "high": 300.0,
-}
-
-# help_style -> additive bias applied to *spoken* deliveries (negative = prefer
-# staying silent, positive = happier to speak).
-_HELP_STYLE_SPEAK_BIAS: dict[str, float] = {
-    "quiet": -0.15,
-    "proactive": 0.0,
-    "talkative": 0.15,
-}
-
-# confidence_threshold -> (minimum score to act at all, minimum score to
-# surface via speech rather than acting silently).
-_CONFIDENCE_MAP: dict[str, tuple[float, float]] = {
-    "strict": (0.60, 0.75),
-    "balanced": (0.45, 0.60),
-    "loose": (0.30, 0.45),
-}
-
-_VALID_FREQUENCY = set(_FREQUENCY_MAP)
-_VALID_HELP_STYLE = set(_HELP_STYLE_SPEAK_BIAS)
-_VALID_CONFIDENCE = set(_CONFIDENCE_MAP)
-
-
 @dataclass(frozen=True)
 class AutonomySettings:
-    """Immutable settings bundle consumed by the planner and driver."""
+    """Immutable agenda, pacing, retention, and attention settings."""
 
     enabled: bool = True
-    tick_seconds: int = 900  # how often the autonomy loop wakes (default 15 min)
-    interruption_frequency: str = "medium"
-    help_style: str = "proactive"
-    confidence_threshold: str = "balanced"
+    default_pursuit_seconds: int = 900
+    maximum_pursuit_seconds: int = 1800
+    idle_min_seconds: int = 60
+    idle_max_seconds: int = 600
+    planner_retry_limit: int = 3
+    planner_retry_backoff_seconds: float = 2.0
+    step_timeout_seconds: int = 120
+    fallback_reconsideration_seconds: int = 300
+    restart_recovery_grace_seconds: int = 10
+    terminal_history_hours: int = 24
+    terminal_history_entries: int = 30
     # Refillable presence budget. Silent work costs 0.25, asking costs 1.25,
     # and proactive speech costs 2 points.
     attention_budget: float = 6.0
@@ -65,28 +28,24 @@ class AutonomySettings:
     default_snooze_minutes: int = 60
 
     def __post_init__(self) -> None:
-        # Normalize/validate; fall back to the sensible middle option rather
-        # than raising, so a bad config value never crashes the loop.
         object.__setattr__(
-            self,
-            "interruption_frequency",
-            self.interruption_frequency
-            if self.interruption_frequency in _VALID_FREQUENCY
-            else "medium",
+            self, "default_pursuit_seconds", max(30, int(self.default_pursuit_seconds))
         )
         object.__setattr__(
-            self,
-            "help_style",
-            self.help_style if self.help_style in _VALID_HELP_STYLE else "proactive",
+            self, "maximum_pursuit_seconds", max(60, int(self.maximum_pursuit_seconds))
         )
+        object.__setattr__(self, "idle_min_seconds", max(5, int(self.idle_min_seconds)))
         object.__setattr__(
             self,
-            "confidence_threshold",
-            self.confidence_threshold
-            if self.confidence_threshold in _VALID_CONFIDENCE
-            else "balanced",
+            "idle_max_seconds",
+            max(self.idle_min_seconds, int(self.idle_max_seconds)),
         )
-        object.__setattr__(self, "tick_seconds", max(30, int(self.tick_seconds)))
+        object.__setattr__(self, "planner_retry_limit", max(1, int(self.planner_retry_limit)))
+        object.__setattr__(
+            self,
+            "fallback_reconsideration_seconds",
+            max(10, int(self.fallback_reconsideration_seconds)),
+        )
         object.__setattr__(
             self, "attention_budget", max(1.0, min(100.0, float(self.attention_budget)))
         )
@@ -103,35 +62,6 @@ class AutonomySettings:
             "default_snooze_minutes",
             max(5, min(1440, int(self.default_snooze_minutes))),
         )
-
-    # --- derived numeric knobs ------------------------------------------- #
-    @property
-    def base_act_probability(self) -> float:
-        return _FREQUENCY_MAP[self.interruption_frequency][0]
-
-    @property
-    def min_speak_gap_seconds(self) -> float:
-        return _FREQUENCY_MAP[self.interruption_frequency][1]
-
-    @property
-    def min_action_gap_seconds(self) -> float:
-        return _ACTION_GAP_MAP[self.interruption_frequency]
-
-    @property
-    def intrusion_sensitivity(self) -> float:
-        return _FREQUENCY_MAP[self.interruption_frequency][2]
-
-    @property
-    def speak_bias(self) -> float:
-        return _HELP_STYLE_SPEAK_BIAS[self.help_style]
-
-    @property
-    def act_threshold(self) -> float:
-        return _CONFIDENCE_MAP[self.confidence_threshold][0]
-
-    @property
-    def speak_threshold(self) -> float:
-        return _CONFIDENCE_MAP[self.confidence_threshold][1]
 
     @classmethod
     def from_config(cls, system_config: object | None) -> "AutonomySettings":
@@ -151,12 +81,25 @@ class AutonomySettings:
             return cls(enabled=permitted)
         return cls(
             enabled=bool(getattr(cfg, "enabled", True)) and permitted,
-            tick_seconds=int(getattr(cfg, "tick_seconds", 900)),
-            interruption_frequency=str(
-                getattr(cfg, "interruption_frequency", "medium")
+            default_pursuit_seconds=int(getattr(cfg, "default_pursuit_seconds", 900)),
+            maximum_pursuit_seconds=int(getattr(cfg, "maximum_pursuit_seconds", 1800)),
+            idle_min_seconds=int(getattr(cfg, "idle_min_seconds", 60)),
+            idle_max_seconds=int(getattr(cfg, "idle_max_seconds", 600)),
+            planner_retry_limit=int(getattr(cfg, "planner_retry_limit", 3)),
+            planner_retry_backoff_seconds=float(
+                getattr(cfg, "planner_retry_backoff_seconds", 2)
             ),
-            help_style=str(getattr(cfg, "help_style", "proactive")),
-            confidence_threshold=str(getattr(cfg, "confidence_threshold", "balanced")),
+            step_timeout_seconds=int(getattr(cfg, "step_timeout_seconds", 120)),
+            fallback_reconsideration_seconds=int(
+                getattr(cfg, "fallback_reconsideration_seconds", 300)
+            ),
+            restart_recovery_grace_seconds=int(
+                getattr(cfg, "restart_recovery_grace_seconds", 10)
+            ),
+            terminal_history_hours=int(getattr(cfg, "terminal_history_hours", 24)),
+            terminal_history_entries=int(
+                getattr(cfg, "terminal_history_entries", 30)
+            ),
             attention_budget=float(getattr(cfg, "attention_budget", 6.0)),
             attention_refill_per_hour=float(
                 getattr(cfg, "attention_refill_per_hour", 1.0)

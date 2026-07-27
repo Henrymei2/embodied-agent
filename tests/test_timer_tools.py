@@ -45,17 +45,21 @@ def test_timers_are_listed_soonest_first(timer):
 
 
 def test_timer_is_a_one_shot_scheduler_task(timer):
-    """The scheduler loop fires and then deletes it, so it must not repeat."""
-    from src.open_llm_vtuber.furniture_state import load_tasks
+    """Timers are one-shot schedule templates in the authoritative agenda."""
+    from src.open_llm_vtuber.autonomy.agenda import get_agenda_store
 
     created = _decode(timer.set_timer(5, label="stretch"))["timer"]
-    task = load_tasks()[created["timer_id"]]
+    task = next(
+        entry
+        for entry in get_agenda_store().load().entries
+        if entry.id == created["timer_id"]
+    )
 
-    assert task["interval_seconds"] is None
-    assert task["report"] is True
-    assert task["priority"] == 10
-    assert "stretch" in task["prompt"]
-    due = datetime.fromisoformat(task["next_run"])
+    assert task.schedule.interval_seconds is None
+    assert task.schedule.report is True
+    assert task.schedule.priority == 10
+    assert "stretch" in task.schedule.prompt
+    due = datetime.fromisoformat(task.schedule.next_run)
     assert timedelta(minutes=4) < due - now_local() <= timedelta(minutes=5)
 
 

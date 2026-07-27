@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -39,10 +38,10 @@ from loguru import logger
 # The task file is shared with the timer tools and with the read-only routes
 # behind the furniture hover windows, so its location, format, and atomic
 # writer live in one place.
-from src.open_llm_vtuber.furniture_state import (
-    delete_task as _delete_task,
-    load_tasks as _load_tasks,
-    mutate_tasks as _mutate_tasks,
+from src.open_llm_vtuber.autonomy.agenda import (
+    ScheduleSpec,
+    create_entry,
+    get_agenda_store,
 )
 from src.open_llm_vtuber.utils.timezone import now_local
 
@@ -92,25 +91,30 @@ def schedule_task(
     if priority == 0:
         return "Error: priority 0 is reserved for live user requests. Use 10 or higher."
 
-    task_id = str(uuid.uuid4())[:8]
     next_run = _iso(now_local() + timedelta(seconds=delay_seconds))
-
-    task = {
-        "id": task_id,
-        "prompt": prompt,
-        "priority": priority,
-        "interval_seconds": interval_seconds,
-        "report": report,
-        "next_run": next_run,
-        "created_at": _now_iso(),
-        "run_count": 0,
-    }
-
-    _mutate_tasks(lambda tasks: tasks.__setitem__(task_id, task))
+    entry = create_entry(
+        kind="scheduled",
+        title=prompt.strip()[:120] or "Scheduled task",
+        description=prompt,
+        origin="scheduled",
+        evidence_refs=["schedule:user-or-agent-request"],
+        completion_condition="Execute the scheduled prompt once.",
+        time_budget_seconds=900,
+        status="queued",
+        report_policy="on_completion" if report else "silent",
+        schedule=ScheduleSpec(
+            next_run=next_run,
+            interval_seconds=interval_seconds,
+            priority=priority,
+            report=report,
+            prompt=prompt,
+        ),
+    )
+    get_agenda_store().add(entry)
 
     kind = f"every {interval_seconds}s" if interval_seconds else "one-time"
     return (
-        f"OK: scheduled task {task_id} ({kind}) at priority {priority}. "
+        f"OK: scheduled task {entry.id} ({kind}) at priority {priority}. "
         f"First run: {next_run}. Report to user: {report}."
     )
 
@@ -122,21 +126,25 @@ def list_tasks() -> str:
     Returns:
         A summary of every pending task, or a message if none exist.
     """
-    tasks = _load_tasks()
+    tasks = [
+        entry
+        for entry in get_agenda_store().load().entries
+        if entry.schedule and entry.status in {"queued", "suspended"}
+    ]
     if not tasks:
         return "No tasks currently scheduled."
 
     lines = []
-    for task in sorted(tasks.values(), key=lambda t: t["priority"]):
+    for task in sorted(tasks, key=lambda item: item.schedule.priority):
         kind = (
-            f"every {task['interval_seconds']}s"
-            if task.get("interval_seconds")
+            f"every {task.schedule.interval_seconds}s"
+            if task.schedule.interval_seconds
             else "one-time"
         )
         lines.append(
-            f"[{task['id']}] priority={task['priority']} {kind} "
-            f"next={task['next_run']} report={task['report']}\n"
-            f"  prompt: {task['prompt']}"
+            f"[{task.id}] priority={task.schedule.priority} {kind} "
+            f"next={task.schedule.next_run} report={task.schedule.report}\n"
+            f"  prompt: {task.schedule.prompt}"
         )
     return "\n".join(lines)
 
@@ -152,93 +160,31 @@ def remove_task(task_id: str) -> str:
     Returns:
         Confirmation that the task was removed, or an error if not found.
     """
-    if not _delete_task(task_id):
+    try:
+        get_agenda_store().remove_queued(task_id)
+    except (KeyError, ValueError):
         return f"Error: no task found with id '{task_id}'."
     return f"OK: removed task {task_id}."
 
 
 # ── Default tasks (loaded on startup) ─────────────────────────────────────────
 
-DEFAULT_TASKS = [
-    {
-        "prompt": "Check what time it is and greet the user if this is the first interaction of the day.",
-        "priority": 10,
-        "interval_seconds": 3600,  # every hour
-        "delay_seconds": 0,
-        "report": True,
-        "description": "hourly_greeting",
-    },
-    {
-        "prompt": "Review the user's recent activity and check if they seem idle or stuck. If so, offer help quietly.",
-        "priority": 20,
-        "interval_seconds": 1800,  # every 30 minutes
-        "delay_seconds": 300,  # start after 5 minutes
-        "report": False,
-        "description": "idle_check",
-    },
-]
+DEFAULT_TASKS = []
 
 
 def _initialize_default_tasks() -> None:
     """Add default tasks on first launch if they don't already exist."""
 
-    def add_defaults(tasks: dict) -> int:
-        # Check by description field to avoid duplicating on restart.
-        existing_descriptions = {t.get("description") for t in tasks.values()}
-        added = 0
-        for default in DEFAULT_TASKS:
-            if default["description"] in existing_descriptions:
-                continue
-
-            task_id = str(uuid.uuid4())[:8]
-            next_run = _iso(
-                now_local() + timedelta(seconds=default.get("delay_seconds", 0))
-            )
-            tasks[task_id] = {
-                "id": task_id,
-                "prompt": default["prompt"],
-                "priority": default["priority"],
-                "interval_seconds": default["interval_seconds"],
-                "report": default["report"],
-                "next_run": next_run,
-                "created_at": _now_iso(),
-                "run_count": 0,
-                "description": default["description"],
-            }
-            added += 1
-        return added
-
-    added = _mutate_tasks(add_defaults, save_if=bool)
-    if added:
-        logger.info(f"Scheduler: initialized {added} default task(s).")
+    return None
 
 
 def _claim_due_tasks(now: datetime) -> list[tuple[str, dict]]:
     """Advance/remove due tasks atomically before they are enqueued."""
 
-    def claim(tasks: dict) -> list[tuple[str, dict]]:
-        due: list[tuple[str, dict]] = []
-        for task_id, task in list(tasks.items()):
-            next_run = datetime.fromisoformat(task["next_run"])
-            if next_run.tzinfo is None:
-                # Legacy tasks persisted before timestamps were made timezone-aware.
-                next_run = next_run.replace(tzinfo=now.tzinfo)
-            if now < next_run:
-                continue
-
-            claimed = dict(task)
-            claimed["run_count"] = task.get("run_count", 0) + 1
-            due.append((task_id, claimed))
-
-            interval = task.get("interval_seconds")
-            if interval:
-                task["run_count"] = claimed["run_count"]
-                task["next_run"] = _iso(now + timedelta(seconds=interval))
-            else:
-                del tasks[task_id]
-        return due
-
-    return _mutate_tasks(claim, save_if=bool)
+    return [
+        (entry.id, {"prompt": entry.description, "priority": 10, "report": True})
+        for entry in get_agenda_store().claim_due(now)
+    ]
 
 
 # ── Background execution loop ──────────────────────────────────────────────────

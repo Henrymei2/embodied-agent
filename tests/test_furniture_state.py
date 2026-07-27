@@ -213,20 +213,23 @@ def test_scheduler_routes_list_and_delete_events():
 
     from src.open_llm_vtuber.routes import init_scheduler_routes
 
-    furniture_state.save_tasks(
-        {
-            "event1": {
-                "id": "event1",
-                "prompt": "Check the weather",
-                "priority": 10,
-                "interval_seconds": None,
-                "report": True,
-                "next_run": datetime.now().isoformat(timespec="seconds"),
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "run_count": 0,
-            }
-        }
+    from src.open_llm_vtuber.autonomy.agenda import (
+        ScheduleSpec,
+        create_entry,
+        get_agenda_store,
     )
+
+    entry = create_entry(
+        kind="scheduled",
+        title="Check the weather",
+        description="Check the weather",
+        origin="scheduled",
+        evidence_refs=["schedule:test"],
+        completion_condition="Weather checked.",
+        time_budget_seconds=60,
+        schedule=ScheduleSpec(next_run=datetime.now().astimezone().isoformat()),
+    )
+    get_agenda_store().add(entry)
     app = FastAPI()
     app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_scheduler_routes())
@@ -235,12 +238,12 @@ def test_scheduler_routes_list_and_delete_events():
     response = client.get("/api/scheduler/events")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["events"][0]["kind"] == "one_time"
+    assert response.json()["events"][0]["kind"] == "scheduled"
 
-    deleted = client.delete("/api/scheduler/events/event1")
+    deleted = client.delete(f"/api/scheduler/events/{entry.id}")
     assert deleted.status_code == 200
-    assert deleted.json() == {"deleted": True, "id": "event1"}
-    assert furniture_state.load_tasks() == {}
+    assert deleted.json() == {"deleted": True, "id": entry.id}
+    assert all(item.id != entry.id for item in get_agenda_store().load().entries)
     assert client.delete("/api/scheduler/events/event1").status_code == 404
 
 

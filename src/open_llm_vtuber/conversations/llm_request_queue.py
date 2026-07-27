@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Callable, Coroutine, Dict, Optional
+from typing import Awaitable, Callable, Coroutine, Dict, Optional
 
 from loguru import logger
 
@@ -38,7 +38,12 @@ class _QueueItem:
     coro_factory: Optional[Callable[[], Coroutine]] = field(compare=False, default=None)
     label: str = field(compare=False, default="")
     dedupe_key: Optional[str] = field(compare=False, default=None)
+    entry_id: Optional[str] = field(compare=False, default=None)
+    work_class: str = field(compare=False, default="user")
     on_done: Optional[Callable[[str, Optional[BaseException]], None]] = field(
+        compare=False, default=None
+    )
+    on_finished: Optional[Callable[[bool], Awaitable[None]]] = field(
         compare=False, default=None
     )
 
@@ -52,6 +57,7 @@ class ClientRequestQueue:
         self._worker_task: Optional[asyncio.Task] = None
         self._current_task: Optional[asyncio.Task] = None
         self._current_priority: Optional[int] = None
+        self._current_item: Optional[_QueueItem] = None
         self._pending_keys: set[str] = set()
         self._sequence = 0
         self._stopping = False
@@ -98,6 +104,9 @@ class ClientRequestQueue:
         coro_factory: Optional[Callable[[], Coroutine]] = None,
         dedupe_key: Optional[str] = None,
         on_done: Optional[Callable[[str, Optional[BaseException]], None]] = None,
+        entry_id: Optional[str] = None,
+        work_class: str = "user",
+        on_finished: Optional[Callable[[bool], Awaitable[None]]] = None,
     ) -> bool:
         """Add work to the queue, optionally deduplicated until completion.
 
@@ -122,16 +131,29 @@ class ClientRequestQueue:
             coro_factory=coro_factory,
             label=label,
             dedupe_key=dedupe_key,
+            entry_id=entry_id,
+            work_class=work_class,
             on_done=on_done,
+            on_finished=on_finished,
         )
         if dedupe_key:
             self._pending_keys.add(dedupe_key)
         await self._queue.put(item)
+        should_preempt_autonomous = (
+            work_class == "user"
+            and self._current_item is not None
+            and self._current_item.work_class == "autonomous"
+        )
         if (
             self._current_task is not None
             and not self._current_task.done()
-            and self._current_priority is not None
-            and priority < self._current_priority
+            and (
+                should_preempt_autonomous
+                or (
+                    self._current_priority is not None
+                    and priority < self._current_priority
+                )
+            )
         ):
             self._current_task.cancel()
             logger.info(
@@ -184,6 +206,7 @@ class ClientRequestQueue:
                     if work is None:
                         raise RuntimeError("queued work did not produce a coroutine")
                     self._current_priority = item.priority
+                    self._current_item = item
                     self._current_task = asyncio.create_task(work)
                     await self._current_task
                 except asyncio.CancelledError:
@@ -200,8 +223,17 @@ class ClientRequestQueue:
                         f"LLMQueue: error in '{item.label}' for {self.client_uid}: {e}"
                     )
                 finally:
+                    if item.on_finished is not None:
+                        try:
+                            await item.on_finished(status != "completed")
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                f"LLMQueue: agenda completion callback failed "
+                                f"for '{item.label}': {exc}"
+                            )
                     self._current_task = None
                     self._current_priority = None
+                    self._current_item = None
                     self._dispose_item(item, status, error)
                     self._queue.task_done()
             except asyncio.CancelledError:

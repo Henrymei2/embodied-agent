@@ -84,10 +84,13 @@ including what that evidence cannot settle on its own.
 ### Scheduling and autonomy
 
 - One-time and recurring tasks support priorities and silent/reported results.
-- Autonomous directions cover curiosity, care, housekeeping, growth, social
-  presence, and project work.
-- Planner scores usefulness, novelty, intrusiveness, risk, cadence, and learned
-  direction affinity.
+- A persistent global agenda owns one foreground intention, suspended work,
+  scheduled commitments, bounded idle, and one generated successor.
+- Structured LLM roles generate intentions and interruptible activity steps;
+  deterministic policy validates grounding, novelty, capabilities, budgets,
+  approval requirements, and reporting policy.
+- The agenda store is authoritative for one-time and recurring schedules,
+  timers, reminders, restart recovery, and atomic due claims.
 - Presence Contract adds a finite attention budget, focus mode, snooze, coarse
   presence signals, receipts, and explicit helpful/dismissed feedback.
 - A server-owned supervisor survives frontend disconnects, elects one active
@@ -139,7 +142,7 @@ Persistent stage <---- validated result ---+
 | 2D room and navigation | Complete | stage v8, world model, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
 | Memory and personality | Complete | contextual/daily/long-term memory, hybrid keyword/embedding retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
-| Autonomous behavior MVP | Complete | scored planner, directions, cadence, Presence Contract |
+| Continuous autonomous behavior | Complete | persistent agenda, structured steps, true user preemption, unified schedules, Presence Contract |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |
 | Calendar object/tool | Complete | Google OAuth, primary-calendar CRUD, connection window, dual proximity enforcement |
 | Just-in-time contextual help | Complete | coarse screen context, confidence/frequency gating, daily-memory task changes |

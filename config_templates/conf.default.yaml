@@ -41,10 +41,17 @@ system_config:
   # work) and how to deliver it, subject to these interruption controls.
   autonomy_config:
     enabled: true
-    tick_seconds: 900              # how often the agent considers acting (min 30)
-    interruption_frequency: 'medium'   # low | medium | high
-    help_style: 'proactive'            # quiet | proactive | talkative
-    confidence_threshold: 'balanced'   # strict | balanced | loose
+    default_pursuit_seconds: 900
+    maximum_pursuit_seconds: 1800
+    idle_min_seconds: 60
+    idle_max_seconds: 600
+    planner_retry_limit: 3
+    planner_retry_backoff_seconds: 2
+    step_timeout_seconds: 120
+    fallback_reconsideration_seconds: 300
+    restart_recovery_grace_seconds: 10
+    terminal_history_hours: 24
+    terminal_history_entries: 30
     # Presence Contract: proactive behavior spends a refillable attention budget
     # and emits local, inspectable receipts. Costs: silent=.25, ask=1.25, speak=2.
     attention_budget: 6.0

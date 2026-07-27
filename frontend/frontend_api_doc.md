@@ -342,3 +342,11 @@ On connection, the backend sends:
 The frontend validates this document before rendering it. Scene MCP reads use
 the same persisted document, so the LLM's spatial view, execution-time safety
 gate, and visible avatar stay consistent across restarts.
+## Global agenda
+
+`GET /api/agenda` returns the authoritative snapshot with `paused`, `active`,
+`entries`, and `updated_at`. Control routes pause/resume the chain, abandon or
+resume entries, remove/reorder queued entries, and request reconsideration.
+The server emits `agenda-snapshot`, `agenda-step-updated`, `agenda-paused`, and
+`agenda-resumed` WebSocket messages. Treat snapshots as authoritative after a
+reconnect.

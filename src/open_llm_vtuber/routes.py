@@ -23,11 +23,9 @@ from .furniture_state import (
     drawing_board_image_path,
     drawing_board_snapshot,
     bookshelf_snapshot,
-    delete_task,
     plan_snapshot,
     reading_snapshot,
     record_plan_decision,
-    scheduler_events_snapshot,
     timer_snapshot,
     todo_snapshot,
 )
@@ -319,6 +317,38 @@ def init_furniture_routes() -> APIRouter:
                 {"error": "no plan is awaiting a decision under that id"},
                 status_code=404,
             )
+        # A linked consequential agenda proposal can advance only through this
+        # user-only decision route.
+        from .autonomy.agenda import get_agenda_store
+        from .autonomy.executive import get_connected_executive
+
+        agenda = get_agenda_store()
+        try:
+            state = await run_in_threadpool(agenda.load)
+            linked = next(
+                (
+                    entry
+                    for entry in state.entries
+                    if entry.plan_id == plan_id and entry.status == "blocked_approval"
+                ),
+                None,
+            )
+            if linked is not None:
+                await run_in_threadpool(
+                    agenda.transition,
+                    linked.id,
+                    "queued" if decision == "approved" else "abandoned",
+                    progress_summary=f"Linked plan was {decision} by the user.",
+                )
+                executive = get_connected_executive()
+                if executive:
+                    executive.wake()
+        except (OSError, ValueError):
+            logger.exception("Could not update linked agenda proposal")
+            return JSONResponse(
+                {"error": "plan changed but linked agenda update failed"},
+                status_code=503,
+            )
         return JSONResponse(
             {"plan_id": plan_id, "status": plan["status"]},
             headers={"Cache-Control": "no-store"},
@@ -339,7 +369,9 @@ def init_furniture_routes() -> APIRouter:
 
 
 def init_scheduler_routes() -> APIRouter:
-    """Expose pending scheduler events to the local management UI."""
+    """Expose agenda-backed scheduled entries to the management UI."""
+    from .autonomy.agenda import get_agenda_store
+
     router = APIRouter(
         prefix="/api/scheduler",
         dependencies=[Depends(require_trusted_http_request)],
@@ -347,7 +379,25 @@ def init_scheduler_routes() -> APIRouter:
 
     @router.get("/events")
     async def scheduler_events():
-        payload = await run_in_threadpool(scheduler_events_snapshot)
+        state = await run_in_threadpool(get_agenda_store().load)
+        events = []
+        for entry in state.entries:
+            if not entry.schedule or entry.status not in {"queued", "suspended"}:
+                continue
+            events.append(
+                {
+                    "id": entry.id,
+                    "kind": "timer" if entry.schedule.timer else "scheduled",
+                    "label": entry.metadata.get("label", ""),
+                    "prompt": entry.schedule.prompt or entry.description,
+                    "priority": entry.schedule.priority,
+                    "next_run": entry.schedule.next_run,
+                    "interval_seconds": entry.schedule.interval_seconds,
+                    "report": entry.schedule.report,
+                }
+            )
+        events.sort(key=lambda item: item["next_run"])
+        payload = {"available": True, "events": events}
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @router.delete("/events/{event_id}")
@@ -355,16 +405,116 @@ def init_scheduler_routes() -> APIRouter:
         if not event_id or len(event_id) > 128:
             return JSONResponse({"error": "invalid event id"}, status_code=400)
         try:
-            deleted = await run_in_threadpool(delete_task, event_id)
+            await run_in_threadpool(get_agenda_store().remove_queued, event_id)
         except OSError:
-            logger.exception("Could not update the scheduler task store")
+            logger.exception("Could not update the agenda store")
             return JSONResponse(
                 {"error": "scheduled event could not be deleted"},
                 status_code=503,
             )
-        if not deleted:
+        except (KeyError, ValueError):
             return JSONResponse({"error": "scheduled event not found"}, status_code=404)
         return JSONResponse({"deleted": True, "id": event_id})
+
+    return router
+
+
+def init_agenda_routes() -> APIRouter:
+    """Inspect and control the authoritative global agenda."""
+    from .autonomy.agenda import get_agenda_store
+    from .autonomy.executive import get_connected_executive
+
+    router = APIRouter(
+        prefix="/api/agenda",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
+
+    @router.get("")
+    async def agenda_snapshot(offset: int = 0, limit: int = 100):
+        if offset < 0 or limit < 1 or limit > 200:
+            return JSONResponse({"error": "invalid pagination"}, status_code=400)
+        try:
+            payload = await run_in_threadpool(
+                get_agenda_store().snapshot, offset=offset, limit=limit
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+    @router.post("/pause")
+    async def pause_agenda():
+        executive = get_connected_executive()
+        if executive:
+            await executive.pause(True)
+        else:
+            await run_in_threadpool(get_agenda_store().pause, True)
+        return JSONResponse({"paused": True})
+
+    @router.post("/resume")
+    async def resume_agenda():
+        executive = get_connected_executive()
+        if executive:
+            await executive.pause(False)
+        else:
+            await run_in_threadpool(get_agenda_store().pause, False)
+        return JSONResponse({"paused": False})
+
+    @router.post("/reconsider")
+    async def reconsider_agenda():
+        executive = get_connected_executive()
+        if executive is None:
+            return JSONResponse({"error": "no connected agenda session"}, status_code=409)
+        executive.wake()
+        return JSONResponse({"accepted": True})
+
+    @router.post("/entries/{entry_id}/abandon")
+    async def abandon_agenda_entry(entry_id: str):
+        try:
+            executive = get_connected_executive()
+            if executive:
+                await executive.abandon(entry_id)
+            else:
+                await run_in_threadpool(
+                    get_agenda_store().transition,
+                    entry_id,
+                    "abandoned",
+                    progress_summary="Stopped by user.",
+                )
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "entry cannot be abandoned"}, status_code=409)
+        return JSONResponse({"id": entry_id, "status": "abandoned"})
+
+    @router.post("/entries/{entry_id}/resume")
+    async def resume_agenda_entry(entry_id: str):
+        try:
+            entry = await run_in_threadpool(
+                get_agenda_store().transition, entry_id, "queued"
+            )
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "entry cannot be resumed"}, status_code=409)
+        executive = get_connected_executive()
+        if executive:
+            executive.wake()
+        return JSONResponse({"id": entry.id, "status": entry.status})
+
+    @router.delete("/entries/{entry_id}")
+    async def remove_agenda_entry(entry_id: str):
+        try:
+            await run_in_threadpool(get_agenda_store().remove_queued, entry_id)
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "entry cannot be removed"}, status_code=409)
+        return JSONResponse({"deleted": True, "id": entry_id})
+
+    @router.post("/entries/{entry_id}/position")
+    async def reorder_agenda_entry(entry_id: str, payload: dict = Body(...)):
+        try:
+            position = int(payload.get("position"))
+            entry = await run_in_threadpool(
+                get_agenda_store().reorder, entry_id, position
+            )
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse({"error": "entry cannot be reordered"}, status_code=409)
+        return JSONResponse({"id": entry.id, "position": entry.queue_position})
 
     return router
 
