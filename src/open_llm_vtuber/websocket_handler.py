@@ -266,24 +266,33 @@ class WebSocketHandler:
     ) -> ServiceContext:
         """Initialize service context for a new session by cloning the default context"""
         session_service_context = ServiceContext()
-        await session_service_context.load_cache(
-            config=self.default_context_cache.config.model_copy(deep=True),
-            system_config=self.default_context_cache.system_config.model_copy(
-                deep=True
-            ),
-            character_config=self.default_context_cache.character_config.model_copy(
-                deep=True
-            ),
-            asr_engine=self.default_context_cache.asr_engine,
-            tts_engine=self.default_context_cache.tts_engine,
-            vad_engine=self.default_context_cache.vad_engine,
-            agent_engine=self.default_context_cache.agent_engine,
-            translate_engine=self.default_context_cache.translate_engine,
-            mcp_server_registery=self.default_context_cache.mcp_server_registery,
-            tool_adapter=self.default_context_cache.tool_adapter,
-            send_text=send_text,
-            client_uid=client_uid,
-        )
+        try:
+            await session_service_context.load_cache(
+                config=self.default_context_cache.config.model_copy(deep=True),
+                system_config=self.default_context_cache.system_config.model_copy(
+                    deep=True
+                ),
+                character_config=self.default_context_cache.character_config.model_copy(
+                    deep=True
+                ),
+                asr_engine=self.default_context_cache.asr_engine,
+                tts_engine=self.default_context_cache.tts_engine,
+                vad_engine=self.default_context_cache.vad_engine,
+                agent_engine=self.default_context_cache.agent_engine,
+                translate_engine=self.default_context_cache.translate_engine,
+                mcp_server_registery=self.default_context_cache.mcp_server_registery,
+                tool_adapter=self.default_context_cache.tool_adapter,
+                send_text=send_text,
+                client_uid=client_uid,
+            )
+        except BaseException:
+            try:
+                await session_service_context.close()
+            except Exception as exc:  # noqa: BLE001 - preserve initialization failure
+                logger.warning(
+                    f"Error closing partially initialized context for {client_uid}: {exc}"
+                )
+            raise
         return session_service_context
 
     async def handle_websocket_communication(
@@ -396,96 +405,82 @@ class WebSocketHandler:
 
     async def handle_disconnect(self, client_uid: str) -> None:
         """Handle client disconnection"""
-        context = self.client_contexts.get(client_uid)
-        group = self.chat_group_manager.get_client_group(client_uid)
+        try:
+            group = self.chat_group_manager.get_client_group(client_uid)
+        except Exception as exc:  # noqa: BLE001 - cleanup must still detach resources
+            logger.warning(f"Failed reading group for disconnect {client_uid}: {exc}")
+            group = None
         if group:
-            await handle_group_interrupt(
-                group_id=group.group_id,
-                heard_response="",
-                current_conversation_tasks=self.current_conversation_tasks,
-                chat_group_manager=self.chat_group_manager,
-                client_contexts=self.client_contexts,
-                broadcast_to_group=self.broadcast_to_group,
-            )
+            try:
+                await handle_group_interrupt(
+                    group_id=group.group_id,
+                    heard_response="",
+                    current_conversation_tasks=self.current_conversation_tasks,
+                    chat_group_manager=self.chat_group_manager,
+                    client_contexts=self.client_contexts,
+                    broadcast_to_group=self.broadcast_to_group,
+                )
+            except Exception as exc:  # noqa: BLE001 - disconnect cleanup must continue
+                logger.warning(f"Failed interrupting group for {client_uid}: {exc}")
 
-        await handle_client_disconnect(
-            client_uid=client_uid,
-            chat_group_manager=self.chat_group_manager,
-            client_connections=self.client_connections,
-            send_group_update=self.send_group_update,
-        )
+        try:
+            await handle_client_disconnect(
+                client_uid=client_uid,
+                chat_group_manager=self.chat_group_manager,
+                client_connections=self.client_connections,
+                send_group_update=self.send_group_update,
+            )
+        except Exception as exc:  # noqa: BLE001 - peer notification is best-effort
+            logger.warning(
+                f"Failed notifying group of disconnect for {client_uid}: {exc}"
+            )
 
         from .study import end_session, log_event
 
-        log_event("client_disconnected")
+        try:
+            log_event("client_disconnected")
+        except Exception as exc:  # noqa: BLE001 - telemetry must not block cleanup
+            logger.warning(f"Failed logging disconnect for {client_uid}: {exc}")
 
-        # Clean up other client data
-        self.client_connections.pop(client_uid, None)
-        self.client_contexts.pop(client_uid, None)
-        self.received_data_buffers.pop(client_uid, None)
+        await self._cleanup_failed_connection(client_uid)
+
         if not self.client_connections:
             # A study session is one sitting with one participant, so it closes
             # when the last window does rather than on every reconnect.
-            end_session()
+            try:
+                end_session()
+            except Exception as exc:  # noqa: BLE001 - resources are already detached
+                logger.warning(f"Failed ending study session: {exc}")
         # Click times are keyed per (client, object), so a reconnecting client
         # would otherwise leave one entry per object it ever touched.
         for key in [key for key in self._object_click_times if key[0] == client_uid]:
             del self._object_click_times[key]
 
-        await self._cancel_and_await_tasks(
-            client_uid,
-            [
-                ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
-                ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
-                (
-                    "conversation",
-                    self.current_conversation_tasks.pop(client_uid, None),
-                ),
-            ],
-        )
-
-        from .frontend_bridge import unregister_client_sender
-
-        unregister_client_sender(client_uid)
-        from .client_registry import unregister_client
-
-        unregister_client(client_uid)
-        from .autonomy.observation import clear_client_presence
-        from .autonomy.presence import unregister_presence_ledger
-        from .autonomy.screen_context import clear_screen_context
-
-        clear_client_presence(client_uid)
-        clear_screen_context(client_uid)
-        unregister_presence_ledger(client_uid)
-        from .conversations.llm_request_queue import remove_queue
-
-        remove_queue(client_uid)
-
-        # Call context close to clean up resources (e.g., MCPClient)
-        if context:
-            await context.close()
-
         logger.info(f"Client {client_uid} disconnected")
-        message_handler.cleanup_client(client_uid)
 
     async def _cleanup_failed_connection(self, client_uid: str) -> None:
-        """Clean up failed connection data"""
+        """Detach and best-effort clean every resource owned by a connection."""
         self.client_connections.pop(client_uid, None)
         context = self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
-        self.chat_group_manager.client_group_map.pop(client_uid, None)
 
-        await self._cancel_and_await_tasks(
-            client_uid,
-            [
-                ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
-                ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
-                (
-                    "conversation",
-                    self.current_conversation_tasks.pop(client_uid, None),
-                ),
-            ],
-        )
+        # Every step below is independent, and the context close at the end is
+        # the one that releases MCP subprocesses. Nothing here may raise past
+        # it: a step that throws would strand those for the life of the server.
+        try:
+            await self._cancel_and_await_tasks(
+                client_uid,
+                [
+                    ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
+                    ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
+                    (
+                        "conversation",
+                        self.current_conversation_tasks.pop(client_uid, None),
+                    ),
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 - continue remaining cleanup
+            logger.warning(f"Failed cancelling tasks for {client_uid}: {exc}")
 
         # Mirror handle_disconnect so a connection that fails mid-setup doesn't
         # leak the queue/worker, bridge sender, client registry, or context.
@@ -496,20 +491,37 @@ class WebSocketHandler:
         from .autonomy.screen_context import clear_screen_context
         from .conversations.llm_request_queue import remove_queue
 
-        unregister_client_sender(client_uid)
-        unregister_client(client_uid)
-        clear_client_presence(client_uid)
-        clear_screen_context(client_uid)
-        unregister_presence_ledger(client_uid)
-        remove_queue(client_uid)
+        cleanup_steps = [
+            (
+                "group registration",
+                getattr(self.chat_group_manager, "remove_client", None),
+            ),
+            # After `remove_client`, which reads this map to find the group.
+            (
+                "group map",
+                lambda uid: self.chat_group_manager.client_group_map.pop(uid, None),
+            ),
+            ("frontend sender", unregister_client_sender),
+            ("client registry", unregister_client),
+            ("presence observation", clear_client_presence),
+            ("screen context", clear_screen_context),
+            ("presence ledger", unregister_presence_ledger),
+            ("request queue", remove_queue),
+            ("message handler", message_handler.cleanup_client),
+        ]
+        for name, cleanup in cleanup_steps:
+            if cleanup is None:
+                continue
+            try:
+                cleanup(client_uid)
+            except Exception as exc:  # noqa: BLE001 - continue remaining cleanup
+                logger.warning(f"Failed cleaning {name} for {client_uid}: {exc}")
 
         if context:
             try:
                 await context.close()
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup
                 logger.warning(f"Error closing context for failed {client_uid}: {exc}")
-
-        message_handler.cleanup_client(client_uid)
 
     async def broadcast_to_group(
         self, group_members: list[str], message: dict, exclude_uid: str = None

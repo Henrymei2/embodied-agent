@@ -41,6 +41,26 @@ and starts the avatar clear of all of them; both are enforced by
 one object therefore never unlocks another object's tools, and the first use of
 any object-bound tool is always preceded by a walk.
 
+**Object labels are unique**, because the gate matches on them. Two objects
+called `computer` would let a decoy placed beside the agent answer for the real
+one, so an agent at the design board could mint itself shell access without the
+walk — the exact move an injected instruction would reach for. Uniqueness is
+checked when a room is saved, on both sides, comparing case- and
+whitespace-insensitively. A room that reaches the world model with a duplicate
+anyway has that name withheld from the gate entirely, so the tools lock rather
+than open. Rooms saved before the rule existed are repaired on load: the shipped
+furniture keeps its name and the newcomer becomes `computer 2`, which gates
+nothing.
+
+Uniqueness is checked against the name an object *answers to*, not the one
+written on it: a blank label is not a name, so the object's id stands in.
+Clearing the computer's label would otherwise free `computer` for a decoy while
+the world model still called both by that name — which fails closed, but locks
+the real computer's tools for good. `effective_label` in `world_model.py` is
+that one definition, and validation, load-time repair, and the click channel all
+read it. Names are capped at 80 characters, because `describe_room` reads them
+back to the model.
+
 ## Todo list
 
 Items carry a `high`/`normal`/`low` priority and an optional due date, which

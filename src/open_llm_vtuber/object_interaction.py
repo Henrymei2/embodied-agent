@@ -17,6 +17,7 @@ from typing import Any
 from loguru import logger
 
 from .stage_state_manager import get_reachable_objects, load_stage_state
+from .world_model import effective_label
 
 # Long enough that a double-click or an excited tap is one turn, short enough
 # that pointing at two objects in a row still reads as two remarks.
@@ -52,7 +53,9 @@ def describe_click(conf_uid: str, object_id: str) -> dict[str, Any] | None:
         logger.info(f"Object interaction: no object named {object_id!r} in the room.")
         return None
 
-    label = str(node.get("label") or node.get("id"))[:_MAX_LABEL]
+    # The name the gate matches on, so "you are standing near the X" agrees
+    # with whether the tools at X are actually open.
+    label = (effective_label(node) or object_id)[:_MAX_LABEL]
     is_avatar = node.get("type") == "avatar"
 
     try:

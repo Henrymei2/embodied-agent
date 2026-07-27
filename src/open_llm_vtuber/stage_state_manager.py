@@ -2,7 +2,8 @@ import copy
 import json
 import os
 import re
-from pathlib import Path
+from functools import lru_cache
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from loguru import logger
@@ -11,10 +12,17 @@ from .utils.timezone import now_local
 from .world_model import (
     REACH_CEILING as WORLD_REACH_CEILING,
     World,
+    warn_once,
     default_world_block,
+    effective_label,
     world_from_stage,
 )
 
+
+# How long an object's name may be. The gate matches on it, `describe_room`
+# reads it back to the model, and a click quotes it, so it is a name rather
+# than a place to put prose.
+LABEL_LIMIT = 80
 
 STAGE_VERSION = 8
 STAGE_BASE_DIR = "stage_state"
@@ -42,15 +50,15 @@ UI_WINDOW_PROVIDERS = (
 # Avatar postures. Anything else is rejected, and walking clears the pose, so a
 # seated avatar can never be shown mid-stride.
 AVATAR_POSES = ("standing", "sitting")
-_WINDOWS_RESERVED_NAMES = frozenset(
-    {"con", "prn", "aux", "nul"}
-    | {f"com{index}" for index in range(1, 10)}
-    | {f"lpt{index}" for index in range(1, 10)}
-)
 
 
 def _is_safe_filename(filename: str) -> bool:
-    if not isinstance(filename, str) or not filename or len(filename) > 255:
+    if not isinstance(filename, str) or not filename:
+        return False
+    try:
+        if len(filename.encode("utf-8")) > 255:
+            return False
+    except UnicodeEncodeError:
         return False
     if filename != filename.strip() or filename.endswith("."):
         return False
@@ -60,7 +68,7 @@ def _is_safe_filename(filename: str) -> bool:
     # Reject path separators, drive colons, wildcards and control characters.
     if re.search(r'[\\/:*?"<>|\x00-\x1f]', filename):
         return False
-    if filename.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_NAMES:
+    if PureWindowsPath(filename).is_reserved():
         return False
     return bool(re.fullmatch(r"[\w\-_\u0020-\u007E\u00A0-\uFFFF]+", filename))
 
@@ -590,6 +598,17 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _canonical_node_ids() -> frozenset[str]:
+    """The ids the shipped room defines, which never change during a run.
+
+    Deriving these built a whole default stage — fifteen nodes and a timestamp
+    — on every `load_stage_state`, which the proximity gate calls several times
+    a turn.
+    """
+    return frozenset(node["id"] for node in get_default_stage()["nodes"])
+
+
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -988,6 +1007,12 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
         errors.append("Stage can contain at most 80 nodes.")
     else:
         seen_ids: set[str] = set()
+        # Tools are gated on an object's *label*, so two objects answering to
+        # one name would let a second "computer" placed next to the agent
+        # unlock the real computer's tools without the walk. Labels are
+        # therefore unique, compared the way a careless collision would look
+        # rather than byte for byte.
+        seen_labels: dict[str, str] = {}
         valid_types = {"shape", "text", "image", "avatar", "panel"}
         allowed_style = {
             "background",
@@ -1011,12 +1036,31 @@ def validate_stage(stage: Any) -> tuple[bool, list[str]]:
                 errors.append(f"Node id {node_id} is duplicated.")
             else:
                 seen_ids.add(node_id)
+            label = effective_label(node)
+            if label is not None:
+                key = label.casefold()
+                if key in seen_labels:
+                    errors.append(
+                        f"Node {node_id or index} label duplicates "
+                        f"{seen_labels[key]}; object labels must be unique."
+                    )
+                else:
+                    seen_labels[key] = str(node_id or index)
             if node.get("type") not in valid_types:
                 errors.append(f"Node {node_id or index} type is invalid.")
             for key in ["x", "y", "width", "height"]:
                 if not _is_number(node.get(key)):
                     errors.append(f"Node {node_id or index} {key} must be numeric.")
             style = node.get("style")
+            # A label is read back out into the model's context by
+            # `describe_room`, so an unbounded one is a way to spend the whole
+            # context window on a single object. Matches the frontend's rule.
+            if (
+                not _is_safe_text(node.get("label"), LABEL_LIMIT)
+                or not _is_safe_text(node.get("text"))
+                or not _is_safe_text(node.get("alt"), 160)
+            ):
+                errors.append(f"Node {node_id or index} contains unsafe text length.")
             if node.get("src") is not None and not _is_safe_asset_src(node.get("src")):
                 errors.append(f"Node {node_id or index} src is invalid.")
             _validate_texture(node.get("texture"), str(node_id or index), errors)
@@ -1067,7 +1111,7 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
     try:
         with open(filepath, "r", encoding="utf-8") as file:
             stage = json.load(file)
-        stage = migrate_stage(stage)
+        stage = _repair_stage(migrate_stage(stage))
         metadata = stage.get("metadata")
         if (
             not isinstance(metadata, dict)
@@ -1086,6 +1130,86 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
         logger.error(f"Failed to load stage state for {conf_uid}: {e}")
 
     return get_default_stage(conf_uid)
+
+
+def _repair_stage(stage: Any) -> Any:
+    """Make a stored room loadable, keeping as much of the layout as possible.
+
+    Names became unique, and bounded, only once tools were gated on them and
+    `describe_room` began reading them back to the model. A room saved before
+    those rules could hold two `computer`s or a label the length of a chapter,
+    and any room can be hand-edited into one `validate_stage` refuses. Refusing
+    to *load* it would cost the user their whole layout over something they are
+    not doing wrong, so it is repaired here instead — the alternative is
+    replacing sixteen good objects because of one bad field.
+
+    Saving a bad room is still refused outright, so nothing silently renames an
+    object out from under the agent that just placed it.
+
+    Note the repair is not written back, so the file on disk keeps whatever it
+    had; each load repeats this. That is deliberate — loading is not the place
+    to rewrite a user's file — and it is why the warning below fires once.
+    """
+    if not isinstance(stage, dict) or not isinstance(stage.get("nodes"), list):
+        return stage
+
+    taken: set[str] = set()
+    repairs: list[str] = []
+
+    # A node with no usable id cannot be repaired: nothing can reference it,
+    # no tool can be gated on it, and the renderer keys on that id. Dropping
+    # the one corrupt entry keeps the other sixteen, where leaving it in means
+    # validation rejects the document and the whole layout is replaced.
+    keep = [
+        node
+        for node in stage["nodes"]
+        if isinstance(node, dict) and isinstance(node.get("id"), str) and node["id"]
+    ]
+    if len(keep) != len(stage["nodes"]):
+        repairs.append(
+            f"dropped {len(stage['nodes']) - len(keep)} unidentifiable node(s)"
+        )
+        stage["nodes"] = keep
+
+    # Overlong or non-string text next: the uniqueness pass below assigns
+    # names, and it must not hand out one the validator would then reject.
+    for node in stage["nodes"]:
+        for field, limit in (("label", LABEL_LIMIT), ("text", 500), ("alt", 160)):
+            value = node.get(field)
+            if value is None or _is_safe_text(value, limit):
+                continue
+            node[field] = str(value)[:limit] if isinstance(value, str) else None
+            repairs.append(f"{field} of {node.get('id')!r} shortened")
+
+    # The shipped furniture keeps its name; anything else gives way to it.
+    canonical = _canonical_node_ids()
+    ordered = sorted(stage["nodes"], key=lambda node: node["id"] not in canonical)
+    for node in ordered:
+        # The effective name, so a node whose label was blanked is still seen
+        # answering to its id — otherwise a decoy could share that name, and
+        # the world model would lock both objects' tools forever.
+        label = effective_label(node)
+        if label is None:
+            continue
+        if label.casefold() not in taken:
+            taken.add(label.casefold())
+            continue
+        for suffix in range(2, 100):
+            # Truncated to leave room for the suffix, so repairing a room can
+            # never produce a label the validator would then reject.
+            marker = f" {suffix}"
+            candidate = label[: LABEL_LIMIT - len(marker)].rstrip() + marker
+            if candidate.casefold() not in taken:
+                node["label"] = candidate
+                taken.add(candidate.casefold())
+                repairs.append(f"{label!r} -> {candidate!r}")
+                break
+
+    if repairs:
+        # The repair is not written back, so a stored room reports the same
+        # thing on every load. Say it once.
+        warn_once(tuple(repairs), f"Stage: repaired stored room: {repairs}")
+    return stage
 
 
 def load_world(conf_uid: str) -> World:

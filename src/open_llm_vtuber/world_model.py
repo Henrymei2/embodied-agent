@@ -19,6 +19,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
+from loguru import logger
+
 # One world unit is a centimetre, so the shipped 960x540 room is 9.6m x 5.4m.
 UNITS_PER_METER = 100.0
 
@@ -47,6 +49,38 @@ def _number(value: Any) -> float | None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
+
+
+# Complaints already made. A broken room is read several times a turn, and the
+# same warning on every read buries everything else in the log.
+_warned: set[Any] = set()
+
+
+def warn_once(key: Any, message: str) -> None:
+    if key in _warned:
+        return
+    _warned.add(key)
+    logger.warning(message)
+
+
+def effective_label(node: Any) -> str | None:
+    """The name an object actually answers to, or None if it has none.
+
+    The gate matches on this string, so every layer that reasons about names —
+    validation, repair, the world itself — has to agree on what it is. A blank
+    or whitespace-only label is not a name, so the id stands in; runs of
+    whitespace are collapsed, so ``"reading  chair"`` cannot quietly become a
+    second object that the room's own furniture is already called.
+    """
+    if not isinstance(node, dict):
+        return None
+    label = node.get("label")
+    if isinstance(label, str):
+        normalized = " ".join(label.split())
+        if normalized:
+            return normalized
+    node_id = node.get("id")
+    return node_id if isinstance(node_id, str) and node_id else None
 
 
 def reach_for(
@@ -137,10 +171,44 @@ class World:
             obj for obj in self.objects if obj.is_reachable_from(point, within=within)
         )
 
+    def ambiguous_labels(self) -> frozenset[str]:
+        """Names worn by more than one object, which therefore name nothing.
+
+        Case-folded, because that is the collision the save-time validators
+        refuse. Comparing exactly would leave this weaker than the rule it
+        exists to back up: a room holding `computer` and `Computer` would look
+        unambiguous here while being unsavable there.
+        """
+        seen: set[str] = set()
+        repeated: set[str] = set()
+        for obj in self.objects:
+            key = obj.label.casefold()
+            (repeated if key in seen else seen).add(key)
+        return frozenset(repeated)
+
     def reachable_labels(self, *, within: float | None = None) -> list[str]:
-        """Labels the proximity gate should currently admit, failing closed."""
+        """Labels the proximity gate should currently admit, failing closed.
+
+        A label shared by two objects is withheld even when the agent is
+        standing at one of them. The gate asks "is the agent near the
+        computer?", and a room containing two computers cannot answer that;
+        refusing costs a tool until the room is fixed, while trusting would let
+        a decoy placed next to the agent stand in for the real object.
+        """
+        ambiguous = self.ambiguous_labels()
+        if ambiguous:
+            # Once per distinct set of names: the gate resolves reachability
+            # several times a turn, and a room that cannot be repaired would
+            # otherwise fill the log for the rest of the session.
+            warn_once(
+                ambiguous,
+                "World: refusing ambiguous object label(s) "
+                f"{sorted(ambiguous)}; the tools bound to them stay locked.",
+            )
         return [
-            obj.label for obj in self.reachable_from(self.agent_position, within=within)
+            obj.label
+            for obj in self.reachable_from(self.agent_position, within=within)
+            if obj.label.casefold() not in ambiguous
         ]
 
     def path_to(self, destination: WorldPoint) -> tuple[WorldPoint, ...]:
@@ -204,12 +272,11 @@ def _object_from_node(node: Any, ceiling: float) -> WorldObject | None:
         else reach_for(width, height, ceiling=ceiling)
     )
 
-    label = node.get("label")
     interaction = node.get("interaction")
 
     return WorldObject(
         id=node_id,
-        label=label if isinstance(label, str) and label else node_id,
+        label=effective_label(node) or node_id,
         position=WorldPoint(x, y),
         footprint=(abs(width), abs(height)),
         reach=reach,

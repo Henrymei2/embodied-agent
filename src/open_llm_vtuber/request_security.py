@@ -40,8 +40,40 @@ def _hostname_from_host_header(host_header: str | None) -> str:
 def _host_and_port(host_header: str | None) -> tuple[str, int | None]:
     if not host_header:
         return "", None
+    if (
+        host_header != host_header.strip()
+        or any(character in host_header for character in "/\\@?#")
+        or any(
+            ord(character) < 0x20 or ord(character) == 0x7F for character in host_header
+        )
+        or any(character.isspace() for character in host_header)
+    ):
+        return "", None
+
+    if host_header.startswith("["):
+        closing_bracket = host_header.find("]")
+        suffix = host_header[closing_bracket + 1 :] if closing_bracket >= 0 else ""
+        if closing_bracket <= 1 or (
+            suffix and (not suffix.startswith(":") or not suffix[1:].isdigit())
+        ):
+            return "", None
+    else:
+        if "[" in host_header or "]" in host_header or host_header.count(":") > 1:
+            return "", None
+        if ":" in host_header and not host_header.rsplit(":", 1)[1].isdigit():
+            return "", None
+
     try:
         parsed = urlsplit(f"//{host_header}")
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            return "", None
         return _normalize_hostname(parsed.hostname), parsed.port
     except ValueError:
         return "", None

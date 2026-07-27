@@ -72,6 +72,10 @@ including what that evidence cannot settle on its own.
   avatar clear of all of them, so one object never unlocks another's tools and
   the first use of any is preceded by a walk.
 - Gating occurs at schema exposure and again at execution time.
+- Object labels are unique, so a second object cannot answer for a gated one:
+  a decoy `computer` placed beside the agent would otherwise hand it the real
+  computer's tools without the walk. Refused on save by both validators, and
+  withheld from the gate by the world model if a room reaches it anyway.
 - Missing/invalid scene identity fails closed for object-gated tools.
 - Objects whose removal would strand their tools cannot be removed.
 - Frontend actions are routed by exact client and character; replies from a

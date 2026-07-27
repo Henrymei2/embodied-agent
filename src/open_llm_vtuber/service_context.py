@@ -280,7 +280,10 @@ class ServiceContext:
         self.asr_engine = asr_engine
         self.tts_engine = tts_engine
         self.vad_engine = vad_engine
-        self.agent_engine = agent_engine
+        # A connected session owns a fresh agent. Do not temporarily attach the
+        # shared cached agent: if later session initialization fails, closing
+        # the partial context must never close the application-wide instance.
+        self.agent_engine = None if client_uid else agent_engine
         self.translate_engine = translate_engine
         # Load potentially shared components by reference
         self.mcp_server_registery = mcp_server_registery
@@ -298,7 +301,6 @@ class ServiceContext:
         # Agent instances contain mutable conversation state and session-bound
         # tool executors, so connected clients must not share the cached agent.
         if self.client_uid:
-            self.agent_engine = None
             await self.init_agent(
                 self.character_config.agent_config,
                 self.character_config.persona_prompt,

@@ -7,13 +7,13 @@ import numpy as np
 from fastapi import (
     APIRouter,
     WebSocket,
-    UploadFile,
-    File,
     Response,
     Body,
     Request,
     Depends,
 )
+from starlette.datastructures import FormData, UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
@@ -39,6 +39,72 @@ from .request_security import (
     require_trusted_http_request,
 )
 from .utils.timezone import now_local
+
+
+_MAX_ASR_UPLOAD_BYTES = 50 * 1024 * 1024  # ~27 min of 16-bit 16kHz mono
+_MAX_ASR_REQUEST_BYTES = _MAX_ASR_UPLOAD_BYTES + 64 * 1024
+
+
+class _ASRUploadTooLarge(MultiPartException):
+    """Raised while streaming an ASR multipart body over its hard limit."""
+
+
+async def _bounded_asr_request_stream(request: Request):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_size = int(content_length)
+        except ValueError as exc:
+            raise MultiPartException("Invalid Content-Length header") from exc
+        if declared_size < 0:
+            raise MultiPartException("Invalid Content-Length header")
+        if declared_size > _MAX_ASR_REQUEST_BYTES:
+            raise _ASRUploadTooLarge("Audio upload is too large")
+
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > _MAX_ASR_REQUEST_BYTES:
+            raise _ASRUploadTooLarge("Audio upload is too large")
+        yield chunk
+
+
+async def _read_asr_upload(request: Request) -> tuple[bytes, str | None]:
+    """Stream and close one multipart audio upload under a hard request bound.
+
+    Stricter than the `File(...)` binding this replaced: exactly one file part
+    named `file` and no other form fields, so a request cannot carry unbounded
+    extras alongside the audio. The bundled clients send only `file`; a
+    third-party client that appends its own field now gets a 400.
+    """
+
+    # Reading the body directly means the framework no longer rejects a request
+    # that is not an upload at all. `MultiPartParser` raises `KeyError` on the
+    # missing boundary, which would be reported as a server error for what is
+    # plainly a malformed client request.
+    content_type = request.headers.get("content-type", "")
+    if content_type.lower().split(";")[0].strip() != "multipart/form-data":
+        raise MultiPartException("A multipart/form-data audio upload is required")
+
+    parser = MultiPartParser(
+        headers=request.headers,
+        stream=_bounded_asr_request_stream(request),
+        max_files=1,
+        max_fields=0,
+    )
+    form: FormData | None = None
+    try:
+        form = await parser.parse()
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise ValueError("A multipart audio file named 'file' is required")
+        contents = await upload.read(_MAX_ASR_UPLOAD_BYTES + 1)
+        if len(contents) > _MAX_ASR_UPLOAD_BYTES:
+            raise _ASRUploadTooLarge("Audio upload is too large")
+        return contents, upload.filename
+    finally:
+        if form is not None:
+            await form.close()
 
 
 def _decode_asr_wav(contents: bytes) -> np.ndarray:
@@ -503,28 +569,34 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         """Redirect /web_tool to /web_tool/index.html"""
         return Response(status_code=302, headers={"Location": "/web-tool/index.html"})
 
-    # Reject absurdly large uploads before buffering them all in memory.
-    max_asr_upload_bytes = 50 * 1024 * 1024  # ~27 min of 16-bit 16kHz mono
-
     @router.post(
         "/asr",
         dependencies=[Depends(require_trusted_http_request)],
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "multipart/form-data": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "file": {"type": "string", "format": "binary"}
+                            },
+                            "required": ["file"],
+                        }
+                    }
+                },
+            }
+        },
     )
-    async def transcribe_audio(file: UploadFile = File(...)):
+    async def transcribe_audio(request: Request):
         """
         Endpoint for transcribing audio using the ASR engine
         """
-        logger.info(f"Received audio file for transcription: {file.filename}")
 
         try:
-            contents = await file.read(max_asr_upload_bytes + 1)
-            if len(contents) > max_asr_upload_bytes:
-                return Response(
-                    content=json.dumps({"error": "Audio file too large"}),
-                    status_code=413,
-                    media_type="application/json",
-                )
-
+            contents, filename = await _read_asr_upload(request)
+            logger.info(f"Received audio file for transcription: {filename}")
             audio_array = _decode_asr_wav(contents)
 
             if default_context_cache.asr_engine is None:
@@ -542,6 +614,20 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
             logger.info(f"Transcription result: {text}")
             return {"text": text}
 
+        except _ASRUploadTooLarge as e:
+            logger.warning(f"Rejected oversized audio upload: {e}")
+            return Response(
+                content=json.dumps({"error": str(e)}),
+                status_code=413,
+                media_type="application/json",
+            )
+        except MultiPartException as e:
+            logger.warning(f"Rejected invalid multipart audio upload: {e}")
+            return Response(
+                content=json.dumps({"error": str(e)}),
+                status_code=400,
+                media_type="application/json",
+            )
         except ValueError as e:
             logger.error(f"Audio format error: {e}")
             return Response(

@@ -105,7 +105,13 @@ class Session:
 
 def read_events(path: Path) -> Iterable[dict[str, Any]]:
     """Yield the readable events in one log, skipping any truncated tail."""
-    with path.open("r", encoding="utf-8") as handle:
+    try:
+        handle = path.open("r", encoding="utf-8")
+    except OSError as exc:
+        # One unreadable file must not cost the report every other session.
+        print(f"Skipping {path.name}: {exc}", file=sys.stderr)
+        return
+    with handle:
         for line in handle:
             line = line.strip()
             if not line:

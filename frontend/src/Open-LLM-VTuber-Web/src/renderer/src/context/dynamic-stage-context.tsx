@@ -717,6 +717,18 @@ const isSafeText = (value: unknown, maxLength = 500) => (
   value === undefined || (typeof value === "string" && value.length <= maxLength)
 );
 
+// The name an object actually answers to. A blank label is not a name, so the
+// id stands in — otherwise clearing a label would let a second object share it
+// unnoticed. Mirrors effective_label() in world_model.py.
+const effectiveLabel = (node: Record<string, unknown>): string | undefined => {
+  const label = node.label;
+  if (typeof label === "string") {
+    const normalized = label.trim().replace(/\s+/g, " ");
+    if (normalized) return normalized;
+  }
+  return typeof node.id === "string" && node.id ? node.id : undefined;
+};
+
 const isSafeColor = (value: unknown) => (
   value === undefined ||
   (
@@ -1090,6 +1102,10 @@ export const validateStageDocument = (candidate: unknown): {
     errors.push("Stage can contain at most 80 nodes.");
   } else {
     const ids = new Set<string>();
+    // Tools are gated on an object's label, so two objects answering to one
+    // name would let a decoy stand in for the real thing. Matches the
+    // backend's rule in stage_state_manager.validate_stage.
+    const labels = new Map<string, string>();
     candidate.nodes.forEach((node, index) => {
       if (!isRecord(node)) {
         errors.push(`Node ${index} must be an object.`);
@@ -1102,6 +1118,18 @@ export const validateStageDocument = (candidate: unknown): {
         errors.push(`Node id ${id} is duplicated.`);
       } else {
         ids.add(id);
+      }
+      const name = effectiveLabel(node);
+      if (name !== undefined) {
+        const key = name.toLowerCase();
+        const owner = labels.get(key);
+        if (owner !== undefined) {
+          errors.push(
+            `Node ${id || index} label duplicates ${owner}; object labels must be unique.`,
+          );
+        } else {
+          labels.set(key, String(id || index));
+        }
       }
       if (!isStageNodeType(node.type)) {
         errors.push(`Node ${id || index} type is invalid.`);

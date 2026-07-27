@@ -375,3 +375,155 @@ async def test_failed_connection_cleanup_closes_context_once(monkeypatch):
     assert autonomy_task.cancelled()
     assert scheduler_task.cancelled()
     assert conversation_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_notification_failure_still_releases_resources(monkeypatch):
+    class FakeContext:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    class FakeGroupManager:
+        def __init__(self):
+            self.client_group_map = {"client": ""}
+
+        def get_client_group(self, _client_uid):
+            return None
+
+        def remove_client(self, client_uid):
+            self.client_group_map.pop(client_uid, None)
+            return []
+
+    context = FakeContext()
+    finalized = asyncio.Event()
+
+    async def background_task():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            finalized.set()
+
+    task = asyncio.create_task(background_task())
+    await asyncio.sleep(0)
+
+    handler = WebSocketHandler.__new__(WebSocketHandler)
+    handler.client_connections = {"client": object()}
+    handler.client_contexts = {"client": context}
+    handler.received_data_buffers = {"client": object()}
+    handler.chat_group_manager = FakeGroupManager()
+    handler.autonomy_tasks = {"client": task}
+    handler.scheduler_tasks = {}
+    handler.current_conversation_tasks = {}
+    handler._object_click_times = {}
+    handler.send_group_update = None
+
+    import src.open_llm_vtuber.study as study
+    import src.open_llm_vtuber.websocket_handler as websocket_handler
+
+    async def fail_notification(**_kwargs):
+        raise RuntimeError("peer send failed")
+
+    monkeypatch.setattr(
+        websocket_handler,
+        "handle_client_disconnect",
+        fail_notification,
+    )
+    monkeypatch.setattr(study, "log_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(study, "end_session", lambda: None)
+    monkeypatch.setattr(
+        websocket_handler.message_handler,
+        "cleanup_client",
+        lambda _client_uid: None,
+    )
+
+    await handler.handle_disconnect("client")
+
+    assert "client" not in handler.client_connections
+    assert "client" not in handler.client_contexts
+    assert context.closed is True
+    assert finalized.is_set()
+    assert task.done()
+
+
+@pytest.mark.asyncio
+async def test_session_context_is_closed_when_initialization_fails(monkeypatch):
+    class Copyable:
+        def model_copy(self, deep=False):
+            return self
+
+    class FailingContext:
+        instance = None
+
+        def __init__(self):
+            self.closed = False
+            self.__class__.instance = self
+
+        async def load_cache(self, **_kwargs):
+            self.partial_resource = object()
+            raise RuntimeError("agent initialization failed")
+
+        async def close(self):
+            self.closed = True
+
+    handler = WebSocketHandler.__new__(WebSocketHandler)
+    handler.default_context_cache = SimpleNamespace(
+        config=Copyable(),
+        system_config=Copyable(),
+        character_config=Copyable(),
+        asr_engine=None,
+        tts_engine=None,
+        vad_engine=None,
+        agent_engine=None,
+        translate_engine=None,
+        mcp_server_registery=None,
+        tool_adapter=None,
+    )
+
+    import src.open_llm_vtuber.websocket_handler as websocket_handler
+
+    monkeypatch.setattr(websocket_handler, "ServiceContext", FailingContext)
+
+    with pytest.raises(RuntimeError, match="agent initialization failed"):
+        await handler._init_service_context(lambda _text: None, "client")
+
+    assert FailingContext.instance.closed is True
+
+
+@pytest.mark.asyncio
+async def test_session_load_never_attaches_shared_cached_agent(monkeypatch):
+    context = ServiceContext()
+    shared_agent = object()
+    basic_memory = SimpleNamespace(use_mcpp=False, mcp_disabled_servers=[])
+    character_config = SimpleNamespace(
+        conf_uid="character",
+        agent_config=SimpleNamespace(
+            agent_settings=SimpleNamespace(basic_memory_agent=basic_memory)
+        ),
+    )
+
+    async def fail_mcp_initialization(*_args, **_kwargs):
+        raise RuntimeError("MCP initialization failed")
+
+    monkeypatch.setattr(
+        context,
+        "_init_mcp_components",
+        fail_mcp_initialization,
+    )
+
+    with pytest.raises(RuntimeError, match="MCP initialization failed"):
+        await context.load_cache(
+            config=object(),
+            system_config=object(),
+            character_config=character_config,
+            asr_engine=None,
+            tts_engine=None,
+            vad_engine=None,
+            agent_engine=shared_agent,
+            translate_engine=None,
+            client_uid="client",
+        )
+
+    assert context.agent_engine is None

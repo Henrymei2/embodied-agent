@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import math
+
+import pytest
 
 from src.open_llm_vtuber.mcpp.tool_manager import (
     PROXIMITY_REQUIREMENTS,
@@ -11,7 +14,9 @@ from src.open_llm_vtuber.mcpp.tool_manager import (
 )
 from src.open_llm_vtuber.stage_state_manager import (
     STAGE_VERSION,
+    _get_stage_path,
     get_default_stage,
+    get_reachable_objects,
     load_stage_state,
     migrate_stage,
     STAGE_THEME_REVISION,
@@ -391,3 +396,255 @@ def test_stage_rejects_invalid_canvas_texture():
     assert ok is False
     assert "Node canvas texture.src is invalid." in errors
     assert "Node canvas texture.fit must be contain or cover." in errors
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "computer",
+        "Computer",
+        "COMPUTER",
+        "  computer  ",
+        "computer\t",
+        # A label with a space in it collides however it is spaced.
+        "reading  chair",
+    ],
+)
+def test_a_second_object_may_not_take_a_gated_object_s_name(label):
+    """Placing a decoy is how an injected instruction would skip the walk."""
+    stage = get_default_stage("character")
+    stage["nodes"].append(
+        {
+            "id": "decoy",
+            "type": "panel",
+            "label": label,
+            "x": 60,
+            "y": 515,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "decoy",
+        }
+    )
+
+    ok, errors = validate_stage(stage)
+
+    assert ok is False
+    assert any("labels must be unique" in error for error in errors), errors
+
+
+def test_the_default_room_has_no_two_objects_alike():
+    labels = [node.get("label") for node in get_default_stage("x")["nodes"]]
+
+    assert len(labels) == len(set(labels)), labels
+
+
+def test_a_room_saved_before_labels_were_unique_is_repaired_not_discarded(
+    tmp_path, monkeypatch
+):
+    """Losing a whole layout is too high a price for a rule the user predates."""
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    stage["version"] = 7
+    stage["nodes"].append(
+        {
+            "id": "old_decoy",
+            "type": "panel",
+            "label": "computer",
+            "x": 60,
+            "y": 515,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "d",
+        }
+    )
+    stage["nodes"].append(
+        {
+            "id": "plant",
+            "type": "panel",
+            "label": "plant",
+            "x": 700,
+            "y": 200,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "p",
+        }
+    )
+    path = _get_stage_path("character")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(stage, handle)
+
+    loaded = load_stage_state("character")
+    labels = {node["id"]: node.get("label") for node in loaded["nodes"]}
+
+    # The shipped furniture keeps the name its tools are bound to.
+    assert labels["computer"] == "computer"
+    assert labels["old_decoy"] == "computer 2"
+    # ...and the user's own object survives untouched.
+    assert labels["plant"] == "plant"
+    # The decoy no longer answers for the real computer.
+    assert "computer" not in get_reachable_objects("character")
+
+
+def test_clearing_a_label_does_not_free_the_name_it_was_gating():
+    """The uniqueness rule reads the effective name, not the written one.
+
+    A blank label is not "no name": the world model falls back to the id, so a
+    decoy taking the cleared name would leave two objects called `computer`.
+    Checking only the written label let that room save, and the ambiguity guard
+    then locked the real computer's tools for good.
+    """
+    stage = get_default_stage("character")
+    computer = next(node for node in stage["nodes"] if node["id"] == "computer")
+    computer["label"] = ""
+    stage["nodes"].append(
+        {
+            "id": "decoy",
+            "type": "panel",
+            "label": "computer",
+            "x": 60,
+            "y": 515,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "decoy",
+        }
+    )
+
+    ok, errors = validate_stage(stage)
+
+    assert ok is False
+    assert any("labels must be unique" in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("label", "x" * 81),
+        ("label", 12345),
+        ("text", "x" * 501),
+        ("alt", "x" * 161),
+    ],
+)
+def test_node_text_is_bounded(field, value):
+    """`describe_room` reads labels back to the model, so they are names.
+
+    An unbounded one is a way to spend the whole context window on a single
+    object. The frontend already refused these; the backend did not.
+    """
+    stage = get_default_stage("character")
+    stage["nodes"][0][field] = value
+
+    ok, errors = validate_stage(stage)
+
+    assert ok is False
+    assert any("unsafe text length" in error for error in errors), errors
+
+
+def test_an_overlong_label_is_shortened_on_load_rather_than_discarding_the_room(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    stage["nodes"].append(
+        {
+            "id": "plant",
+            "type": "panel",
+            "label": "p" * 300,
+            "x": 700,
+            "y": 200,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "p",
+        }
+    )
+    path = _get_stage_path("character")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(stage, handle)
+
+    loaded = load_stage_state("character")
+    labels = {node["id"]: node.get("label") for node in loaded["nodes"]}
+
+    assert len(labels["plant"]) == 80
+    # The user's object is still there, and the repaired room is legal.
+    assert validate_stage(loaded)[0] is True
+
+
+def test_repairing_a_duplicate_never_produces_a_label_the_validator_rejects(
+    tmp_path, monkeypatch
+):
+    """The " 2" suffix used to push a maximum-length label over the limit."""
+    monkeypatch.chdir(tmp_path)
+    name = "n" * 80
+    stage = get_default_stage("character")
+    stage["nodes"][0]["label"] = name
+    stage["nodes"].append(
+        {
+            "id": "twin",
+            "type": "panel",
+            "label": name,
+            "x": 700,
+            "y": 200,
+            "width": 40,
+            "height": 40,
+            "zIndex": 2,
+            "text": "t",
+        }
+    )
+    path = _get_stage_path("character")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(stage, handle)
+
+    loaded = load_stage_state("character")
+
+    assert all(len(node.get("label") or "") <= 80 for node in loaded["nodes"])
+    assert validate_stage(loaded)[0] is True
+
+
+def test_a_node_whose_id_is_not_a_string_does_not_cost_the_room(tmp_path, monkeypatch):
+    """The repair sorted node ids against a set, so an unhashable one raised.
+
+    That `TypeError` escaped into `load_stage_state`'s `except Exception` and
+    fell back to the default room - the exact loss the repair exists to
+    prevent.
+    """
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_stage("character")
+    stage["nodes"].append(
+        {
+            "id": ["not", "a", "string"],
+            "type": "panel",
+            "x": 300,
+            "y": 200,
+            "width": 40,
+            "height": 40,
+        }
+    )
+    stage["nodes"].append(
+        {
+            "id": "plant",
+            "type": "panel",
+            "label": "plant",
+            "x": 700,
+            "y": 300,
+            "width": 50,
+            "height": 50,
+            "zIndex": 2,
+            "text": "p",
+        }
+    )
+    path = _get_stage_path("character")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(stage, handle)
+
+    loaded = load_stage_state("character")
+
+    # The user's own object survived, so this was not a fall back to defaults.
+    assert any(node.get("id") == "plant" for node in loaded["nodes"])

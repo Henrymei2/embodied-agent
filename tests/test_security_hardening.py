@@ -71,7 +71,15 @@ def test_safe_filenames_accepted(good):
 
 @pytest.mark.parametrize(
     "colliding",
-    ["../character", r"..\character", " character ", "CON", "name."],
+    [
+        "../character",
+        r"..\character",
+        " character ",
+        "CON",
+        "CON .txt",
+        "name.",
+        "界" * 86,
+    ],
 )
 def test_stage_path_components_are_rejected_instead_of_rewritten(colliding):
     with pytest.raises(ValueError):
@@ -165,6 +173,29 @@ def test_cross_site_and_dns_rebinding_origins_are_rejected():
                 "0.0.0.0",
                 ["companion.lan"],
             ),
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "host_header",
+    [
+        "user@companion.lan",
+        "companion.lan/path",
+        "companion.lan?query",
+        "companion.lan#fragment",
+        " companion.lan",
+        "companion.lan ",
+    ],
+)
+def test_malformed_host_authorities_are_rejected(host_header):
+    assert (
+        _trusted(
+            host_header=host_header,
+            origin="http://companion.lan",
+            client_host="192.168.1.20",
+            trusted_hosts=build_trusted_hosts("0.0.0.0", ["companion.lan"]),
         )
         is False
     )

@@ -258,3 +258,153 @@ def test_a_partial_world_block_is_completed_rather_than_replaced():
 
     assert migrated["world"]["move_speed"] == 200
     assert migrated["world"]["reach_ceiling"] == REACH_CEILING
+
+
+def test_a_decoy_object_cannot_stand_in_for_a_gated_one():
+    """The spatial gate matches on label, so two objects may not share one.
+
+    Without this, an agent at the design board could place a panel labelled
+    "computer" beside itself and hold the real computer's shell tools without
+    ever walking there - which is the whole of the spatial-safety claim.
+    """
+    from src.open_llm_vtuber.world_model import world_from_stage
+
+    stage = {
+        "version": 8,
+        "canvas": {"width": 960, "height": 540},
+        "nodes": [
+            {
+                "id": "avatar",
+                "label": "avatar",
+                "x": 100,
+                "y": 100,
+                "width": 40,
+                "height": 60,
+            },
+            {
+                "id": "computer",
+                "label": "computer",
+                "x": 105,
+                "y": 105,
+                "width": 100,
+                "height": 100,
+            },
+        ],
+    }
+    assert world_from_stage(stage).reachable_labels() == ["computer"]
+
+    # A second object wearing the same name makes the name meaningless, so
+    # the gate refuses it rather than trusting whichever is nearer.
+    stage["nodes"].append(
+        {
+            "id": "decoy",
+            "label": "computer",
+            "x": 900,
+            "y": 500,
+            "width": 40,
+            "height": 40,
+        }
+    )
+    world = world_from_stage(stage)
+
+    assert world.reachable_labels() == []
+    assert world.ambiguous_labels() == frozenset({"computer"})
+
+
+def test_a_blank_or_padded_label_resolves_to_the_name_the_gate_matches():
+    """Every layer has to agree on what an object is called.
+
+    The world model used to take the label verbatim while validation compared
+    a normalized one, so clearing a label handed the id back as a name that
+    nothing had checked for collisions, and a padded label matched no gate at
+    all.
+    """
+    from src.open_llm_vtuber.world_model import effective_label
+
+    assert effective_label({"id": "computer", "label": ""}) == "computer"
+    assert effective_label({"id": "computer", "label": "   "}) == "computer"
+    assert effective_label({"id": "computer"}) == "computer"
+    assert effective_label({"id": "chair", "label": " reading  chair "}) == (
+        "reading chair"
+    )
+    assert effective_label({"id": "x", "label": 12345}) == "x"
+    assert effective_label({"label": "orphan"}) == "orphan"
+    assert effective_label("not a node") is None
+
+
+def test_two_names_differing_only_in_case_are_still_ambiguous():
+    """The world model is the backstop for the rule the validators enforce.
+
+    Those fold case, so comparing exactly here left the last line of defence
+    weaker than the rule it backs up.
+    """
+    from src.open_llm_vtuber.world_model import world_from_stage
+
+    stage = {
+        "version": 8,
+        "canvas": {"width": 960, "height": 540},
+        "nodes": [
+            {
+                "id": "avatar",
+                "label": "avatar",
+                "x": 100,
+                "y": 100,
+                "width": 40,
+                "height": 60,
+            },
+            {
+                "id": "computer",
+                "label": "computer",
+                "x": 105,
+                "y": 105,
+                "width": 100,
+                "height": 100,
+            },
+            {
+                "id": "decoy",
+                "label": "Computer",
+                "x": 108,
+                "y": 108,
+                "width": 40,
+                "height": 40,
+            },
+        ],
+    }
+    world = world_from_stage(stage)
+
+    assert world.ambiguous_labels() == frozenset({"computer"})
+    assert world.reachable_labels() == []
+
+
+def test_an_unrepairable_room_is_complained_about_once(caplog):
+    """The gate resolves reachability several times a turn."""
+    from src.open_llm_vtuber import world_model
+
+    world_model._warned.clear()
+    stage = {
+        "version": 8,
+        "canvas": {"width": 960, "height": 540},
+        "nodes": [
+            {
+                "id": "avatar",
+                "label": "avatar",
+                "x": 100,
+                "y": 100,
+                "width": 40,
+                "height": 60,
+            },
+            {"id": "a", "label": "twin", "x": 105, "y": 105, "width": 40, "height": 40},
+            {"id": "b", "label": "twin", "x": 108, "y": 108, "width": 40, "height": 40},
+        ],
+    }
+    messages = []
+    handle = world_model.logger.add(
+        lambda record: messages.append(record), level="WARNING"
+    )
+    try:
+        for _ in range(5):
+            world_model.world_from_stage(stage).reachable_labels()
+    finally:
+        world_model.logger.remove(handle)
+
+    assert len(messages) == 1, messages

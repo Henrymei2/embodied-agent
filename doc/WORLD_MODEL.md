@@ -63,6 +63,27 @@ sufficient — [FURNITURE_TOOLS.md](FURNITURE_TOOLS.md) covers the gate itself.
 A node whose position cannot be read is left out of the world entirely, so
 unreadable geometry is treated as unreachable rather than as reachable.
 
+Reach is resolved by label, so labels have to name exactly one thing. If two
+objects share a name, `reachable_labels` withholds it from the gate rather than
+trusting whichever is nearer: the gate is asked "is the agent near the
+computer?", and a room with two computers cannot answer. Refusing costs a tool
+until the room is fixed; trusting would let a decoy stand in for the real
+object. Saving such a room is refused outright — see
+[FURNITURE_TOOLS.md](FURNITURE_TOOLS.md).
+
+`effective_label` is what all of that means by "name". A blank or whitespace-only
+label is not a name, so the id stands in; runs of whitespace are collapsed, so
+`reading  chair` cannot become a second object beside `reading chair`. It lives
+here rather than in the validator because the world is what the gate reads: when
+the two disagreed about what an object was called, a room could pass validation
+and still arrive here ambiguous — a node labelled `widget` beside another whose
+*id* was `widget` saved cleanly and then locked both objects' tools for good.
+
+`ambiguous_labels` folds case for the same reason. Comparing exactly would make
+this backstop weaker than the rule it backs up, since `computer` and `Computer`
+are a collision the validators refuse but an exact comparison would wave
+through.
+
 ## 4. Walking is a contract, not an animation
 
 `move_to` used to set a position and wait 900 ms, which meant a short hop took
