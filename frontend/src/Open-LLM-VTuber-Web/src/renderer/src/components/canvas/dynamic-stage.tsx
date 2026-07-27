@@ -19,12 +19,146 @@ import {
 } from "@/context/dynamic-stage-context";
 import { useWebSocket } from "@/context/websocket-context";
 import { useChatHistory } from "@/context/chat-history-context";
+import { useAgentActivity } from "@/context/agent-activity-context";
+import type { AgentActivityTool } from "@/context/agent-activity-context";
+import { useTranslation } from "react-i18next";
 
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
 const HOVER_DELAY_MS = 250;
 // Matches CLICK_COOLDOWN_SECONDS in src/open_llm_vtuber/object_interaction.py.
 const OBJECT_CLICK_COOLDOWN_MS = 3000;
 const CLOSE_DELAY_MS = 140;
+
+const FRIENDLY_VERBS: Record<string, string> = {
+  get: "Getting",
+  list: "Listing",
+  search: "Searching",
+  find: "Finding",
+  fetch: "Fetching",
+  read: "Reading",
+  load: "Loading",
+  check: "Checking",
+  create: "Creating",
+  add: "Adding",
+  update: "Updating",
+  edit: "Editing",
+  delete: "Deleting",
+  remove: "Removing",
+  send: "Sending",
+  move: "Moving",
+  open: "Opening",
+  close: "Closing",
+  set: "Setting",
+  run: "Running",
+};
+
+export function friendlyToolName(toolName: string, unknownLabel: string) {
+  if (!toolName || toolName === "unknown_task") return unknownLabel;
+  const words = toolName
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/);
+  const verb = FRIENDLY_VERBS[words[0]];
+  if (verb) return `${verb} ${words.slice(1).join(" ") || "task"}`;
+  return words.map((word, index) => (
+    index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word
+  )).join(" ");
+}
+
+function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
+  const { t } = useTranslation();
+  const { activity } = useAgentActivity();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  if (activity.phase === "idle") return null;
+
+  const tools = activity.tools;
+  const label = activity.phase === "thinking"
+    ? t("agentActivity.thinking")
+    : tools.length > 1
+      ? t("agentActivity.multipleTasks")
+      : `${friendlyToolName(tools[0]?.tool_name || "", t("agentActivity.unknownTask"))}…`;
+  const alignment = edge === "left"
+    ? { left: "0", transform: "none" }
+    : edge === "right"
+      ? { right: "0", transform: "none" }
+      : { left: "50%", transform: "translateX(-50%)" };
+
+  const statusLabel = (tool: AgentActivityTool) => t(
+    `agentActivity.status.${tool.status}`,
+  );
+
+  return (
+    <Box
+      position="absolute"
+      bottom="calc(100% + 8px)"
+      zIndex={20}
+      {...alignment}
+      onMouseEnter={() => setDetailsOpen(true)}
+      onMouseLeave={() => setDetailsOpen(false)}
+      onFocus={() => setDetailsOpen(true)}
+      onBlur={() => setDetailsOpen(false)}
+      pointerEvents="auto"
+    >
+      <Box
+        role="status"
+        aria-label={label}
+        tabIndex={tools.length ? 0 : undefined}
+        whiteSpace="nowrap"
+        maxWidth="min(240px, 80vw)"
+        overflow="hidden"
+        textOverflow="ellipsis"
+        px="10px"
+        py="6px"
+        borderRadius="12px"
+        bg="rgba(15, 23, 42, 0.9)"
+        color="white"
+        boxShadow="0 6px 18px rgba(15, 23, 42, 0.28)"
+        fontSize="12px"
+        fontWeight="600"
+      >
+        {label}
+      </Box>
+      {detailsOpen && tools.length > 0 && (
+        <Box
+          role="list"
+          aria-label={t("agentActivity.taskList")}
+          mt="4px"
+          width="max-content"
+          maxWidth="min(260px, 80vw)"
+          p="8px"
+          borderRadius="10px"
+          bg="rgba(15, 23, 42, 0.94)"
+          color="white"
+          boxShadow="0 8px 24px rgba(15, 23, 42, 0.32)"
+          fontSize="11px"
+        >
+          {tools.map((tool) => (
+            <Box
+              role="listitem"
+              key={tool.tool_id}
+              display="flex"
+              gap="7px"
+              alignItems="center"
+              py="2px"
+              color={tool.status === "error" ? "red.200" : "inherit"}
+            >
+              <Box aria-hidden="true">
+                {tool.status === "completed" ? "✓" : tool.status === "error" ? "!" : "•"}
+              </Box>
+              <Text as="span">
+                {friendlyToolName(tool.tool_name, t("agentActivity.unknownTask"))}
+                {" — "}
+                {statusLabel(tool)}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
 
 interface GoogleStatus {
   configured: boolean;
@@ -1287,6 +1421,11 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
   }
 
   if (node.type === "avatar") {
+    const horizontalEdge = node.x / canvasWidth < 0.2
+      ? "left"
+      : node.x / canvasWidth > 0.8
+        ? "right"
+        : "center";
     return (
       <Box
         {...commonProps}
@@ -1300,6 +1439,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
         alignItems="center"
         justifyContent="flex-end"
       >
+        <AgentActivityBubble edge={horizontalEdge} />
         <AvatarNodeContent node={node} moveDurationMs={moveDurationMs} />
         {popup}
       </Box>

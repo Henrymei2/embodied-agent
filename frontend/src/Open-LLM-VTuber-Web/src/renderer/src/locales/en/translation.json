@@ -156,6 +156,18 @@
     "connecting": "Connecting",
     "clickToReconnect": "Click to Reconnect"
   },
+  "agentActivity": {
+    "thinking": "Thinking…",
+    "multipleTasks": "Doing multiple tasks…",
+    "unknownTask": "Unknown task",
+    "taskList": "Current tasks",
+    "status": {
+      "pending": "pending",
+      "running": "running",
+      "completed": "completed",
+      "error": "failed"
+    }
+  },
   "presence": {
     "title": "Presence Contract",
     "subtitle": "Consent-aware autonomous behavior",

@@ -24,6 +24,7 @@ from .types import (
 from ..service_context import ServiceContext
 from ..chat_history_manager import store_message
 from .tts_manager import TTSTaskManager
+from .agent_activity import AgentActivityTracker
 
 
 async def process_group_conversation(
@@ -325,6 +326,7 @@ async def broadcast_thinking_state(
         group_members,
         {"type": "full-text", "text": "Thinking..."},
     )
+    await broadcast_func(group_members, AgentActivityTracker.thinking())
 
 
 async def handle_member_error(
@@ -333,6 +335,7 @@ async def handle_member_error(
     error_message: str,
 ) -> None:
     """Handle and broadcast member error"""
+    await broadcast_func(group_members, AgentActivityTracker.idle())
     await broadcast_func(
         group_members,
         {
@@ -352,6 +355,8 @@ async def process_member_response(
 ) -> str:
     """Process group member's response, handling text/audio and tool status events."""
     full_response = ""
+    activity = AgentActivityTracker()
+    activity_visible = True
 
     try:
         # agent.chat now yields Union[SentenceOutput, Dict[str, Any]]
@@ -360,17 +365,32 @@ async def process_member_response(
         async for output_item in agent_output_stream:
             if (
                 isinstance(output_item, dict)
+                and output_item.get("type") == "agent_activity"
+            ):
+                if broadcast_func and group_members:
+                    await broadcast_func(
+                        group_members,
+                        activity.replace_tools(output_item.get("tools", [])),
+                    )
+            elif (
+                isinstance(output_item, dict)
                 and output_item.get("type") == "tool_call_status"
             ):
                 if broadcast_func and group_members:
                     logger.debug(f"Broadcasting tool status update: {output_item}")
                     output_item["name"] = context.character_config.character_name
                     await broadcast_func(group_members, output_item)
+                    await broadcast_func(
+                        group_members, activity.update_tool(output_item)
+                    )
                 else:
                     logger.warning(
                         "Cannot broadcast tool status: broadcast_func or group_members missing."
                     )
             elif isinstance(output_item, (SentenceOutput, AudioOutput)):
+                if activity_visible and broadcast_func and group_members:
+                    await broadcast_func(group_members, activity.idle())
+                    activity_visible = False
                 # Handle SentenceOutput or AudioOutput: Send to current user, broadcast audio later if needed
                 response_part = await process_agent_output(
                     output=output_item,
@@ -393,5 +413,8 @@ async def process_member_response(
                 {"type": "error", "message": f"Error processing response: {str(e)}"}
             )
         )
+    finally:
+        if broadcast_func and group_members:
+            await broadcast_func(group_members, activity.idle())
 
     return full_response

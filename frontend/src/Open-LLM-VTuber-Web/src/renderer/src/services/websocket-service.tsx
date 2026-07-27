@@ -4,6 +4,10 @@
 import { Subject } from 'rxjs';
 import { HistoryInfo } from '@/context/websocket-context';
 import { DynamicStageDocument } from '@/context/dynamic-stage-context';
+import type {
+  AgentActivityPhase,
+  AgentActivityTool,
+} from '@/context/agent-activity-context';
 import { toaster } from '@/components/ui/toaster';
 import type { PresenceReceipt } from '@/context/presence-context';
 
@@ -59,6 +63,8 @@ export interface MessageEvent {
   content: string;
   timestamp: string;
   type: string;
+  phase?: AgentActivityPhase;
+  tools?: AgentActivityTool[];
   action?: string;
   args?: Record<string, unknown>;
   audio?: string;

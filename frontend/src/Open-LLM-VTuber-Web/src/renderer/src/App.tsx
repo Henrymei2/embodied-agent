@@ -34,6 +34,7 @@ import {
   StudyConditionProvider,
   useStudyCondition,
 } from "./context/study-condition-context";
+import { AgentActivityProvider } from "./context/agent-activity-context";
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(true);
@@ -190,10 +191,12 @@ function AppWithGlobalStyles(): JSX.Element {
                             <DynamicStageProvider>
                               <PresenceProvider>
                                 <StudyConditionProvider>
-                                  <WebSocketHandler>
-                                    <Toaster />
-                                    <AppContent />
-                                  </WebSocketHandler>
+                                  <AgentActivityProvider>
+                                    <WebSocketHandler>
+                                      <Toaster />
+                                      <AppContent />
+                                    </WebSocketHandler>
+                                  </AgentActivityProvider>
                                 </StudyConditionProvider>
                               </PresenceProvider>
                             </DynamicStageProvider>

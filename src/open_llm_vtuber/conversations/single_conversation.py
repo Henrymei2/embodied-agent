@@ -15,6 +15,7 @@ from .conversation_utils import (
 )
 from .types import WebSocketSend
 from .tts_manager import TTSTaskManager
+from .agent_activity import AgentActivityTracker
 from ..chat_history_manager import store_message
 from ..service_context import ServiceContext
 
@@ -47,6 +48,8 @@ async def process_single_conversation(
     """
     # Create TTSTaskManager for this conversation
     tts_manager = TTSTaskManager()
+    activity = AgentActivityTracker()
+    activity_visible = False
     full_response = ""  # Initialize full_response here
 
     try:
@@ -90,10 +93,21 @@ async def process_single_conversation(
 
         try:
             # agent.chat yields Union[SentenceOutput, Dict[str, Any]]
+            await websocket_send(json.dumps(activity.thinking()))
+            activity_visible = True
             agent_output_stream = context.agent_engine.chat(batch_input)
 
             async for output_item in agent_output_stream:
                 if (
+                    isinstance(output_item, dict)
+                    and output_item.get("type") == "agent_activity"
+                ):
+                    activity_message = activity.replace_tools(
+                        output_item.get("tools", [])
+                    )
+                    await websocket_send(json.dumps(activity_message))
+
+                elif (
                     isinstance(output_item, dict)
                     and output_item.get("type") == "tool_call_status"
                 ):
@@ -102,8 +116,12 @@ async def process_single_conversation(
                     logger.debug(f"Sending tool status update: {output_item}")
 
                     await websocket_send(json.dumps(output_item))
+                    await websocket_send(json.dumps(activity.update_tool(output_item)))
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
+                    if activity_visible:
+                        await websocket_send(json.dumps(activity.idle()))
+                        activity_visible = False
                     # Handle SentenceOutput or AudioOutput
                     response_part = await process_agent_output(
                         output=output_item,
@@ -176,6 +194,10 @@ async def process_single_conversation(
         )
         raise
     finally:
+        try:
+            await websocket_send(json.dumps(activity.idle()))
+        except Exception:
+            logger.debug("Unable to clear agent activity during connection cleanup.")
         from ..study import log_turn_finished
 
         # Closes the turn whether it completed, errored, or was interrupted, so

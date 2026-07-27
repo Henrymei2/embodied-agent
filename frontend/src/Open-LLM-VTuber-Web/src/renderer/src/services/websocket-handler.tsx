@@ -22,6 +22,7 @@ import { useBrowser } from '@/context/browser-context';
 import { useDynamicStage } from '@/context/dynamic-stage-context';
 import { PresenceState, usePresence } from '@/context/presence-context';
 import { useStudyCondition } from '@/context/study-condition-context';
+import { useAgentActivity } from '@/context/agent-activity-context';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -47,6 +48,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { handleFrontendAction, setStageFromServer } = useDynamicStage();
   const { updateState: updatePresenceState, receiveReceipt } = usePresence();
   const { setConditionFromServer } = useStudyCondition();
+  const { setActivity, clearActivity } = useAgentActivity();
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -67,11 +69,13 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         stopMic();
         break;
       case 'conversation-chain-start':
+        clearActivity();
         setAiState('thinking-speaking');
         audioTaskQueue.clearQueue();
         clearResponse();
         break;
       case 'conversation-chain-end':
+        clearActivity();
         audioTaskQueue.addTask(() => new Promise<void>((resolve) => {
           setAiState((currentState: AiState) => {
             if (currentState === 'thinking-speaking') {
@@ -89,7 +93,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown control command:', controlText);
     }
-  }, [setAiState, clearResponse, setForceNewMessage, startMic, stopMic]);
+  }, [setAiState, clearResponse, setForceNewMessage, startMic, stopMic, clearActivity]);
 
   const handleWebSocketMessage = useCallback((message: MessageEvent) => {
     console.log('Received message from server:', message);
@@ -97,6 +101,14 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       case 'control':
         if (message.text) {
           handleControlMessage(message.text);
+        }
+        break;
+      case 'agent_activity':
+        if (message.phase) {
+          setActivity({
+            phase: message.phase,
+            tools: message.tools || [],
+          });
         }
         break;
       case 'frontend_action_request':
@@ -247,6 +259,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         }
         break;
       case 'error':
+        clearActivity();
         toaster.create({
           title: message.message,
           type: 'error',
@@ -286,6 +299,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         setForceNewMessage(true);
         break;
       case 'interrupt-signal':
+        clearActivity();
         // Handle forwarded interrupt
         interrupt(false); // do not send interrupt signal to server
         break;
@@ -316,7 +330,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, setConditionFromServer, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
 
   useEffect(() => {
     wsService.connect(wsUrl);

@@ -9,6 +9,7 @@ from typing import (
     Union,
     AsyncIterator,
 )
+from ..conversations.agent_activity import tool_batch_activity
 
 from .types import ToolCallObject
 from .mcp_client import MCPClient
@@ -169,6 +170,7 @@ class ToolExecutor:
         tool_results_for_llm = []
 
         logger.info(f"Executing {len(tool_calls)} tool(s) for {caller_mode} caller.")
+        yield tool_batch_activity(tool_calls)
         for call in tool_calls:
             (
                 tool_name,
