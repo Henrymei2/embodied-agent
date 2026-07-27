@@ -9,9 +9,10 @@ It uses FastAPI for the server and Starlette for static file serving.
 import os
 import shutil
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from starlette.middleware.cors import CORSMiddleware
-from starlette.responses import Response
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 
 from .routes import (
@@ -26,28 +27,46 @@ from .routes import (
 from .service_context import ServiceContext
 from .config_manager.utils import Config
 from .google_integration import GoogleIntegrationService
+from .request_security import (
+    build_trusted_hosts,
+    cors_origin_regex,
+    require_trusted_http_request,
+)
 from .workspace import embeddings
 
 
-# Create a custom StaticFiles class that adds CORS headers
+# Static files remain under the app-level restricted CORS middleware.
 class CORSStaticFiles(StarletteStaticFiles):
-    """
-    Static files handler that adds CORS headers to all responses.
-    Needed because Starlette StaticFiles might bypass standard middleware.
-    """
+    """Static files handler with corrected JavaScript content types."""
 
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
-
-        # Add CORS headers to all responses
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
 
         if path.endswith(".js"):
             response.headers["Content-Type"] = "application/javascript"
 
         return response
+
+
+class ProtectedStaticFiles(CORSStaticFiles):
+    """Static files restricted by the private HTTP request policy."""
+
+    async def __call__(self, scope, receive, send):
+        request = Request(scope, receive=receive)
+        try:
+            require_trusted_http_request(request)
+        except HTTPException as exc:
+            headers = dict(exc.headers or {})
+            headers["Cache-Control"] = "no-store"
+            response = JSONResponse(
+                {"detail": exc.detail},
+                status_code=exc.status_code,
+                headers=headers,
+            )
+            await response(scope, receive, send)
+            return
+
+        await super().__call__(scope, receive, send)
 
 
 class AvatarStaticFiles(CORSStaticFiles):
@@ -89,11 +108,23 @@ class WebSocketServer:
         )  # Use provided context or initialize a new empty one waiting to be loaded
         # It will be populated during the initialize method call
 
-        # Add global CORS middleware
+        system_config = config.system_config
+        trusted_hosts = build_trusted_hosts(
+            system_config.host,
+            system_config.trusted_hosts,
+        )
+        self.app.state.trusted_hosts = trusted_hosts
+
+        # Cross-origin access is limited to explicitly trusted hosts. Same-origin
+        # production requests need no CORS header; loopback cross-port access is
+        # retained for the development renderer. Packaged Electron sends a null
+        # origin and is separately restricted to loopback + Electron user-agent
+        # by request_security.
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
+            allow_origins=["null", "file://"],
+            allow_origin_regex=cors_origin_regex(trusted_hosts),
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -115,10 +146,11 @@ class WebSocketServer:
         self.app.include_router(init_google_integration_routes(self.google_integration))
 
         # Initialize and include proxy routes if proxy is enabled
-        system_config = config.system_config
         if hasattr(system_config, "enable_proxy") and system_config.enable_proxy:
             # Construct the server URL for the proxy
             host = system_config.host
+            if host in {"0.0.0.0", "::"}:
+                host = "127.0.0.1"
             port = system_config.port
             server_url = f"ws://{host}:{port}/client-ws"
             self.app.include_router(
@@ -130,7 +162,7 @@ class WebSocketServer:
         os.makedirs("avatars", exist_ok=True)
         self.app.mount(
             "/cache",
-            CORSStaticFiles(directory="cache"),
+            ProtectedStaticFiles(directory="cache"),
             name="cache",
         )
 

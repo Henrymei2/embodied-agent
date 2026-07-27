@@ -367,6 +367,33 @@ class WebSocketHandler:
             send_group_update=self.send_group_update,
         )
 
+    @staticmethod
+    async def _cancel_and_await_tasks(
+        client_uid: str,
+        named_tasks: list[tuple[str, asyncio.Task | None]],
+    ) -> None:
+        """Cancel connection-owned tasks and wait for their finalizers."""
+
+        tasks = [(name, task) for name, task in named_tasks if task is not None]
+        for _name, task in tasks:
+            if not task.done():
+                task.cancel()
+
+        if not tasks:
+            return
+
+        results = await asyncio.gather(
+            *(task for _name, task in tasks),
+            return_exceptions=True,
+        )
+        for (name, _task), result in zip(tasks, results):
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                logger.warning(
+                    f"{name} task cleanup failed for client {client_uid}: {result}"
+                )
+
     async def handle_disconnect(self, client_uid: str) -> None:
         """Handle client disconnection"""
         context = self.client_contexts.get(client_uid)
@@ -405,13 +432,17 @@ class WebSocketHandler:
         for key in [key for key in self._object_click_times if key[0] == client_uid]:
             del self._object_click_times[key]
 
-        autonomy_task = self.autonomy_tasks.pop(client_uid, None)
-        if autonomy_task and not autonomy_task.done():
-            autonomy_task.cancel()
-
-        scheduler_task = self.scheduler_tasks.pop(client_uid, None)
-        if scheduler_task and not scheduler_task.done():
-            scheduler_task.cancel()
+        await self._cancel_and_await_tasks(
+            client_uid,
+            [
+                ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
+                ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
+                (
+                    "conversation",
+                    self.current_conversation_tasks.pop(client_uid, None),
+                ),
+            ],
+        )
 
         from .frontend_bridge import unregister_client_sender
 
@@ -430,12 +461,6 @@ class WebSocketHandler:
 
         remove_queue(client_uid)
 
-        if client_uid in self.current_conversation_tasks:
-            task = self.current_conversation_tasks[client_uid]
-            if task and not task.done():
-                task.cancel()
-            self.current_conversation_tasks.pop(client_uid, None)
-
         # Call context close to clean up resources (e.g., MCPClient)
         if context:
             await context.close()
@@ -450,13 +475,17 @@ class WebSocketHandler:
         self.received_data_buffers.pop(client_uid, None)
         self.chat_group_manager.client_group_map.pop(client_uid, None)
 
-        autonomy_task = self.autonomy_tasks.pop(client_uid, None)
-        if autonomy_task and not autonomy_task.done():
-            autonomy_task.cancel()
-
-        scheduler_task = self.scheduler_tasks.pop(client_uid, None)
-        if scheduler_task and not scheduler_task.done():
-            scheduler_task.cancel()
+        await self._cancel_and_await_tasks(
+            client_uid,
+            [
+                ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
+                ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
+                (
+                    "conversation",
+                    self.current_conversation_tasks.pop(client_uid, None),
+                ),
+            ],
+        )
 
         # Mirror handle_disconnect so a connection that fails mid-setup doesn't
         # leak the queue/worker, bridge sender, client registry, or context.
@@ -480,23 +509,7 @@ class WebSocketHandler:
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup
                 logger.warning(f"Error closing context for failed {client_uid}: {exc}")
 
-        from .client_registry import unregister_client
-        from .conversations.llm_request_queue import remove_queue
-        from .frontend_bridge import unregister_client_sender
-
-        unregister_client_sender(client_uid)
-        unregister_client(client_uid)
-        remove_queue(client_uid)
-
-        if client_uid in self.current_conversation_tasks:
-            task = self.current_conversation_tasks[client_uid]
-            if task and not task.done():
-                task.cancel()
-            self.current_conversation_tasks.pop(client_uid, None)
-
         message_handler.cleanup_client(client_uid)
-        if context:
-            await context.close()
 
     async def broadcast_to_group(
         self, group_members: list[str], message: dict, exclude_uid: str = None

@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -41,10 +42,17 @@ UI_WINDOW_PROVIDERS = (
 # Avatar postures. Anything else is rejected, and walking clears the pose, so a
 # seated avatar can never be shown mid-stride.
 AVATAR_POSES = ("standing", "sitting")
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{index}" for index in range(1, 10)}
+    | {f"lpt{index}" for index in range(1, 10)}
+)
 
 
 def _is_safe_filename(filename: str) -> bool:
-    if not filename or len(filename) > 255:
+    if not isinstance(filename, str) or not filename or len(filename) > 255:
+        return False
+    if filename != filename.strip() or filename.endswith("."):
         return False
     # Reject names that are only dots/spaces ("." / ".." / "  ").
     if filename.strip(". ") == "":
@@ -52,29 +60,39 @@ def _is_safe_filename(filename: str) -> bool:
     # Reject path separators, drive colons, wildcards and control characters.
     if re.search(r'[\\/:*?"<>|\x00-\x1f]', filename):
         return False
-    return bool(re.match(r"^[\w\-_\u0020-\u007E\u00A0-\uFFFF]+$", filename))
+    if filename.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_NAMES:
+        return False
+    return bool(re.fullmatch(r"[\w\-_\u0020-\u007E\u00A0-\uFFFF]+", filename))
 
 
 def _sanitize_path_component(component: str) -> str:
-    sanitized = os.path.basename(component.strip())
-    if not _is_safe_filename(sanitized):
+    if not _is_safe_filename(component):
         raise ValueError(f"Invalid characters in path component: {component}")
-    return sanitized
+    return component
 
 
 def _ensure_stage_dir(conf_uid: str) -> str:
     safe_conf_uid = _sanitize_path_component(conf_uid)
-    base_dir = os.path.join(STAGE_BASE_DIR, safe_conf_uid)
-    os.makedirs(base_dir, exist_ok=True)
-    return base_dir
+    root = Path(STAGE_BASE_DIR)
+    root.mkdir(parents=True, exist_ok=True)
+    root = root.resolve()
+    base_dir = (root / safe_conf_uid).resolve()
+    try:
+        base_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Invalid path: Path traversal detected") from exc
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return str(base_dir)
 
 
 def _get_stage_path(conf_uid: str) -> str:
-    base_dir = _ensure_stage_dir(conf_uid)
-    full_path = os.path.normpath(os.path.join(base_dir, "stage.json"))
-    if not full_path.startswith(base_dir):
-        raise ValueError("Invalid path: Path traversal detected")
-    return full_path
+    base_dir = Path(_ensure_stage_dir(conf_uid))
+    full_path = (base_dir / "stage.json").resolve()
+    try:
+        full_path.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError("Invalid path: Path traversal detected") from exc
+    return str(full_path)
 
 
 def _now_iso() -> str:

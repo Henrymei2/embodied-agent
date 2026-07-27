@@ -21,6 +21,7 @@ class SystemConfig(I18nMixin):
     conf_version: str = Field(..., alias="conf_version")
     host: str = Field(..., alias="host")
     port: int = Field(..., alias="port")
+    trusted_hosts: list[str] = Field(default_factory=list, alias="trusted_hosts")
     tool_prompts: Dict[str, str] = Field(..., alias="tool_prompts")
     enable_proxy: bool = Field(False, alias="enable_proxy")
     timezone: str = Field("", alias="timezone")
@@ -35,6 +36,9 @@ class SystemConfig(I18nMixin):
         "conf_version": Description(en="Configuration version"),
         "host": Description(en="Server host address"),
         "port": Description(en="Server port number"),
+        "trusted_hosts": Description(
+            en="Additional exact hostnames or IP addresses allowed to access the server",
+        ),
         "tool_prompts": Description(
             en="Tool prompts to be inserted into persona prompt",
         ),
@@ -57,4 +61,7 @@ class SystemConfig(I18nMixin):
     def check_port(self):
         if self.port < 0 or self.port > 65535:
             raise ValueError("Port must be between 0 and 65535")
+        from ..request_security import build_trusted_hosts
+
+        build_trusted_hosts(self.host, self.trusted_hosts)
         return self

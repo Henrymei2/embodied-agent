@@ -9,6 +9,7 @@ import pytest
 from src.open_llm_vtuber import furniture_state
 from src.open_llm_vtuber.mcpp.tool_manager import ToolManager
 from src.open_llm_vtuber.mcpp.types import FormattedTool
+from src.open_llm_vtuber.request_security import build_trusted_hosts
 from src.open_llm_vtuber.stage_state_manager import get_default_stage, save_stage_state
 
 
@@ -184,8 +185,9 @@ def test_hover_routes_serve_snapshots_and_stay_read_only():
 
     furniture_state.save_todos([_todo("buy milk", priority="high")])
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_furniture_routes())
-    client = TestClient(app)
+    client = TestClient(app, headers={"origin": "http://testserver"})
 
     todo_response = client.get("/api/furniture/todo")
     assert todo_response.status_code == 200
@@ -226,8 +228,9 @@ def test_scheduler_routes_list_and_delete_events():
         }
     )
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_scheduler_routes())
-    client = TestClient(app)
+    client = TestClient(app, headers={"origin": "http://testserver"})
 
     response = client.get("/api/scheduler/events")
     assert response.status_code == 200

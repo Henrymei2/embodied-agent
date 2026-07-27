@@ -2,6 +2,7 @@ import os
 import re
 import json
 import uuid
+from pathlib import Path
 from typing import Literal, List, TypedDict, Optional
 from loguru import logger
 
@@ -18,25 +19,29 @@ class HistoryMessage(TypedDict):
 
 
 def _is_safe_filename(filename: str) -> bool:
-    """Validate filename for safety and allowed characters"""
+    """Validate one portable filesystem path component."""
     if not filename or len(filename) > 255:
         return False
-
-    # Allow alphanumeric, hyphen, underscore, and common unicode characters
-    # Block any filesystem special characters, control characters, and path separators
-    pattern = re.compile(r"^[\w\-_\u0020-\u007E\u00A0-\uFFFF]+$")
-    return bool(pattern.match(filename))
+    if filename.strip(". ") == "":
+        return False
+    if filename != filename.strip():
+        return False
+    if re.search(r'[\\/:*?"<>|\x00-\x1f]', filename):
+        return False
+    return bool(re.fullmatch(r"[\w\-_\u0020-\u007E\u00A0-\uFFFF]+", filename))
 
 
 def _sanitize_path_component(component: str) -> str:
-    """Sanitize and validate a path component"""
-    # Remove any path components, get just the basename
-    sanitized = os.path.basename(component.strip())
-
-    if not _is_safe_filename(sanitized):
+    """Validate a path component without silently changing its meaning."""
+    if not isinstance(component, str) or not _is_safe_filename(component):
         raise ValueError(f"Invalid characters in path component: {component}")
+    return component
 
-    return sanitized
+
+def _history_root() -> Path:
+    root = Path("chat_history")
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
 
 
 def _ensure_conf_dir(conf_uid: str) -> str:
@@ -45,20 +50,29 @@ def _ensure_conf_dir(conf_uid: str) -> str:
         raise ValueError("conf_uid cannot be empty")
 
     safe_conf_uid = _sanitize_path_component(conf_uid)
-    base_dir = os.path.join("chat_history", safe_conf_uid)
-    os.makedirs(base_dir, exist_ok=True)
-    return base_dir
+    root = _history_root()
+    base_dir = (root / safe_conf_uid).resolve()
+    try:
+        base_dir.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Invalid path: Path traversal detected") from exc
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return str(base_dir)
 
 
 def _get_safe_history_path(conf_uid: str, history_uid: str) -> str:
     """Get sanitized path for history file"""
     safe_conf_uid = _sanitize_path_component(conf_uid)
     safe_history_uid = _sanitize_path_component(history_uid)
-    base_dir = os.path.join("chat_history", safe_conf_uid)
-    full_path = os.path.normpath(os.path.join(base_dir, f"{safe_history_uid}.json"))
-    if not full_path.startswith(base_dir):
-        raise ValueError("Invalid path: Path traversal detected")
-    return full_path
+    root = _history_root()
+    base_dir = (root / safe_conf_uid).resolve()
+    full_path = (base_dir / f"{safe_history_uid}.json").resolve()
+    try:
+        base_dir.relative_to(root)
+        full_path.relative_to(base_dir)
+    except ValueError as exc:
+        raise ValueError("Invalid path: Path traversal detected") from exc
+    return str(full_path)
 
 
 def create_new_history(conf_uid: str) -> str:

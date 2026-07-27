@@ -1,8 +1,12 @@
 # System Settings: Setting related to the initialization of the server
 system_config:
   conf_version: 'v1.2.1'
-  host: 'localhost' # use 0.0.0.0 if you want other devices to access this page
+  host: 'localhost'
   port: 12393
+  # Exact additional hostnames/IPs accepted in Host and Origin headers.
+  # For LAN access, bind host to 0.0.0.0 and list the server's LAN IP here.
+  # Wildcards are intentionally not supported.
+  trusted_hosts: []
   # IANA timezone (e.g. 'America/Chicago', 'Europe/London') used for all
   # timestamps (scheduling, timers, chat history, memory logs, ...). Leave
   # blank to auto-detect from the system clock, so the agent naturally follows

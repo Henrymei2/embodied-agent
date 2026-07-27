@@ -141,6 +141,7 @@ npm run build:web
 
 ## Documentation
 
+- [Security and network access](doc/SECURITY.md)
 - [Project status and architecture](doc/PROJECT_STATUS.md)
 - [Study mode: measuring whether the pillars matter](doc/STUDY_MODE.md)
 - [The world model, and what 3D would still need](doc/WORLD_MODEL.md)

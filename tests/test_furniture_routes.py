@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from mcp_servers import plan_tools
 from src.open_llm_vtuber import furniture_state
+from src.open_llm_vtuber.request_security import build_trusted_hosts
 from src.open_llm_vtuber.routes import init_furniture_routes
 
 
@@ -15,8 +16,9 @@ from src.open_llm_vtuber.routes import init_furniture_routes
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path))
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_furniture_routes())
-    return TestClient(app)
+    return TestClient(app, headers={"origin": "http://testserver"})
 
 
 def _write_plan(title: str = "Tidy the knowledge folder") -> dict:

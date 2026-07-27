@@ -32,9 +32,10 @@ import sys
 import tempfile
 from email.message import Message
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
 
 import requests
+from requests.adapters import HTTPAdapter
 
 # This file is launched as a script (`python mcp_servers/bash_tools.py`), which
 # puts `mcp_servers/` on sys.path rather than the project root. Add the project
@@ -238,9 +239,11 @@ def _safe_write_path(path: str) -> Path:
 def _rel(path: Path) -> str:
     """Display a path relative to the workspace root when possible."""
     try:
-        return str(path.relative_to(_workspace_root()))
+        # Tool responses are a platform-neutral protocol consumed by an LLM.
+        # Always use forward slashes even when the server runs on Windows.
+        return path.relative_to(_workspace_root()).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _truncate(text: str) -> str:
@@ -252,8 +255,26 @@ def _truncate(text: str) -> str:
     return text
 
 
-def _validate_download_url(url: str) -> str:
-    """Validate a public HTTP(S) URL and reject common SSRF targets."""
+class _PinnedHTTPSAdapter(HTTPAdapter):
+    """Connect to a validated IP while verifying TLS for the original hostname."""
+
+    def __init__(self, server_hostname: str):
+        self._server_hostname = server_hostname
+        super().__init__()
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["assert_hostname"] = self._server_hostname
+        pool_kwargs["server_hostname"] = self._server_hostname
+        return super().init_poolmanager(
+            connections,
+            maxsize,
+            block=block,
+            **pool_kwargs,
+        )
+
+
+def _validate_download_url(url: str) -> tuple[str, ...]:
+    """Resolve a public HTTP(S) URL to the exact IPs connections may use."""
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("only http:// and https:// URLs are allowed")
@@ -263,14 +284,15 @@ def _validate_download_url(url: str) -> str:
         raise ValueError("URLs containing credentials are not allowed")
 
     try:
-        addresses = {
-            info[4][0]
-            for info in socket.getaddrinfo(
-                parsed.hostname,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        }
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        resolved = socket.getaddrinfo(
+            parsed.hostname,
+            port,
+            type=socket.SOCK_STREAM,
+        )
+        addresses = tuple(dict.fromkeys(info[4][0] for info in resolved))
+    except ValueError as exc:
+        raise ValueError("URL contains an invalid port") from exc
     except OSError as exc:
         raise ValueError(f"could not resolve hostname: {parsed.hostname}") from exc
 
@@ -282,7 +304,35 @@ def _validate_download_url(url: str) -> str:
             raise ValueError(
                 f"URL resolves to a non-public address ({address}); download refused"
             )
-    return url
+    return addresses
+
+
+def _authority(hostname: str, port: int | None) -> str:
+    rendered = f"[{hostname}]" if ":" in hostname else hostname
+    return f"{rendered}:{port}" if port is not None else rendered
+
+
+def _request_url_for_ip(url: str, address: str) -> tuple[str, str, str]:
+    """Return (pinned URL, Host header, TLS hostname) for a validated address."""
+
+    parsed = urlsplit(url)
+    if not parsed.hostname:
+        raise ValueError("URL must include a hostname")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("URL contains an invalid port") from exc
+
+    try:
+        tls_hostname = parsed.hostname.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("URL contains an invalid hostname") from exc
+    pinned_netloc = _authority(address, port)
+    host_header = _authority(tls_hostname, port)
+    pinned_url = urlunsplit(
+        (parsed.scheme, pinned_netloc, parsed.path or "/", parsed.query, "")
+    )
+    return pinned_url, host_header, tls_hostname
 
 
 def _filename_from_response(response: requests.Response, url: str) -> str:
@@ -316,14 +366,40 @@ def _download_response(
 ) -> tuple[requests.Response, str]:
     current_url = url
     for redirect_count in range(_MAX_DOWNLOAD_REDIRECTS + 1):
-        _validate_download_url(current_url)
-        response = session.get(
-            current_url,
-            stream=True,
-            allow_redirects=False,
-            timeout=_DOWNLOAD_TIMEOUT,
-            headers={"Accept-Encoding": "identity", "User-Agent": "Open-LLM-VTuber"},
-        )
+        addresses = _validate_download_url(current_url)
+        response: requests.Response | None = None
+        last_error: requests.RequestException | None = None
+        for address in addresses:
+            pinned_url, host_header, tls_hostname = _request_url_for_ip(
+                current_url,
+                address,
+            )
+            if pinned_url.startswith("https://"):
+                parsed_pinned_url = urlsplit(pinned_url)
+                session.mount(
+                    f"{parsed_pinned_url.scheme}://{parsed_pinned_url.netloc}/",
+                    _PinnedHTTPSAdapter(tls_hostname),
+                )
+            try:
+                response = session.get(
+                    pinned_url,
+                    stream=True,
+                    allow_redirects=False,
+                    timeout=_DOWNLOAD_TIMEOUT,
+                    headers={
+                        "Accept-Encoding": "identity",
+                        "Host": host_header,
+                        "User-Agent": "Open-LLM-VTuber",
+                    },
+                )
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+        if response is None:
+            if last_error is not None:
+                raise last_error
+            raise ValueError("hostname resolved to no usable public addresses")
+
         if response.is_redirect or response.is_permanent_redirect:
             location = response.headers.get("Location")
             response.close()

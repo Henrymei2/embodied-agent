@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -250,9 +251,7 @@ def test_google_subprocesses_receive_only_google_token_path(monkeypatch, tmp_pat
     google_servers = {
         name: SimpleNamespace(env={}) for name in ("calendar", "drive", "gmail")
     }
-    context.mcp_server_registery = SimpleNamespace(
-        servers=google_servers
-    )
+    context.mcp_server_registery = SimpleNamespace(servers=google_servers)
     context.system_config = SimpleNamespace(
         host="localhost",
         port=12393,
@@ -270,8 +269,8 @@ def test_google_subprocesses_receive_only_google_token_path(monkeypatch, tmp_pat
     context._configure_mcp_server_environment()
 
     for server in google_servers.values():
-        assert server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"].endswith(
-            "app-data/google_token.json"
+        assert Path(server.env["EMBODIED_AGENT_GOOGLE_TOKEN_FILE"]) == (
+            tmp_path / "app-data" / "google_token.json"
         )
         assert "EMBODIED_AGENT_GOOGLE_CLIENT_SECRETS_FILE" not in server.env
         assert "EMBODIED_AGENT_GOOGLE_REDIRECT_URI" not in server.env
@@ -326,3 +325,53 @@ async def test_accepted_frontend_state_is_persisted_for_owning_client(
         node for node in load_stage_state(conf_uid)["nodes"] if node["id"] == "avatar"
     )
     assert (persisted_avatar["x"], persisted_avatar["y"]) == (321, 123)
+
+
+@pytest.mark.asyncio
+async def test_failed_connection_cleanup_closes_context_once(monkeypatch):
+    class FakeContext:
+        def __init__(self):
+            self.close_count = 0
+
+        async def close(self):
+            self.close_count += 1
+
+    context = FakeContext()
+    finalized = []
+
+    async def background_task(name):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0)
+            finalized.append(name)
+
+    autonomy_task = asyncio.create_task(background_task("autonomy"))
+    scheduler_task = asyncio.create_task(background_task("scheduler"))
+    conversation_task = asyncio.create_task(background_task("conversation"))
+    await asyncio.sleep(0)
+
+    handler = WebSocketHandler.__new__(WebSocketHandler)
+    handler.client_connections = {}
+    handler.client_contexts = {"client": context}
+    handler.received_data_buffers = {}
+    handler.chat_group_manager = SimpleNamespace(client_group_map={})
+    handler.autonomy_tasks = {"client": autonomy_task}
+    handler.scheduler_tasks = {"client": scheduler_task}
+    handler.current_conversation_tasks = {"client": conversation_task}
+
+    import src.open_llm_vtuber.websocket_handler as websocket_handler
+
+    monkeypatch.setattr(
+        websocket_handler.message_handler,
+        "cleanup_client",
+        lambda _client_uid: None,
+    )
+
+    await handler._cleanup_failed_connection("client")
+
+    assert context.close_count == 1
+    assert set(finalized) == {"autonomy", "scheduler", "conversation"}
+    assert autonomy_task.cancelled()
+    assert scheduler_task.cancelled()
+    assert conversation_task.cancelled()

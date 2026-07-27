@@ -1,7 +1,19 @@
+import io
 import json
+import wave
 from uuid import uuid4
+
 import numpy as np
-from fastapi import APIRouter, WebSocket, UploadFile, File, Response, Body, Request
+from fastapi import (
+    APIRouter,
+    WebSocket,
+    UploadFile,
+    File,
+    Response,
+    Body,
+    Request,
+    Depends,
+)
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
@@ -22,12 +34,53 @@ from .skill_state import record_skill_decision, skill_snapshot
 from .websocket_handler import WebSocketHandler
 from .proxy_handler import ProxyHandler
 from .google_integration import GoogleIntegrationError, GoogleIntegrationService
+from .request_security import (
+    is_trusted_websocket,
+    require_trusted_http_request,
+)
 from .utils.timezone import now_local
+
+
+def _decode_asr_wav(contents: bytes) -> np.ndarray:
+    """Decode a complete, uncompressed 16 kHz mono PCM WAV upload."""
+
+    try:
+        with wave.open(io.BytesIO(contents), "rb") as wav_file:
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            sample_rate = wav_file.getframerate()
+            frame_count = wav_file.getnframes()
+            compression = wav_file.getcomptype()
+
+            if compression != "NONE":
+                raise ValueError("WAV audio must be uncompressed PCM")
+            if channels != 1:
+                raise ValueError("WAV audio must contain exactly one channel")
+            if sample_width != 2:
+                raise ValueError("WAV audio must use 16-bit PCM samples")
+            if sample_rate != 16000:
+                raise ValueError("WAV audio must use a 16000 Hz sample rate")
+            if frame_count <= 0:
+                raise ValueError("WAV audio contains no samples")
+
+            audio_data = wav_file.readframes(frame_count)
+    except (EOFError, wave.Error) as exc:
+        raise ValueError("Invalid WAV file: malformed container") from exc
+
+    expected_bytes = frame_count * channels * sample_width
+    if len(audio_data) != expected_bytes:
+        raise ValueError("Invalid WAV file: truncated audio data")
+
+    audio_array = np.frombuffer(audio_data, dtype="<i2").astype(np.float32)
+    return audio_array / 32768.0
 
 
 def init_google_integration_routes(service: GoogleIntegrationService) -> APIRouter:
     """Expose the local, application-wide Google OAuth flow."""
-    router = APIRouter(prefix="/api/integrations/google")
+    router = APIRouter(
+        prefix="/api/integrations/google",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
 
     @router.get("/status")
     async def google_status():
@@ -112,7 +165,10 @@ def init_furniture_routes() -> APIRouter:
     call alone, so it has no MCP tool at all: this route is the only writer of
     that field, and it can only move a plan out of `pending`.
     """
-    router = APIRouter(prefix="/api/furniture")
+    router = APIRouter(
+        prefix="/api/furniture",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
 
     @router.get("/todo")
     async def todo_window():
@@ -205,7 +261,10 @@ def init_furniture_routes() -> APIRouter:
 
 def init_scheduler_routes() -> APIRouter:
     """Expose pending scheduler events to the local management UI."""
-    router = APIRouter(prefix="/api/scheduler")
+    router = APIRouter(
+        prefix="/api/scheduler",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
 
     @router.get("/events")
     async def scheduler_events():
@@ -248,6 +307,10 @@ def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
     @router.websocket("/client-ws")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for client connections"""
+        if not is_trusted_websocket(websocket):
+            logger.warning("Rejected untrusted /client-ws connection")
+            await websocket.close(code=1008, reason="Origin is not allowed")
+            return
         await websocket.accept()
         client_uid = str(uuid4())
 
@@ -280,6 +343,10 @@ def init_proxy_route(server_url: str) -> APIRouter:
     @router.websocket("/proxy-ws")
     async def proxy_endpoint(websocket: WebSocket):
         """WebSocket endpoint for proxy connections"""
+        if not is_trusted_websocket(websocket):
+            logger.warning("Rejected untrusted /proxy-ws connection")
+            await websocket.close(code=1008, reason="Origin is not allowed")
+            return
         try:
             await proxy_handler.handle_client_connection(websocket)
         except Exception as e:
@@ -301,11 +368,13 @@ def init_frontend_action_routes() -> APIRouter:
     """Create routes that let local MCP subprocesses reach the active frontend.
 
     This endpoint is for the server's own MCP tool subprocesses only. It is
-    guarded by a per-run shared secret (X-Bridge-Token) and restricted to
-    loopback callers, because the app serves permissive CORS headers and an
-    open endpoint here would let any website drive the frontend.
+    guarded by a per-run shared secret (X-Bridge-Token), trusted-origin checks,
+    and a loopback restriction because an open endpoint here would let another
+    website drive the frontend.
     """
-    router = APIRouter()
+    router = APIRouter(
+        dependencies=[Depends(require_trusted_http_request)],
+    )
 
     @router.post("/internal/frontend-action")
     async def frontend_action(request: Request, payload: dict = Body(...)):
@@ -435,9 +504,12 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
         return Response(status_code=302, headers={"Location": "/web-tool/index.html"})
 
     # Reject absurdly large uploads before buffering them all in memory.
-    max_asr_upload_bytes = 50 * 1024 * 1024  # ~25 min of 16-bit 24kHz mono
+    max_asr_upload_bytes = 50 * 1024 * 1024  # ~27 min of 16-bit 16kHz mono
 
-    @router.post("/asr")
+    @router.post(
+        "/asr",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
     async def transcribe_audio(file: UploadFile = File(...)):
         """
         Endpoint for transcribing audio using the ASR engine
@@ -453,32 +525,7 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
                     media_type="application/json",
                 )
 
-            # Validate minimum file size
-            if len(contents) < 44:  # Minimum WAV header size
-                raise ValueError("Invalid WAV file: File too small")
-
-            # Decode the WAV header and get actual audio data
-            wav_header_size = 44  # Standard WAV header size
-            audio_data = contents[wav_header_size:]
-
-            # Validate audio data size
-            if len(audio_data) % 2 != 0:
-                raise ValueError("Invalid audio data: Buffer size must be even")
-
-            # Convert to 16-bit PCM samples to float32
-            try:
-                audio_array = (
-                    np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
-                    / 32768.0
-                )
-            except ValueError as e:
-                raise ValueError(
-                    f"Audio format error: {str(e)}. Please ensure the file is 16-bit PCM WAV format."
-                )
-
-            # Validate audio data
-            if len(audio_array) == 0:
-                raise ValueError("Empty audio data")
+            audio_array = _decode_asr_wav(contents)
 
             if default_context_cache.asr_engine is None:
                 return Response(
@@ -515,6 +562,10 @@ def init_webtool_routes(default_context_cache: ServiceContext) -> APIRouter:
     @router.websocket("/tts-ws")
     async def tts_endpoint(websocket: WebSocket):
         """WebSocket endpoint for TTS generation"""
+        if not is_trusted_websocket(websocket):
+            logger.warning("Rejected untrusted /tts-ws connection")
+            await websocket.close(code=1008, reason="Origin is not allowed")
+            return
         await websocket.accept()
         logger.info("TTS WebSocket connection established")
 

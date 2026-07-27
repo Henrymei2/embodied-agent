@@ -17,6 +17,7 @@ from src.open_llm_vtuber.google_integration import (
     GoogleIntegrationService,
     GoogleIntegrationSettings,
 )
+from src.open_llm_vtuber.request_security import build_trusted_hosts
 from src.open_llm_vtuber.routes import init_google_integration_routes
 
 
@@ -160,8 +161,9 @@ def test_google_routes_sanitize_callback_and_status():
             assert (state, code) == ("safe", "sensitive-code")
 
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_google_integration_routes(FakeService()))
-    client = TestClient(app)
+    client = TestClient(app, headers={"origin": "http://testserver"})
 
     status = client.get("/api/integrations/google/status")
     assert status.json()["status"] == "authorization_required"
@@ -205,8 +207,9 @@ def test_gmail_unread_routes_page_and_sanitize_failures():
             return {}
 
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_google_integration_routes(FakeService()))
-    client = TestClient(app)
+    client = TestClient(app, headers={"origin": "http://testserver"})
 
     assert client.get("/api/integrations/google/gmail/unread-status").json() == {
         "has_unread": True
@@ -228,9 +231,12 @@ def test_gmail_unread_routes_page_and_sanitize_failures():
         raise RuntimeError("sensitive upstream response")
 
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     failing = FakeService()
     failing.unread_status = fail
     app.include_router(init_google_integration_routes(failing))
-    failed = TestClient(app).get("/api/integrations/google/gmail/unread-status")
+    failed = TestClient(app, headers={"origin": "http://testserver"}).get(
+        "/api/integrations/google/gmail/unread-status"
+    )
     assert failed.status_code == 502
     assert "sensitive upstream response" not in failed.text

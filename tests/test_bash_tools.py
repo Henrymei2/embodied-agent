@@ -149,6 +149,9 @@ def _mock_download(bt, monkeypatch, responses):
     class FakeSession:
         trust_env = True
 
+        def mount(self, prefix, adapter):
+            del prefix, adapter
+
         def get(self, url, **kwargs):
             calls.append((url, kwargs))
             return responses.pop(0)
@@ -157,13 +160,15 @@ def _mock_download(bt, monkeypatch, responses):
             pass
 
     monkeypatch.setattr(bt.requests, "Session", FakeSession)
-    monkeypatch.setattr(bt, "_validate_download_url", lambda url: url)
+    monkeypatch.setattr(
+        bt,
+        "_validate_download_url",
+        lambda _url: ("93.184.216.34",),
+    )
     return calls
 
 
-def test_download_file_streams_to_workspace_without_returning_content(
-    bt, monkeypatch
-):
+def test_download_file_streams_to_workspace_without_returning_content(bt, monkeypatch):
     payload = b"%PDF-test-payload"
     responses = [
         FakeDownloadResponse(
@@ -184,6 +189,8 @@ def test_download_file_streams_to_workspace_without_returning_content(
     assert "OK: downloaded downloads/paper.pdf" in result
     assert "SHA-256:" in result
     assert payload.decode() not in result
+    assert calls[0][0] == "https://93.184.216.34/file"
+    assert calls[0][1]["headers"]["Host"] == "example.com"
     assert calls[0][1]["stream"] is True
     assert calls[0][1]["allow_redirects"] is False
 
@@ -206,6 +213,58 @@ def test_download_file_enforces_streaming_size_limit_and_cleans_partial(
 def test_download_file_rejects_private_network_url(bt):
     result = bt.download_file("http://127.0.0.1/private")
     assert "non-public address" in result
+
+
+def test_download_connects_to_the_validated_ip_not_a_second_dns_result(bt, monkeypatch):
+    responses = [FakeDownloadResponse([b"safe"])]
+    calls = []
+    resolutions = []
+
+    def resolve(hostname, port, **kwargs):
+        resolutions.append((hostname, port, kwargs))
+        return [
+            (
+                bt.socket.AF_INET,
+                bt.socket.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", port),
+            )
+        ]
+
+    class FakeSession:
+        trust_env = True
+
+        def mount(self, prefix, adapter):
+            del prefix, adapter
+
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return responses.pop(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bt.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(bt.requests, "Session", FakeSession)
+
+    result = bt.download_file(
+        "https://example.com/report",
+        path="tmp/report.bin",
+    )
+
+    assert result.startswith("OK")
+    assert [item[0] for item in resolutions] == ["example.com"]
+    assert calls[0][0] == "https://93.184.216.34/report"
+    assert calls[0][1]["headers"]["Host"] == "example.com"
+
+
+def test_pinned_https_still_verifies_the_original_hostname(bt):
+    adapter = bt._PinnedHTTPSAdapter("example.com")
+    pool = adapter.poolmanager.connection_from_url("https://93.184.216.34/report")
+
+    assert pool.assert_hostname == "example.com"
+    assert pool.conn_kw["server_hostname"] == "example.com"
 
 
 def test_download_file_rejects_destination_outside_workspace_before_network(

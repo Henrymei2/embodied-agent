@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from src.open_llm_vtuber import bridge_auth, routes
 from src.open_llm_vtuber.autonomy import screen_context as sc
+from src.open_llm_vtuber.request_security import build_trusted_hosts
 from src.open_llm_vtuber.routes import init_frontend_action_routes
 
 
@@ -19,8 +20,9 @@ def client(monkeypatch):
         routes, "_LOOPBACK_HOSTS", routes._LOOPBACK_HOSTS | {"testclient"}
     )
     app = FastAPI()
+    app.state.trusted_hosts = build_trusted_hosts("localhost", ["testserver"])
     app.include_router(init_frontend_action_routes())
-    yield TestClient(app)
+    yield TestClient(app, headers={"origin": "http://testserver"})
     sc._CLIENT_CONTEXT.clear()
 
 
