@@ -20,6 +20,8 @@ system_config:
     redirect_uri: 'http://localhost:12393/api/integrations/google/oauth/callback'
   # Tool prompts that will be appended to the persona prompt
   tool_prompts:
+    # Keep user-facing responses concise, conversational, and free of Markdown.
+    concise_style_prompt: 'concise_style_prompt'
     # Enable think_tag_prompt to let LLMs without thinking output show inner thoughts, mental activities and actions (in parentheses format) without voice synthesis. See think_tag_prompt for more details.
     # think_tag_prompt: 'think_tag_prompt'
     # live_prompt: 'live_prompt'

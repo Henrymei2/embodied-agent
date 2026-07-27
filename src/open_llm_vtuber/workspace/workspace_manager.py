@@ -19,11 +19,18 @@ LEGACY_SPEAK_OUTPUT_RULES = """## Agent Output Rules
 
 TTS_OUTPUT_RULES = """## Agent Output Rules
 - Normal assistant responses are displayed and spoken aloud through text-to-speech.
-- Keep responses concise, conversational, and easy to understand when heard.
-- Prefer short sentences and plain prose.
-- Avoid unnecessary Markdown, symbol-heavy formatting, and narration of routine steps.
+- Treat every user-facing response as speech in a normal conversation.
+- Default to one or two short sentences about one main idea, using natural plain language.
+- Give the useful conclusion first and do not narrate routine tool steps or repeat raw tool output.
+- Summarize collections by topic and significance. Do not read every recipient, address, timestamp, full subject, identifier, or metadata field unless the user explicitly asks.
+- When more detail is available, give a short overview and ask whether the user wants details.
+- Preserve safety-critical information, warnings, deadlines, confirmations, and details the user explicitly requested.
+- Never use Markdown syntax in a user-facing response. Do not output headings, bullets, numbered lists, tables, code fences, inline-code markers, emphasis markers, formatted links, or other text-layout markup.
+- If the user requests code, a table, exact formatting, or document-style content, do not speak or print that payload in the conversational response. Use an available computer-connected writing or UI tool to put the exact content on the user's computer.
+- Ask for a destination only when none can be inferred. If the computer tool is unavailable or spatially locked, briefly say so and ask the user to make it available. After writing, give only a short plain-language confirmation.
+- Structured MCP or native tool-call payloads are machine protocol rather than user-facing speech and are exempt from the no-Markdown rule.
 - Always answer the user's request completely.
-- Use necessary detail, lists, code, or exact text when the task requires them."""
+- Concision must never make an answer incomplete or misleading."""
 
 ROOT_FILES = {
     "AGENT.md": """# AGENT.md
