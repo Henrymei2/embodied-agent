@@ -6,10 +6,25 @@ import json
 
 from loguru import logger
 
+from ..conversations.types import AgentTurnResult
 from .agenda import get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
 from .executive import AgendaExecutive, register_executive, unregister_executive
 from .settings import AutonomySettings
+
+
+def _agenda_step_text(result: AgentTurnResult | str) -> str:
+    """Translate the conversation result into the activity string contract."""
+    if isinstance(result, str):
+        return result
+    if not isinstance(result, AgentTurnResult):
+        raise TypeError(
+            "agenda step returned an unsupported result type: "
+            f"{type(result).__name__}"
+        )
+    if not result.success:
+        raise RuntimeError(result.error or "Agenda conversation step failed.")
+    return str(result.response or "")
 
 
 async def agenda_loop(
@@ -51,7 +66,7 @@ async def agenda_loop(
             f"{json.dumps(checkpoint.arguments, ensure_ascii=False)}\n"
             f"Purpose: {checkpoint.purpose}"
         )
-        return await process_single_conversation(
+        result = await process_single_conversation(
             context=context,
             websocket_send=send,
             client_uid=client_uid,
@@ -65,6 +80,7 @@ async def agenda_loop(
                 "skip_memory": False,
             },
         )
+        return _agenda_step_text(result)
 
     tool_manager = getattr(context.agent_engine, "_tool_manager", None)
     capabilities = set(getattr(tool_manager, "tools", {}).keys())

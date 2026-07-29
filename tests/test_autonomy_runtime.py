@@ -10,6 +10,7 @@ from src.open_llm_vtuber.agent.output_types import (
     DisplayText,
     SentenceOutput,
 )
+from src.open_llm_vtuber.autonomy.driver import _agenda_step_text
 from src.open_llm_vtuber.conversations.llm_request_queue import (
     PRIORITY_PASSIVE,
     PRIORITY_USER,
@@ -18,6 +19,7 @@ from src.open_llm_vtuber.conversations.llm_request_queue import (
 from src.open_llm_vtuber.conversations.single_conversation import (
     process_single_conversation,
 )
+from src.open_llm_vtuber.conversations.types import AgentTurnResult
 
 
 class FakeAgent:
@@ -140,3 +142,29 @@ async def test_agenda_completion_callback_receives_failure_state():
     finally:
         queue.stop()
         await asyncio.sleep(0)
+
+
+def test_agenda_step_extracts_text_from_agent_turn_result():
+    result = AgentTurnResult(
+        success=True,
+        response="Step completed with tools.",
+        reported=False,
+    )
+
+    assert _agenda_step_text(result) == "Step completed with tools."
+
+
+def test_agenda_step_propagates_agent_turn_failure():
+    result = AgentTurnResult(
+        success=False,
+        response="partial response",
+        error="tool execution failed",
+        reported=False,
+    )
+
+    try:
+        _agenda_step_text(result)
+    except RuntimeError as exc:
+        assert str(exc) == "tool execution failed"
+    else:
+        raise AssertionError("failed agent turns must fail the agenda step")
