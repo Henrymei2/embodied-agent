@@ -223,6 +223,20 @@ turning validation failure into uncontrolled compute consumption.
 The executive owns lifecycle and priority. The LLM proposes intentions; the
 executive decides when an accepted intention runs, suspends, resumes, or ends.
 
+When no active, due, or queued work is immediately runnable, the executive also
+starts a connection-local settling transition while it generates the next
+intention. A constrained planner chooses one object from the current room
+snapshot; the frontend bridge walks there and verifies the persisted arrival.
+The shipped sofa and reading chair apply a seated pose, while the bed and other
+objects leave the avatar standing. Invalid choices fall back to the sofa and
+then to remaining in place.
+
+Settling is embodiment between semantic intentions, not an agenda intention of
+its own. It does not add an entry, checkpoint, or agenda event. Paused and
+approval-blocked states settle once per state episode, and a user request
+preempts the transition immediately. A failed or disconnected frontend never
+blocks successor planning beyond the frontend action timeout.
+
 ### Activity Executor
 
 The activity executor decomposes an intention into embodied and tool-using
@@ -447,6 +461,10 @@ An intention may name a preferred object, but all existing proximity gates
 still apply. The activity executor must walk to the appropriate furniture
 before a bound tool becomes visible or executable.
 
+Idle placement is separately constrained to object IDs in a live world-model
+snapshot. Any non-avatar room object may be chosen, including user-added
+furniture, but only the built-in sofa and reading chair imply a sitting pose.
+
 ### Plans and approval
 
 An agenda intention is not equivalent to a user-approved plan. Low-risk,
@@ -470,6 +488,7 @@ src/open_llm_vtuber/autonomy/
   agenda_planner.py     # structured LLM intention proposal
   agenda_policy.py      # validation, novelty, budgets, approval rules
   executive.py          # foreground ownership, preemption, resume selection
+  idle_relocation.py    # bounded room snapshot, destination validation, movement
   activity.py           # step execution and progress/completion events
   driver.py             # event and fallback-cadence orchestration
 ```

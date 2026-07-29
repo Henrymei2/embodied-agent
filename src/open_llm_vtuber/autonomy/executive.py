@@ -20,7 +20,15 @@ from .agenda import (
 from .agenda_context import build_agenda_context
 from .agenda_planner import StructuredAgendaPlanner
 from .agenda_policy import AgendaPolicy
+from .idle_relocation import (
+    IdlePlacement,
+    IdleScene,
+    validate_idle_placement,
+)
 from .settings import AutonomySettings
+
+RoomSnapshot = Callable[[], IdleScene]
+IdleRelocator = Callable[[IdlePlacement], Awaitable[bool]]
 
 
 class AgendaExecutive:
@@ -35,6 +43,8 @@ class AgendaExecutive:
         emit: Callable[[dict], Awaitable[None]],
         capabilities: Optional[set[str]] = None,
         object_names: Optional[set[str]] = None,
+        room_snapshot: Optional[RoomSnapshot] = None,
+        relocate_idle: Optional[IdleRelocator] = None,
     ) -> None:
         self.client_uid = client_uid
         self.store = store
@@ -43,10 +53,16 @@ class AgendaExecutive:
         self.emit = emit
         self.capabilities = capabilities or set()
         self.object_names = object_names or set()
+        self.room_snapshot = room_snapshot
+        self.relocate_idle = relocate_idle
         self.policy = AgendaPolicy(settings.maximum_pursuit_seconds)
         self.activity = ActivityExecutor(store, run_step, emit)
         self._wake = asyncio.Event()
         self._activity_task: Optional[asyncio.Task] = None
+        self._activity_interrupted = False
+        self._settling_task: Optional[asyncio.Task] = None
+        self._settling_interrupted = False
+        self._settled_hold_key: Optional[str] = None
         self._memory_digest_writer: Optional[Callable[[str], bool]] = None
 
     async def run(self) -> None:
@@ -80,6 +96,8 @@ class AgendaExecutive:
             except asyncio.CancelledError:
                 if self._activity_task and not self._activity_task.done():
                     self._activity_task.cancel()
+                if self._settling_task and not self._settling_task.done():
+                    self._settling_task.cancel()
                 raise
             except ActivityStepTimeout as exc:
                 logger.warning(f"agenda: {exc}")
@@ -110,6 +128,16 @@ class AgendaExecutive:
     def set_memory_digest_writer(self, writer: Callable[[str], bool]) -> None:
         self._memory_digest_writer = writer
 
+    def _interrupt_activity(self) -> None:
+        if self._activity_task and not self._activity_task.done():
+            self._activity_interrupted = True
+            self._activity_task.cancel()
+
+    def _interrupt_settling(self) -> None:
+        if self._settling_task and not self._settling_task.done():
+            self._settling_interrupted = True
+            self._settling_task.cancel()
+
     async def broadcast_snapshot(self) -> None:
         await self.emit(
             {
@@ -119,8 +147,9 @@ class AgendaExecutive:
         )
 
     async def preempt_for_user(self, title: str) -> AgendaEntry:
-        if self._activity_task and not self._activity_task.done():
-            self._activity_task.cancel()
+        self._interrupt_activity()
+        self._interrupt_settling()
+        self._settled_hold_key = None
         state = self.store.load()
         for active in state.entries:
             if active.status == "active":
@@ -151,8 +180,11 @@ class AgendaExecutive:
         await self.broadcast_snapshot()
 
     async def pause(self, paused: bool) -> None:
-        if paused and self._activity_task and not self._activity_task.done():
-            self._activity_task.cancel()
+        if paused:
+            self._interrupt_activity()
+            self._interrupt_settling()
+        if not paused:
+            self._settled_hold_key = None
         self.store.pause(paused)
         self.wake()
         await self.emit(
@@ -164,18 +196,27 @@ class AgendaExecutive:
         state = self.store.load()
         entry = next(item for item in state.entries if item.id == entry_id)
         if entry.status == "active" and self._activity_task:
-            self._activity_task.cancel()
-        self.store.transition(entry_id, "abandoned", progress_summary="Stopped by user.")
+            self._interrupt_activity()
+        self.store.transition(
+            entry_id, "abandoned", progress_summary="Stopped by user."
+        )
         self.wake()
         await self.broadcast_snapshot()
 
     async def _advance(self) -> bool:
         state = self.store.load()
+        active = next((item for item in state.entries if item.status == "active"), None)
+        if state.paused:
+            if active and active.kind == "user":
+                return False
+            return not await self._settle_for_hold("paused")
+
         due = self.store.claim_due()
         if due:
             state = self.store.load()
         active = next((item for item in state.entries if item.status == "active"), None)
         if active:
+            self._settled_hold_key = None
             if active.kind != "user":
                 await self._advance_entry(active)
                 return True
@@ -194,36 +235,144 @@ class AgendaExecutive:
             ),
         )
         if queued:
+            self._settled_hold_key = None
             entry = self.store.transition(queued[0].id, "active")
             await self.broadcast_snapshot()
             await self._advance_entry(entry)
             return True
-        if any(
-            item.status in {"proposed", "blocked_approval"} for item in state.entries
-        ):
+        held = [
+            item
+            for item in state.entries
+            if item.status in {"proposed", "blocked_approval"}
+        ]
+        if held:
             # Exactly one generated successor is retained. Do not generate
             # additional work while that successor awaits user approval.
-            return False
+            key = "held:" + ",".join(
+                f"{item.id}:{item.status}" for item in sorted(held, key=lambda x: x.id)
+            )
+            return not await self._settle_for_hold(key)
         suspended = [
             item
             for item in state.entries
             if item.status == "suspended" and item.origin == "autonomous"
         ]
         if suspended:
+            self._settled_hold_key = None
             await self._reconsider_suspended()
             return True
-        if state.paused:
-            return False
-        await self._generate_successor()
+        self._settled_hold_key = None
+        await self._settle_while_generating_successor()
         return True
 
-    async def _generate_successor(self) -> None:
-        context = build_agenda_context(
+    def _agenda_context(self):
+        return build_agenda_context(
             self.store,
             client_uid=self.client_uid,
             capabilities=self.capabilities,
             object_names=self.object_names,
         )
+
+    def _room_snapshot(self) -> IdleScene:
+        if self.room_snapshot is None:
+            return IdleScene(current_position=None, objects=())
+        try:
+            return self.room_snapshot()
+        except Exception as exc:
+            logger.warning(f"agenda: could not inspect room for idle relocation: {exc}")
+            return IdleScene(current_position=None, objects=())
+
+    async def _choose_idle_placement(
+        self,
+        context,
+        scene: IdleScene,
+    ) -> IdlePlacement:
+        if not scene.objects:
+            return IdlePlacement(None, "No room objects are available.")
+        try:
+            placement = await self.planner.choose_idle_placement(context, scene)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"agenda: idle placement planner failed: {exc}")
+            placement = IdlePlacement(None, "The idle placement planner failed.")
+        return validate_idle_placement(placement, scene)
+
+    async def _relocate_idle_safely(self, placement: IdlePlacement) -> None:
+        if placement.object_id is None or self.relocate_idle is None:
+            return
+        try:
+            await self.relocate_idle(placement)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                f"agenda: idle relocation failed without blocking work: {exc}"
+            )
+
+    async def _run_settling_task(self, operation: Awaitable[None]) -> bool:
+        task = asyncio.create_task(operation)
+        self._settling_task = task
+        self._settling_interrupted = False
+        try:
+            await task
+            return True
+        except asyncio.CancelledError:
+            # User preemption cancels this child task, while shutting down the
+            # agenda cancels the current task itself. Only swallow the former.
+            if not self._settling_interrupted:
+                raise
+            logger.info("agenda: idle relocation was preempted")
+            return False
+        finally:
+            if self._settling_task is task:
+                self._settling_task = None
+                self._settling_interrupted = False
+
+    async def _settle_for_hold(self, key: str) -> bool:
+        if self._settled_hold_key == key:
+            return True
+        self._settled_hold_key = key
+        context = self._agenda_context()
+        scene = self._room_snapshot()
+
+        async def settle() -> None:
+            placement = await self._choose_idle_placement(context, scene)
+            await self._relocate_idle_safely(placement)
+
+        return await self._run_settling_task(settle())
+
+    async def _settle_while_generating_successor(self) -> None:
+        context = self._agenda_context()
+        scene = self._room_snapshot()
+
+        async def settle_and_generate() -> None:
+            placement = await self._choose_idle_placement(context, scene)
+            relocation = asyncio.create_task(self._relocate_idle_safely(placement))
+            generation = asyncio.create_task(self._generate_successor(context))
+            try:
+                await asyncio.gather(relocation, generation)
+            except BaseException:
+                for task in (relocation, generation):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(relocation, generation, return_exceptions=True)
+                raise
+
+        await self._run_settling_task(settle_and_generate())
+        state = self.store.load()
+        held = [
+            item
+            for item in state.entries
+            if item.status in {"proposed", "blocked_approval"}
+        ]
+        if held:
+            self._settled_hold_key = "held:" + ",".join(
+                f"{item.id}:{item.status}" for item in sorted(held, key=lambda x: x.id)
+            )
+
+    async def _generate_successor(self, context=None) -> None:
+        context = context or self._agenda_context()
         for _ in range(self.settings.planner_retry_limit):
             proposal = await self.planner.propose_intention(context)
             state = self.store.load()
@@ -286,7 +435,9 @@ class AgendaExecutive:
             lambda state: setattr(
                 state,
                 "next_reconsideration_at",
-                (utc_now() + timedelta(seconds=self.settings.idle_min_seconds)).isoformat(),
+                (
+                    utc_now() + timedelta(seconds=self.settings.idle_min_seconds)
+                ).isoformat(),
             )
         )
         await self.broadcast_snapshot()
@@ -314,11 +465,15 @@ class AgendaExecutive:
     async def _advance_entry(self, entry: AgendaEntry) -> None:
         deadline = entry.budget.deadline_at
         if deadline and utc_now() >= datetime.fromisoformat(deadline):
-            self.store.transition(entry.id, "failed", progress_summary="Time budget expired.")
+            self.store.transition(
+                entry.id, "failed", progress_summary="Time budget expired."
+            )
             await self.broadcast_snapshot()
             return
         if entry.kind == "idle":
-            await asyncio.sleep(min(entry.budget.time_budget_seconds, self.settings.idle_max_seconds))
+            await asyncio.sleep(
+                min(entry.budget.time_budget_seconds, self.settings.idle_max_seconds)
+            )
             self.store.transition(entry.id, "completed")
             await self.broadcast_snapshot()
             return
@@ -346,8 +501,20 @@ class AgendaExecutive:
                 checkpoint.timeout_seconds,
                 remaining_budget,
             )
-        self._activity_task = asyncio.create_task(self.activity.execute(entry, checkpoint))
-        result = await self._activity_task
+        self._activity_task = asyncio.create_task(
+            self.activity.execute(entry, checkpoint)
+        )
+        self._activity_interrupted = False
+        try:
+            result = await self._activity_task
+        except asyncio.CancelledError:
+            if not self._activity_interrupted:
+                raise
+            logger.info(f"agenda: activity for {entry.id!r} was preempted")
+            return
+        finally:
+            self._activity_task = None
+            self._activity_interrupted = False
         complete, summary = await self.planner.evaluate_completion(
             asdict(entry), [result]
         )
@@ -377,7 +544,9 @@ class AgendaExecutive:
             object_names=self.object_names,
         )
         decision = await self.planner.reconsider(asdict(entry), context)
-        target = {"resume": "queued", "queue": "queued", "abandon": "abandoned"}[decision]
+        target = {"resume": "queued", "queue": "queued", "abandon": "abandoned"}[
+            decision
+        ]
         self.store.transition(entry.id, target)
 
 

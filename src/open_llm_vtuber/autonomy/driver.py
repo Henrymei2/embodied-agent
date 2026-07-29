@@ -10,6 +10,7 @@ from ..conversations.types import AgentTurnResult
 from .agenda import get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
 from .executive import AgendaExecutive, register_executive, unregister_executive
+from .idle_relocation import idle_scene_snapshot, relocate_for_idle
 from .settings import AutonomySettings
 
 
@@ -19,8 +20,7 @@ def _agenda_step_text(result: AgentTurnResult | str) -> str:
         return result
     if not isinstance(result, AgentTurnResult):
         raise TypeError(
-            "agenda step returned an unsupported result type: "
-            f"{type(result).__name__}"
+            f"agenda step returned an unsupported result type: {type(result).__name__}"
         )
     if not result.success:
         raise RuntimeError(result.error or "Agenda conversation step failed.")
@@ -92,6 +92,15 @@ async def agenda_loop(
     object_names = set(PROXIMITY_REQUIREMENTS.values()) | set(
         SERVER_PROXIMITY_REQUIREMENTS.values()
     )
+    conf_uid = context.character_config.conf_uid
+
+    async def relocate_idle(placement) -> bool:
+        return await relocate_for_idle(
+            client_uid=client_uid,
+            conf_uid=conf_uid,
+            placement=placement,
+        )
+
     executive = AgendaExecutive(
         client_uid=client_uid,
         store=get_agenda_store(),
@@ -101,6 +110,8 @@ async def agenda_loop(
         emit=emit,
         capabilities=capabilities,
         object_names=object_names,
+        room_snapshot=lambda: idle_scene_snapshot(conf_uid),
+        relocate_idle=relocate_idle,
     )
     memory_manager = getattr(context.agent_engine, "_memory_manager", None)
     if memory_manager is not None:

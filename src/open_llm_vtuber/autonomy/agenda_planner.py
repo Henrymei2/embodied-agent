@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from .agenda import ExecutionCheckpoint, create_entry, new_entry_id
 from .agenda_context import AgendaContext
+from .idle_relocation import IdlePlacement, IdleScene
 
 LLMComplete = Callable[[str], Awaitable[str]]
 
@@ -40,7 +41,9 @@ def normalize_generated_kind(value: Any) -> str:
 
 def _json_object(text: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    candidate = fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
+    candidate = (
+        fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
+    )
     value = json.loads(candidate)
     if not isinstance(value, dict):
         raise ValueError("planner output must be a JSON object")
@@ -50,6 +53,42 @@ def _json_object(text: str) -> dict[str, Any]:
 @dataclass
 class StructuredAgendaPlanner:
     complete: LLMComplete
+
+    async def choose_idle_placement(
+        self,
+        context: AgendaContext,
+        scene: IdleScene,
+    ) -> IdlePlacement:
+        """Choose exactly one destination from a live, bounded room snapshot."""
+        objects = [
+            {
+                "object_id": obj.object_id,
+                "label": obj.label,
+                "position": {"x": obj.x, "y": obj.y},
+                "distance_from_agent": obj.distance,
+                "posture_on_arrival": obj.posture,
+            }
+            for obj in scene.objects
+        ]
+        raw = _json_object(
+            await self.complete(
+                "You choose where an embodied agent should wait while deciding what "
+                "to do next. Return JSON only with object_id and reason. Choose "
+                "object_id verbatim from the supplied room objects; never invent an "
+                "object. Prefer a place that makes semantic sense given the recently "
+                "finished work, time, presence, and room labels. A currently suitable "
+                "place may be chosen again. Known seats will apply the posture shown; "
+                "all other destinations remain standing. "
+                f"Current position: {json.dumps(scene.current_position)}\n"
+                f"Room objects: {json.dumps(objects, ensure_ascii=False)}\n"
+                f"Agenda context: {json.dumps(context.payload, ensure_ascii=False)}"
+            )
+        )
+        object_id = raw.get("object_id")
+        return IdlePlacement(
+            object_id=str(object_id) if object_id is not None else None,
+            reason=str(raw.get("reason", ""))[:200],
+        )
 
     async def propose_intention(self, context: AgendaContext):
         prompt = (
@@ -120,7 +159,7 @@ class StructuredAgendaPlanner:
         raw = _json_object(
             await self.complete(
                 "Determine whether the declared completion condition is met. "
-                "Return JSON only: {\"complete\": boolean, \"summary\": string}. "
+                'Return JSON only: {"complete": boolean, "summary": string}. '
                 f"Entry: {json.dumps(entry, ensure_ascii=False)} Evidence: "
                 f"{json.dumps(evidence[-10:], ensure_ascii=False)}"
             )
