@@ -103,6 +103,16 @@ class AutonomyPlanner:
         if not settings.enabled:
             return PlannerDecision(ACT_NOTHING, reason="autonomy disabled")
 
+        since_last_action = state.seconds_since_last_action(now)
+        if (
+            since_last_action is not None
+            and since_last_action < settings.min_action_gap_seconds
+        ):
+            return PlannerDecision(
+                ACT_NOTHING,
+                reason="autonomous action cooldown is active",
+            )
+
         # --- observe + propose: keep only context-relevant candidates -------
         # Learned habits (Habit Engine) compete on equal footing with the
         # built-in candidates: same scoring, same gates, no extra privilege.
@@ -177,6 +187,7 @@ class AutonomyPlanner:
                 cost,
                 user_facing=action in (ACT_ASK, ACT_SPEAK),
                 focus_mode=observation.focus_mode,
+                presence_fresh=observation.presence_fresh,
                 now=now,
             )
             if not allowed:

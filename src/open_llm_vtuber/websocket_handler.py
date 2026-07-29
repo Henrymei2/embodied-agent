@@ -76,6 +76,7 @@ class WebSocketHandler:
         self.default_context_cache = default_context_cache
         self.received_data_buffers: Dict[str, np.ndarray] = {}
         self.autonomy_tasks: Dict[str, asyncio.Task] = {}
+        self.autonomy_supervised_clients: set[str] = set()
         self.scheduler_tasks: Dict[str, asyncio.Task] = {}
         # (client, object) -> when it was last clicked, for the cooldown.
         self._object_click_times: Dict[tuple[str, str], float] = {}
@@ -181,7 +182,8 @@ class WebSocketHandler:
 
         # Autonomous behavior loop (curiosity/care/housekeeping/growth/social/
         # work), gated by the configurable interruption controls.
-        from .autonomy import AutonomySettings, autonomy_loop
+        from .autonomy import AutonomySettings
+        from .autonomy.driver import attach_autonomy_client
         from .autonomy.presence import get_or_create_presence_ledger
         from .workspace import ensure_workspace
 
@@ -192,9 +194,13 @@ class WebSocketHandler:
             presence = get_or_create_presence_ledger(
                 client_uid, ensure_workspace().root, autonomy_settings
             )
-            self.autonomy_tasks[client_uid] = asyncio.create_task(
-                autonomy_loop(client_uid, autonomy_settings, presence=presence)
+            self.autonomy_tasks[client_uid] = attach_autonomy_client(
+                client_uid,
+                ensure_workspace().root,
+                autonomy_settings,
+                presence,
             )
+            self.autonomy_supervised_clients.add(client_uid)
 
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
@@ -467,11 +473,22 @@ class WebSocketHandler:
         # Every step below is independent, and the context close at the end is
         # the one that releases MCP subprocesses. Nothing here may raise past
         # it: a step that throws would strand those for the life of the server.
+        supervised_clients = getattr(self, "autonomy_supervised_clients", set())
+        if client_uid in supervised_clients:
+            from .autonomy.driver import detach_autonomy_client
+
+            detach_autonomy_client(client_uid)
+            supervised_clients.discard(client_uid)
+            self.autonomy_tasks.pop(client_uid, None)
+            autonomy_task = None
+        else:
+            autonomy_task = self.autonomy_tasks.pop(client_uid, None)
+
         try:
             await self._cancel_and_await_tasks(
                 client_uid,
                 [
-                    ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
+                    ("autonomy", autonomy_task),
                     ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
                     (
                         "conversation",

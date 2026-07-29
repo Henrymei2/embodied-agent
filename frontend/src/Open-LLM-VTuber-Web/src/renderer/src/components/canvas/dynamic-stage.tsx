@@ -22,6 +22,17 @@ import { useChatHistory } from "@/context/chat-history-context";
 import { useAgentActivity } from "@/context/agent-activity-context";
 import type { AgentActivityTool } from "@/context/agent-activity-context";
 import { useTranslation } from "react-i18next";
+import {
+  accent,
+  border,
+  elevation,
+  focusRing,
+  radius,
+  status as statusColor,
+  surface,
+  text,
+  typography,
+} from "@/styles/tokens";
 
 const toPercent = (value: number, total: number) => `${(value / total) * 100}%`;
 const HOVER_DELAY_MS = 250;
@@ -109,14 +120,32 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
         maxWidth="min(240px, 80vw)"
         overflow="hidden"
         textOverflow="ellipsis"
-        px="10px"
-        py="6px"
-        borderRadius="12px"
-        bg="rgba(15, 23, 42, 0.9)"
-        color="white"
-        boxShadow="0 6px 18px rgba(15, 23, 42, 0.28)"
-        fontSize="12px"
-        fontWeight="600"
+        px="11px"
+        py="7px"
+        borderRadius={radius.full}
+        bg={surface.chrome}
+        backdropFilter="blur(20px) saturate(140%)"
+        border={`1px solid ${border.default}`}
+        color={text.primary}
+        boxShadow={`${elevation[3]}, ${elevation.hairline}`}
+        animation="surfaceIn var(--duration-fast) var(--ease-out)"
+        {...typography.labelSmall}
+        display="flex"
+        alignItems="center"
+        gap="7px"
+        _focusVisible={focusRing}
+        _before={{
+          content: '""',
+          width: "6px",
+          height: "6px",
+          flexShrink: 0,
+          borderRadius: "full",
+          bg: activity.phase === "thinking" ? accent[400] : "#7bdda1",
+          boxShadow: activity.phase === "thinking"
+            ? `0 0 10px ${accent.glow}`
+            : "0 0 10px rgba(123,221,161,0.75)",
+          animation: "pulse 1.8s ease-in-out infinite",
+        }}
       >
         {label}
       </Box>
@@ -128,11 +157,14 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
           width="max-content"
           maxWidth="min(260px, 80vw)"
           p="8px"
-          borderRadius="10px"
-          bg="rgba(15, 23, 42, 0.94)"
-          color="white"
-          boxShadow="0 8px 24px rgba(15, 23, 42, 0.32)"
-          fontSize="11px"
+          borderRadius={radius.lg}
+          bg={surface.chromeSolid}
+          backdropFilter="blur(24px) saturate(140%)"
+          border={`1px solid ${border.default}`}
+          color={text.primary}
+          boxShadow={`${elevation[4]}, ${elevation.hairline}`}
+          animation="surfaceIn var(--duration-fast) var(--ease-out)"
+          {...typography.caption}
         >
           {tools.map((tool) => (
             <Box
@@ -142,7 +174,7 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
               gap="7px"
               alignItems="center"
               py="2px"
-              color={tool.status === "error" ? "red.200" : "inherit"}
+              color={tool.status === "error" ? statusColor.dangerFg : "inherit"}
             >
               <Box aria-hidden="true">
                 {tool.status === "completed" ? "✓" : tool.status === "error" ? "!" : "•"}
@@ -380,9 +412,9 @@ const FURNITURE_FEED_ROUTES: Record<string, string> = {
 const FIXED_OBJECT_IDS = new Set(["computer", "design_board"]);
 
 const TODO_PRIORITY_COLORS: Record<string, string> = {
-  high: "red.300",
-  normal: "blue.200",
-  low: "gray.400",
+  high: statusColor.dangerFg,
+  normal: accent[300],
+  low: text.quaternary,
 };
 
 /** Poll a furniture feed while its window is open. */
@@ -650,30 +682,39 @@ function FurnitureWindow({
       width={`${width}px`}
       maxHeight="min(320px, calc(100vh - 24px))"
       overflowY="auto"
-      bg="rgba(15, 23, 42, 0.97)"
-      color="white"
-      border="1px solid rgba(148, 163, 184, 0.5)"
-      borderRadius="12px"
-      boxShadow="0 20px 50px rgba(0, 0, 0, 0.38)"
+      bg={surface.chromeSolid}
+      backdropFilter="blur(32px) saturate(140%)"
+      color={text.primary}
+      border={`1px solid ${border.default}`}
+      borderRadius={radius.xl}
+      boxShadow={`${elevation[5]}, ${elevation.hairline}`}
+      animation="surfaceIn var(--duration-fast) var(--ease-out)"
       p="16px"
       zIndex={10000}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       onClick={(event) => event.stopPropagation()}
     >
-      <Text fontWeight="700" fontSize="md">{config.title}</Text>
-      {config.body && <Text mt="6px" fontSize="sm" color="gray.300">{config.body}</Text>}
+      <Text {...typography.title}>{config.title}</Text>
+      {config.body && (
+        <Text {...typography.footnote} mt="6px" color={text.secondary}>
+          {config.body}
+        </Text>
+      )}
       {provider === "google_calendar_status" && (
         <Box mt="12px" aria-live="polite">
           {!status ? (
             <Spinner size="sm" aria-label="Loading Google Calendar status" />
           ) : (
             <>
-              <Text fontSize="sm" color={status?.connected ? "green.300" : "orange.200"}>
+              <Text
+                {...typography.footnote}
+                color={status?.connected ? statusColor.successFg : statusColor.warningFg}
+              >
                 {status?.message || "Connection status is unavailable."}
               </Text>
               {loading && <Spinner mt="8px" size="xs" aria-label="Refreshing Google Calendar status" />}
-              <Button mt="12px" size="sm" onClick={authorize}>
+              <Button borderRadius={radius.sm} mt="12px" size="sm" onClick={authorize}>
                 {status.connected ? "Reauthenticate with Google" : "Authenticate with Google"}
               </Button>
             </>
@@ -686,33 +727,33 @@ function FurnitureWindow({
             <Spinner size="sm" aria-label="Loading unread Gmail messages" />
           ) : unreadError ? (
             <>
-              <Text fontSize="sm" color="orange.200">{unreadError}</Text>
+              <Text fontSize="sm" color={statusColor.warningFg}>{unreadError}</Text>
               {unreadNeedsAuth && (
-                <Button mt="12px" size="sm" onClick={authorize}>Authenticate with Google</Button>
+                <Button borderRadius={radius.sm} mt="12px" size="sm" onClick={authorize}>Authenticate with Google</Button>
               )}
             </>
           ) : unreadMessages.length === 0 ? (
-            <Text fontSize="sm" color="gray.400">No unread messages.</Text>
+            <Text fontSize="sm" color={text.tertiary}>No unread messages.</Text>
           ) : (
             <>
               {unreadMessages.map((message) => (
-                <Box key={message.message_id} py="8px" borderBottom="1px solid" borderColor="whiteAlpha.200">
-                  <Text fontSize="xs" color="blue.200" fontWeight="700" overflowWrap="anywhere">
+                <Box key={message.message_id} py="8px" borderBottom="1px solid" borderColor={border.subtle}>
+                  <Text fontSize="xs" color={accent[200]} fontWeight="700" overflowWrap="anywhere">
                     {message.sender || "Unknown sender"}
                   </Text>
-                  <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+                  <Text fontSize="sm" color={text.primary} fontWeight="600" overflowWrap="anywhere">
                     {message.subject || "(no subject)"}
                   </Text>
-                  {message.received_at && <Text fontSize="xs" color="gray.500">{message.received_at}</Text>}
+                  {message.received_at && <Text fontSize="xs" color={text.quaternary}>{message.received_at}</Text>}
                   {message.snippet && (
-                    <Text fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                    <Text fontSize="xs" color={text.tertiary} mt="3px" overflowWrap="anywhere">
                       {message.snippet}
                     </Text>
                   )}
                 </Box>
               ))}
               {unreadNextToken && (
-                <Button mt="10px" size="xs" onClick={() => void loadUnread(unreadNextToken)} disabled={unreadLoading}>
+                <Button borderRadius={radius.sm} mt="10px" size="xs" onClick={() => void loadUnread(unreadNextToken)} disabled={unreadLoading}>
                   {unreadLoading ? "Loading…" : "Load more"}
                 </Button>
               )}
@@ -723,13 +764,13 @@ function FurnitureWindow({
       {provider === "todo_list" && (
         <Box mt="12px" aria-live="polite">
           {todoFeed.failed || todoFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {todoFeed.data?.message || "The todo list is unavailable."}
             </Text>
           ) : !todoFeed.data ? (
             <Spinner size="sm" aria-label="Loading todo list" />
           ) : todoFeed.data.items.length === 0 ? (
-            <Text fontSize="sm" color="gray.400">Nothing on the list.</Text>
+            <Text fontSize="sm" color={text.tertiary}>Nothing on the list.</Text>
           ) : (
             <>
               {todoFeed.data.items.map((item, index) => {
@@ -744,15 +785,15 @@ function FurnitureWindow({
                       borderRadius="50%"
                       bg={TODO_PRIORITY_COLORS[item.priority] || TODO_PRIORITY_COLORS.normal}
                     />
-                    <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                    <Text fontSize="sm" color={text.primary} overflowWrap="anywhere">
                       {item.text}
-                      {due && <Text as="span" color="gray.400"> · {due}</Text>}
+                      {due && <Text as="span" color={text.tertiary}> · {due}</Text>}
                     </Text>
                   </Box>
                 );
               })}
               {todoFeed.data.remaining > 0 && (
-                <Text fontSize="xs" color="gray.400" mt="8px">
+                <Text fontSize="xs" color={text.tertiary} mt="8px">
                   +{todoFeed.data.remaining} more open
                 </Text>
               )}
@@ -763,13 +804,13 @@ function FurnitureWindow({
       {provider === "drawing_board_image" && (
         <Box mt="12px" aria-live="polite">
           {drawingBoardFeed.failed || drawingBoardFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {drawingBoardFeed.data?.message || "Drawing Board image is unavailable."}
             </Text>
           ) : !drawingBoardFeed.data ? (
             <Spinner size="sm" aria-label="Loading Drawing Board image" />
           ) : !drawingBoardFeed.data.has_image || !drawingBoardFeed.data.drawing?.image_url ? (
-            <Text fontSize="sm" color="gray.400">No image has been drawn yet.</Text>
+            <Text fontSize="sm" color={text.tertiary}>No image has been drawn yet.</Text>
           ) : (
             <Box>
               <Image
@@ -781,7 +822,7 @@ function FurnitureWindow({
                 bg="blackAlpha.400"
               />
               {drawingBoardFeed.data.drawing.prompt && (
-                <Text mt="8px" fontSize="xs" color="gray.300" overflowWrap="anywhere">
+                <Text mt="8px" fontSize="xs" color={text.secondary} overflowWrap="anywhere">
                   {drawingBoardFeed.data.drawing.prompt}
                 </Text>
               )}
@@ -792,25 +833,25 @@ function FurnitureWindow({
       {provider === "timer_status" && (
         <Box mt="12px" aria-live="polite">
           {timerFeed.failed ? (
-            <Text fontSize="sm" color="orange.200">Timers are unavailable.</Text>
+            <Text fontSize="sm" color={statusColor.warningFg}>Timers are unavailable.</Text>
           ) : !timerFeed.data ? (
             <Spinner size="sm" aria-label="Loading timers" />
           ) : timerFeed.data.timers.length === 0 ? (
-            <Text fontSize="sm" color="gray.400">No timers running.</Text>
+            <Text fontSize="sm" color={text.tertiary}>No timers running.</Text>
           ) : (
             <>
               {timerFeed.data.timers.map((timer, index) => (
                 <Box key={`${timer.due_at}-${index}`} display="flex" justifyContent="space-between" gap="12px" mb="6px">
-                  <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                  <Text fontSize="sm" color={text.primary} overflowWrap="anywhere">
                     {timer.label || "timer"}
                   </Text>
-                  <Text fontSize="sm" color="purple.200" flexShrink={0} fontVariantNumeric="tabular-nums">
+                  <Text fontSize="sm" color={accent[200]} flexShrink={0} fontVariantNumeric="tabular-nums">
                     {formatRemaining(timerRemainingSeconds(timer))}
                   </Text>
                 </Box>
               ))}
               {timerFeed.data.remaining > 0 && (
-                <Text fontSize="xs" color="gray.400" mt="8px">
+                <Text fontSize="xs" color={text.tertiary} mt="8px">
                   +{timerFeed.data.remaining} more
                 </Text>
               )}
@@ -821,32 +862,32 @@ function FurnitureWindow({
       {provider === "bookshelf" && (
         <Box mt="12px" aria-live="polite">
           {shelfFeed.failed || shelfFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {shelfFeed.data?.message || "The shelf is unavailable."}
             </Text>
           ) : !shelfFeed.data ? (
             <Spinner size="sm" aria-label="Loading the bookshelf" />
           ) : shelfFeed.data.books.length === 0 ? (
-            <Text fontSize="sm" color="gray.400">No books shelved yet.</Text>
+            <Text fontSize="sm" color={text.tertiary}>No books shelved yet.</Text>
           ) : (
             <>
               {shelfFeed.data.books.map((book, index) => (
                 <Box key={`${book.title}-${index}`} mb="8px">
-                  <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+                  <Text fontSize="sm" color={text.primary} fontWeight="600" overflowWrap="anywhere">
                     {book.title}
                     {!book.readable && (
-                      <Text as="span" color="gray.500" fontSize="xs"> · no full text</Text>
+                      <Text as="span" color={text.quaternary} fontSize="xs"> · no full text</Text>
                     )}
                   </Text>
                   {(book.author || book.year) && (
-                    <Text fontSize="xs" color="gray.400" overflowWrap="anywhere">
+                    <Text fontSize="xs" color={text.tertiary} overflowWrap="anywhere">
                       {[book.author, book.year].filter(Boolean).join(" · ")}
                     </Text>
                   )}
                 </Box>
               ))}
               {shelfFeed.data.remaining > 0 && (
-                <Text fontSize="xs" color="gray.400" mt="8px">
+                <Text fontSize="xs" color={text.tertiary} mt="8px">
                   +{shelfFeed.data.remaining} more shelved
                 </Text>
               )}
@@ -857,38 +898,38 @@ function FurnitureWindow({
       {provider === "reading_status" && (
         <Box mt="12px" aria-live="polite">
           {readingFeed.failed || readingFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {readingFeed.data?.message || "Reading progress is unavailable."}
             </Text>
           ) : !readingFeed.data ? (
             <Spinner size="sm" aria-label="Loading reading progress" />
           ) : !readingFeed.data.session ? (
-            <Text fontSize="sm" color="gray.400">
+            <Text fontSize="sm" color={text.tertiary}>
               Nothing is being read right now.
               {Boolean(readingFeed.data.finished_count) && ` ${readingFeed.data.finished_count} book(s) finished.`}
             </Text>
           ) : (
             <>
-              <Text fontSize="sm" color="gray.100" fontWeight="600" overflowWrap="anywhere">
+              <Text fontSize="sm" color={text.primary} fontWeight="600" overflowWrap="anywhere">
                 {readingFeed.data.session.title}
               </Text>
               {readingFeed.data.session.author && (
-                <Text fontSize="xs" color="gray.400">{readingFeed.data.session.author}</Text>
+                <Text fontSize="xs" color={text.tertiary}>{readingFeed.data.session.author}</Text>
               )}
-              <Box mt="8px" height="6px" borderRadius="3px" bg="whiteAlpha.300" overflow="hidden">
+              <Box mt="8px" height="6px" borderRadius="3px" bg={surface.glass3} overflow="hidden">
                 <Box
                   height="100%"
                   width={`${Math.min(100, Math.max(0, readingFeed.data.session.progress_percent))}%`}
-                  bg="teal.300"
+                  bg="linear-gradient(90deg, #7786ff, #a864e8)"
                 />
               </Box>
-              <Text mt="4px" fontSize="xs" color="gray.400">
+              <Text mt="4px" fontSize="xs" color={text.tertiary}>
                 {readingFeed.data.session.progress_percent}% · passage {readingFeed.data.session.section}
               </Text>
               {readingFeed.data.session.notes.map((note, index) => (
-                <Box key={`${note.section}-${index}`} mt="8px" pt="8px" borderTop="1px solid" borderColor="whiteAlpha.200">
-                  <Text fontSize="xs" color="teal.200">passage {note.section}</Text>
-                  <Text fontSize="sm" color="gray.200" overflowWrap="anywhere">{note.summary}</Text>
+                <Box key={`${note.section}-${index}`} mt="8px" pt="8px" borderTop="1px solid" borderColor={border.subtle}>
+                  <Text fontSize="xs" color={accent[200]}>passage {note.section}</Text>
+                  <Text fontSize="sm" color={text.secondary} overflowWrap="anywhere">{note.summary}</Text>
                 </Box>
               ))}
             </>
@@ -898,31 +939,31 @@ function FurnitureWindow({
       {provider === "plan_status" && (
         <Box mt="12px" aria-live="polite">
           {planFeed.failed || planFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {planFeed.data?.message || "Plans are unavailable."}
             </Text>
           ) : !planFeed.data ? (
             <Spinner size="sm" aria-label="Loading plans" />
           ) : planFeed.data.pending.length === 0 ? (
-            <Text fontSize="sm" color="gray.400">
+            <Text fontSize="sm" color={text.tertiary}>
               No plan is waiting on you.
               {planFeed.data.recent && ` Last plan "${planFeed.data.recent.title}" was ${planFeed.data.recent.status}.`}
             </Text>
           ) : (
             <>
               {planFeed.data.pending.map((plan) => (
-                <Box key={plan.plan_id} pb="10px" mb="10px" borderBottom="1px solid" borderColor="whiteAlpha.200">
-                  <Text fontSize="sm" color="gray.100" fontWeight="700" overflowWrap="anywhere">
+                <Box key={plan.plan_id} pb="10px" mb="10px" borderBottom="1px solid" borderColor={border.subtle}>
+                  <Text fontSize="sm" color={text.primary} fontWeight="700" overflowWrap="anywhere">
                     {plan.title}
                   </Text>
-                  <Text fontSize="xs" color="gray.300" mt="2px" overflowWrap="anywhere">{plan.goal}</Text>
+                  <Text fontSize="xs" color={text.secondary} mt="2px" overflowWrap="anywhere">{plan.goal}</Text>
                   {plan.steps.map((step, index) => (
-                    <Text key={`${plan.plan_id}-${index}`} fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                    <Text key={`${plan.plan_id}-${index}`} fontSize="xs" color={text.tertiary} mt="3px" overflowWrap="anywhere">
                       {index + 1}. {step}
                     </Text>
                   ))}
                   <Box mt="8px" display="flex" gap="8px">
-                    <Button
+                    <Button borderRadius={radius.sm}
                       size="xs"
                       colorPalette="green"
                       disabled={decidingId === plan.plan_id}
@@ -930,7 +971,7 @@ function FurnitureWindow({
                     >
                       Approve
                     </Button>
-                    <Button
+                    <Button borderRadius={radius.sm}
                       size="xs"
                       variant="outline"
                       disabled={decidingId === plan.plan_id}
@@ -942,7 +983,7 @@ function FurnitureWindow({
                 </Box>
               ))}
               {decisionError && (
-                <Text fontSize="xs" color="orange.200">{decisionError}</Text>
+                <Text fontSize="xs" color={statusColor.warningFg}>{decisionError}</Text>
               )}
             </>
           )}
@@ -951,7 +992,7 @@ function FurnitureWindow({
       {provider === "skill_status" && (
         <Box mt="12px" aria-live="polite">
           {skillFeed.failed || skillFeed.data?.available === false ? (
-            <Text fontSize="sm" color="orange.200">
+            <Text fontSize="sm" color={statusColor.warningFg}>
               {skillFeed.data?.message || "Skills are unavailable."}
             </Text>
           ) : !skillFeed.data ? (
@@ -959,26 +1000,26 @@ function FurnitureWindow({
           ) : (
             <>
               {skillFeed.data.pending.map((skill) => (
-                <Box key={skill.slug} pb="10px" mb="10px" borderBottom="1px solid" borderColor="whiteAlpha.200">
-                  <Text fontSize="sm" color="gray.100" fontWeight="700" overflowWrap="anywhere">
+                <Box key={skill.slug} pb="10px" mb="10px" borderBottom="1px solid" borderColor={border.subtle}>
+                  <Text fontSize="sm" color={text.primary} fontWeight="700" overflowWrap="anywhere">
                     {skill.name}
                     {Boolean(skill.revision && skill.revision > 1) && (
-                      <Text as="span" color="gray.500" fontSize="xs"> · revision {skill.revision}</Text>
+                      <Text as="span" color={text.quaternary} fontSize="xs"> · revision {skill.revision}</Text>
                     )}
                   </Text>
-                  <Text fontSize="xs" color="gray.300" mt="2px" overflowWrap="anywhere">{skill.purpose}</Text>
+                  <Text fontSize="xs" color={text.secondary} mt="2px" overflowWrap="anywhere">{skill.purpose}</Text>
                   {skill.when_to_use && (
-                    <Text fontSize="xs" color="blue.200" mt="3px" overflowWrap="anywhere">
+                    <Text fontSize="xs" color={accent[200]} mt="3px" overflowWrap="anywhere">
                       When: {skill.when_to_use}
                     </Text>
                   )}
                   {skill.steps.map((step, index) => (
-                    <Text key={`${skill.slug}-${index}`} fontSize="xs" color="gray.400" mt="3px" overflowWrap="anywhere">
+                    <Text key={`${skill.slug}-${index}`} fontSize="xs" color={text.tertiary} mt="3px" overflowWrap="anywhere">
                       {index + 1}. {step}
                     </Text>
                   ))}
                   <Box mt="8px" display="flex" gap="8px">
-                    <Button
+                    <Button borderRadius={radius.sm}
                       size="xs"
                       colorPalette="green"
                       disabled={decidingId === skill.slug}
@@ -986,7 +1027,7 @@ function FurnitureWindow({
                     >
                       Approve
                     </Button>
-                    <Button
+                    <Button borderRadius={radius.sm}
                       size="xs"
                       variant="outline"
                       disabled={decidingId === skill.slug}
@@ -998,25 +1039,25 @@ function FurnitureWindow({
                 </Box>
               ))}
               {skillFeed.data.pending.length === 0 && (
-                <Text fontSize="sm" color="gray.400">No drafts waiting on you.</Text>
+                <Text fontSize="sm" color={text.tertiary}>No drafts waiting on you.</Text>
               )}
               {skillFeed.data.active.length > 0 && (
                 <>
-                  <Text fontSize="xs" color="gray.500" mt="10px" textTransform="uppercase">
+                  <Text fontSize="xs" color={text.quaternary} mt="10px" textTransform="uppercase">
                     In use ({skillFeed.data.active_count})
                   </Text>
                   {skillFeed.data.active.map((skill) => (
-                    <Text key={skill.slug} fontSize="sm" color="gray.200" mt="4px" overflowWrap="anywhere">
+                    <Text key={skill.slug} fontSize="sm" color={text.secondary} mt="4px" overflowWrap="anywhere">
                       {skill.name}
                       {skill.when_to_use && (
-                        <Text as="span" color="gray.500" fontSize="xs"> · {skill.when_to_use}</Text>
+                        <Text as="span" color={text.quaternary} fontSize="xs"> · {skill.when_to_use}</Text>
                       )}
                     </Text>
                   ))}
                 </>
               )}
               {decisionError && (
-                <Text fontSize="xs" color="orange.200" mt="8px">{decisionError}</Text>
+                <Text fontSize="xs" color={statusColor.warningFg} mt="8px">{decisionError}</Text>
               )}
             </>
           )}
@@ -1024,20 +1065,20 @@ function FurnitureWindow({
       )}
       {provider === "room_layout" && (
         <Box mt="12px" aria-live="polite">
-          <Text fontSize="xs" color="gray.400">
+          <Text fontSize="xs" color={text.tertiary}>
             {stage.canvas.width}x{stage.canvas.height} · {stage.nodes.length - 1} object(s)
           </Text>
           {stage.nodes
             .filter((item) => item.id !== "avatar")
             .map((item) => (
               <Box key={item.id} display="flex" justifyContent="space-between" gap="12px" mt="6px">
-                <Text fontSize="sm" color="gray.100" overflowWrap="anywhere">
+                <Text fontSize="sm" color={text.primary} overflowWrap="anywhere">
                   {item.label || item.id}
                   {FIXED_OBJECT_IDS.has(item.id) && (
-                    <Text as="span" color="gray.500" fontSize="xs"> · fixed</Text>
+                    <Text as="span" color={text.quaternary} fontSize="xs"> · fixed</Text>
                   )}
                 </Text>
-                <Text fontSize="xs" color="gray.400" flexShrink={0} fontVariantNumeric="tabular-nums">
+                <Text fontSize="xs" color={text.tertiary} flexShrink={0} fontVariantNumeric="tabular-nums">
                   {Math.round(item.x)}, {Math.round(item.y)}
                 </Text>
               </Box>

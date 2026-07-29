@@ -90,6 +90,11 @@ including what that evidence cannot settle on its own.
   direction affinity.
 - Presence Contract adds a finite attention budget, focus mode, snooze, coarse
   presence signals, receipts, and explicit helpful/dismissed feedback.
+- A server-owned supervisor survives frontend disconnects, elects one active
+  client for each workspace, and wakes immediately on meaningful presence or
+  screen-context changes while retaining a periodic safety heartbeat.
+- Silent work bypasses transcript/TTS output, user work preempts background
+  requests, and state/habit learning advances only after successful execution.
 
 ### Voice and visual presence
 

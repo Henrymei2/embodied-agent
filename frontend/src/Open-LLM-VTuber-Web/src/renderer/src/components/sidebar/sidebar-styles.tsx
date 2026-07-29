@@ -1,32 +1,48 @@
 import { css } from '@emotion/react';
+import {
+  accent,
+  border,
+  elevation,
+  focusRing,
+  radius,
+  status,
+  surface,
+  text,
+  transition,
+  typography,
+} from '@/styles/tokens';
 
 const isElectron = window.api !== undefined;
 
 const commonStyles = {
   scrollbar: {
     '&::-webkit-scrollbar': {
-      width: '4px',
+      width: '8px',
     },
     '&::-webkit-scrollbar-track': {
-      bg: 'whiteAlpha.100',
-      borderRadius: 'full',
+      background: 'transparent',
     },
     '&::-webkit-scrollbar-thumb': {
-      bg: 'whiteAlpha.300',
-      borderRadius: 'full',
+      background: 'rgba(255, 255, 255, 0.14)',
+      border: '2px solid transparent',
+      backgroundClip: 'padding-box',
+      borderRadius: '999px',
+    },
+    '&::-webkit-scrollbar-thumb:hover': {
+      background: 'rgba(255, 255, 255, 0.26)',
+      backgroundClip: 'padding-box',
     },
   },
   panel: {
     border: '1px solid',
-    borderColor: 'whiteAlpha.200',
-    borderRadius: 'lg',
-    bg: 'blackAlpha.400',
+    borderColor: border.subtle,
+    borderRadius: radius.xl,
+    bg: surface.glass1,
   },
   title: {
-    fontSize: 'lg',
-    fontWeight: 'semibold',
-    color: 'white',
-    mb: 4,
+    ...typography.overline,
+    color: text.tertiary,
+    mb: 3,
   },
 };
 
@@ -37,48 +53,153 @@ export const sidebarStyles = {
       left: 0,
       top: 0,
       height: '100%',
-      width: '440px',
-      bg: 'gray.900',
+      width: { base: 'min(88vw, 372px)', md: '372px' },
+      bg: 'rgba(10, 13, 20, 0.94)',
+      backdropFilter: 'blur(32px) saturate(140%)',
+      borderRight: `1px solid ${border.subtle}`,
+      boxShadow: isCollapsed ? 'none' : elevation[4],
       transform: isCollapsed
-        ? 'translateX(calc(-100% + 24px))'
+        ? 'translateX(calc(-100% + 56px))'
         : 'translateX(0)',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+      transition: transition.layout,
       display: 'flex',
       flexDirection: 'column' as const,
-      gap: 4,
       overflow: isCollapsed ? 'visible' : 'hidden',
-      pb: '4',
+      p: isCollapsed ? 0 : { base: '12px', md: '14px' },
     }),
     toggleButton: {
       position: 'absolute',
-      right: 0,
-      top: 0,
-      width: '24px',
-      height: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: 'pointer',
-      color: 'whiteAlpha.700',
-      _hover: { color: 'white' },
-      bg: 'transparent',
-      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      zIndex: 1,
+      right: '10px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+      minWidth: '32px',
+      width: '32px',
+      height: '48px',
+      borderRadius: radius.md,
+      color: text.tertiary,
+      bg: surface.glass1,
+      border: `1px solid ${border.subtle}`,
+      _hover: {
+        color: text.primary,
+        bg: surface.glass3,
+        borderColor: border.default,
+      },
+      _active: {
+        bg: surface.glass2,
+      },
+      _focusVisible: focusRing,
+      transition: transition.control,
+      zIndex: 5,
     },
     content: {
       flex: 1,
       width: '100%',
       display: 'flex',
       flexDirection: 'column' as const,
-      gap: 4,
+      gap: 0,
       overflow: 'hidden',
+      pr: '42px',
     },
     header: {
       width: '100%',
       display: 'flex',
       alignItems: 'center',
-      gap: 1,
-      p: 2,
+      px: 1,
+      pt: 4,
+      pb: 3,
+    },
+    brandRow: {
+      minHeight: '52px',
+      alignItems: 'center',
+      gap: 3,
+      px: 1,
+      pt: 1,
+    },
+    brandMark: {
+      width: '38px',
+      height: '38px',
+      flexShrink: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radius.lg,
+      color: 'white',
+      bg: 'linear-gradient(145deg, #7987ff 0%, #a855f7 100%)',
+      boxShadow: `0 8px 24px rgba(111, 94, 255, 0.28), ${elevation.hairline}`,
+    },
+    collapsedBrand: {
+      position: 'absolute',
+      top: '18px',
+      right: '10px',
+      width: '36px',
+      height: '36px',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radius.md,
+      color: 'white',
+      bg: 'linear-gradient(145deg, #7987ff 0%, #a855f7 100%)',
+      boxShadow: `0 8px 22px rgba(111, 94, 255, 0.26), ${elevation.hairline}`,
+    },
+    brandName: {
+      fontFamily: 'var(--font-display)',
+      fontSize: '14px',
+      fontWeight: '700',
+      letterSpacing: '0.1em',
+      color: text.primary,
+      lineHeight: 1.1,
+    },
+    brandTagline: {
+      ...typography.caption,
+      mt: '4px',
+      color: text.tertiary,
+      lineHeight: 1,
+    },
+    newConversationButton: {
+      ...typography.label,
+      height: '38px',
+      flex: 1,
+      borderRadius: radius.md,
+      bg: accent.contrast,
+      color: accent.onSolid,
+      transition: transition.control,
+      _hover: {
+        bg: 'white',
+        transform: 'translateY(-1px)',
+        boxShadow: elevation[2],
+      },
+      _active: {
+        transform: 'translateY(0) scale(0.98)',
+      },
+      _focusVisible: focusRing,
+    },
+    utilityButton: {
+      minWidth: '38px',
+      width: '38px',
+      height: '38px',
+      borderRadius: radius.md,
+      variant: 'ghost' as const,
+      color: text.secondary,
+      bg: surface.glass1,
+      border: `1px solid ${border.subtle}`,
+      transition: transition.control,
+      _hover: {
+        color: text.primary,
+        bg: surface.glass3,
+        borderColor: border.default,
+      },
+      _active: {
+        transform: 'scale(0.95)',
+      },
+      _focusVisible: focusRing,
+    },
+    modeMenu: {
+      bg: surface.overlay,
+      backdropFilter: 'blur(24px) saturate(140%)',
+      border: `1px solid ${border.default}`,
+      borderRadius: radius.lg,
+      boxShadow: elevation[4],
+      color: text.primary,
+      p: 1,
+      animation: `surfaceIn var(--duration-fast) var(--ease-out)`,
     },
   },
 
@@ -86,15 +207,16 @@ export const sidebarStyles = {
     container: {
       flex: 1,
       overflow: 'hidden',
-      px: 4,
+      px: 1,
       display: 'flex',
       flexDirection: 'column',
+      minHeight: 0,
     },
     title: commonStyles.title,
     messageList: {
       ...commonStyles.panel,
-      p: 4,
-      width: '97%',
+      p: 2,
+      width: '100%',
       flex: 1,
       overflowY: 'auto',
       css: {
@@ -121,14 +243,16 @@ export const sidebarStyles = {
       p: 4,
       height: '200px',
       overflowY: 'auto',
-      fontFamily: 'mono',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '12px',
       css: commonStyles.scrollbar,
     },
     entry: {
       p: 2,
-      borderRadius: 'md',
+      borderRadius: radius.xs,
+      transition: transition.colors,
       _hover: {
-        bg: 'whiteAlpha.50',
+        bg: surface.glass1,
       },
     },
   },
@@ -137,12 +261,13 @@ export const sidebarStyles = {
     container: {
       display: 'flex',
       position: 'relative',
+      transition: transition.colors,
       _hover: {
-        bg: 'whiteAlpha.50',
+        bg: surface.glass1,
       },
       py: 1,
       px: 2,
-      borderRadius: 'md',
+      borderRadius: radius.sm,
     },
     message: {
       maxW: '90%',
@@ -150,14 +275,14 @@ export const sidebarStyles = {
       p: 2,
     },
     text: {
-      fontSize: 'xs',
-      color: 'whiteAlpha.900',
+      ...typography.footnote,
+      color: text.primary,
     },
     dot: {
       position: 'absolute',
       w: '2',
       h: '2',
-      borderRadius: 'full',
+      borderRadius: radius.full,
       bg: 'white',
       top: '2',
     },
@@ -172,20 +297,22 @@ export const sidebarStyles = {
       css: commonStyles.scrollbar,
     },
     historyItem: {
-      mb: 4,
+      mb: 3,
       p: 3,
-      borderRadius: 'md',
-      bg: 'whiteAlpha.50',
+      borderRadius: radius.lg,
+      bg: surface.glass1,
+      border: `1px solid ${border.subtle}`,
       cursor: 'pointer',
-      transition: 'all 0.2s',
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.100',
+        bg: surface.glass2,
+        borderColor: border.default,
       },
+      _focusVisible: focusRing,
     },
     historyItemSelected: {
-      bg: 'whiteAlpha.200',
-      borderLeft: '3px solid',
-      borderColor: 'blue.500',
+      bg: accent.soft,
+      borderColor: accent.ring,
     },
     historyHeader: {
       display: 'flex',
@@ -194,45 +321,59 @@ export const sidebarStyles = {
       mb: 2,
     },
     timestamp: {
-      fontSize: 'sm',
-      color: 'whiteAlpha.700',
-      fontFamily: 'mono',
+      ...typography.caption,
+      color: text.tertiary,
+      fontVariantNumeric: 'tabular-nums',
     },
     deleteButton: {
       variant: 'ghost' as const,
       colorScheme: 'red' as const,
       size: 'sm' as const,
-      color: 'red.300',
+      color: status.dangerFg,
+      borderRadius: radius.sm,
       opacity: 0.8,
+      transition: transition.control,
       _hover: {
         opacity: 1,
-        bg: 'whiteAlpha.200',
+        bg: status.dangerBg,
       },
+      _focusVisible: focusRing,
     },
     messagePreview: {
-      fontSize: 'sm',
-      color: 'whiteAlpha.900',
+      ...typography.footnote,
+      color: text.secondary,
       noOfLines: 2,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
     },
     drawer: {
       content: {
-        background: 'var(--chakra-colors-gray-900)',
-        maxWidth: '440px',
+        background: surface.raised,
+        maxWidth: '480px',
         marginTop: isElectron ? '30px' : '0',
         height: isElectron ? 'calc(100vh - 30px)' : '100vh',
+        borderRight: `1px solid ${border.subtle}`,
+        boxShadow: elevation[5],
       },
       title: {
-        color: 'white',
+        ...typography.title,
+        color: text.primary,
       },
       closeButton: {
-        color: 'white',
+        color: text.secondary,
+        borderRadius: radius.sm,
+        _hover: { bg: surface.glass2, color: text.primary },
+        _focusVisible: focusRing,
       },
       actionButton: {
-        color: 'white',
-        borderColor: 'white',
+        ...typography.label,
+        color: text.primary,
+        borderColor: border.default,
+        borderRadius: radius.md,
         variant: 'outline' as const,
+        transition: transition.control,
+        _hover: { bg: surface.glass2, borderColor: border.strong },
+        _focusVisible: focusRing,
       },
     },
   },
@@ -250,10 +391,14 @@ export const sidebarStyles = {
     },
     eventItem: {
       p: 3,
-      borderRadius: 'md',
-      bg: 'whiteAlpha.50',
+      borderRadius: radius.lg,
+      bg: surface.glass1,
       border: '1px solid',
-      borderColor: 'whiteAlpha.100',
+      borderColor: border.subtle,
+      transition: transition.colors,
+      _hover: {
+        borderColor: border.default,
+      },
     },
     eventHeader: {
       display: 'flex',
@@ -262,9 +407,8 @@ export const sidebarStyles = {
       gap: 3,
     },
     eventTitle: {
-      color: 'whiteAlpha.950',
-      fontSize: 'sm',
-      fontWeight: 'semibold',
+      ...typography.bodyStrong,
+      color: text.primary,
       overflowWrap: 'anywhere' as const,
       mb: 1,
     },
@@ -274,33 +418,37 @@ export const sidebarStyles = {
       variant: 'subtle' as const,
     },
     prompt: {
-      color: 'whiteAlpha.800',
-      fontSize: 'xs',
+      ...typography.footnote,
+      color: text.secondary,
       mt: 3,
       whiteSpace: 'pre-wrap' as const,
       overflowWrap: 'anywhere' as const,
     },
     metadata: {
-      color: 'whiteAlpha.600',
-      fontSize: 'xs',
+      ...typography.caption,
+      color: text.tertiary,
       mt: 3,
       display: 'flex',
       flexDirection: 'column' as const,
       gap: 1,
+      fontVariantNumeric: 'tabular-nums',
     },
     deleteButton: {
       variant: 'ghost' as const,
       size: 'sm' as const,
-      color: 'red.300',
+      color: status.dangerFg,
+      borderRadius: radius.sm,
       flexShrink: 0,
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.200',
+        bg: status.dangerBg,
       },
+      _focusVisible: focusRing,
     },
     state: {
       flex: 1,
       minHeight: '240px',
-      color: 'whiteAlpha.700',
+      color: text.secondary,
       display: 'flex',
       flexDirection: 'column' as const,
       alignItems: 'center',
@@ -312,27 +460,27 @@ export const sidebarStyles = {
 
   cameraPanel: {
     container: {
-      width: '97%',
+      width: '100%',
       overflow: 'hidden',
-      px: 4,
-      minH: '240px',
+      px: 2,
+      minH: '184px',
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      mb: 4,
+      mb: 2,
     },
     title: commonStyles.title,
     videoContainer: {
       ...commonStyles.panel,
       width: '100%',
-      height: '240px',
+      height: '170px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       overflow: 'hidden',
-      transition: 'all 0.2s',
+      transition: transition.colors,
     },
     video: {
       width: '100%',
@@ -346,27 +494,27 @@ export const sidebarStyles = {
 
   screenPanel: {
     container: {
-      width: '97%',
+      width: '100%',
       overflow: 'hidden',
-      px: 4,
-      minH: '240px',
+      px: 2,
+      minH: '184px',
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      mb: 4,
+      mb: 2,
     },
     title: commonStyles.title,
     screenContainer: {
       ...commonStyles.panel,
       width: '100%',
-      height: '240px',
+      height: '170px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       overflow: 'hidden',
-      transition: 'all 0.2s',
+      transition: transition.colors,
     },
     video: {
       width: '100%',
@@ -380,30 +528,31 @@ export const sidebarStyles = {
   // Add Browser Panel Styles
   browserPanel: {
     container: {
-      width: '97%',
+      width: '100%',
       overflow: 'hidden',
-      px: 4,
-      minH: '240px',
+      px: 2,
+      minH: '184px',
     },
     header: {
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
-      mb: 4,
+      mb: 2,
     },
     title: commonStyles.title,
     browserContainer: {
       ...commonStyles.panel,
       width: '100%',
-      height: '240px',
+      height: '170px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       overflow: 'hidden',
-      transition: 'all 0.2s',
+      transition: transition.control,
       cursor: 'pointer',
       _hover: {
-        bg: 'whiteAlpha.100',
+        bg: surface.glass2,
+        borderColor: border.default,
       },
     },
     iframe: {
@@ -416,37 +565,51 @@ export const sidebarStyles = {
 
   bottomTab: {
     container: {
-      width: '97%',
-      px: 4,
+      width: '100%',
+      mt: 2,
+      p: 1,
       position: 'relative' as const,
       zIndex: 0,
+      bg: surface.glass1,
+      border: `1px solid ${border.subtle}`,
+      borderRadius: radius.xl,
     },
     tabs: {
       width: '100%',
-      bg: 'whiteAlpha.50',
-      borderRadius: 'lg',
+      bg: surface.glass1,
+      borderRadius: radius.sm,
       p: '1',
     },
     list: {
       borderBottom: 'none',
-      gap: '2',
+      gap: '1',
+      width: '100%',
+      p: 1,
+      bg: surface.glass1,
+      borderRadius: radius.lg,
     },
     trigger: {
-      color: 'whiteAlpha.700',
+      ...typography.labelSmall,
+      flex: 1,
+      justifyContent: 'center',
+      color: text.tertiary,
       display: 'flex',
       alignItems: 'center',
-      gap: 2,
-      px: 3,
-      py: 2,
-      borderRadius: 'md',
+      gap: 1.5,
+      px: 2,
+      height: '34px',
+      borderRadius: radius.sm,
+      transition: transition.control,
       _hover: {
-        color: 'white',
-        bg: 'whiteAlpha.50',
+        color: text.secondary,
+        bg: surface.glass2,
       },
       _selected: {
-        color: 'white',
-        bg: 'whiteAlpha.200',
+        color: text.primary,
+        bg: surface.glass3,
+        boxShadow: elevation[1],
       },
+      _focusVisible: focusRing,
     },
   },
 
@@ -455,9 +618,8 @@ export const sidebarStyles = {
       mb: 6,
     },
     sectionTitle: {
-      fontSize: 'lg',
-      fontWeight: 'semibold',
-      color: 'white',
+      ...typography.titleLarge,
+      color: text.primary,
       mb: 3,
     },
     inviteBox: {
@@ -465,11 +627,18 @@ export const sidebarStyles = {
       gap: 2,
     },
     input: {
-      bg: 'whiteAlpha.100',
-      border: 'none',
-      color: 'white',
+      bg: surface.glass2,
+      border: `1px solid ${border.subtle}`,
+      borderRadius: radius.md,
+      color: text.primary,
+      transition: transition.colors,
       _placeholder: {
-        color: 'whiteAlpha.400',
+        color: text.quaternary,
+      },
+      _focusVisible: {
+        borderColor: accent.ring,
+        boxShadow: `0 0 0 3px ${accent.soft}`,
+        outline: 'none',
       },
     },
     memberList: {
@@ -482,34 +651,46 @@ export const sidebarStyles = {
       justifyContent: 'space-between',
       alignItems: 'center',
       p: 2,
-      borderRadius: 'md',
-      bg: 'whiteAlpha.100',
+      borderRadius: radius.md,
+      bg: surface.glass2,
+      border: `1px solid ${border.subtle}`,
     },
     memberText: {
-      color: 'white',
-      fontSize: 'sm',
+      ...typography.body,
+      color: text.primary,
     },
     removeButton: {
       size: 'sm',
-      color: 'red.300',
+      color: status.dangerFg,
       bg: 'transparent',
+      borderRadius: radius.sm,
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.200',
+        bg: status.dangerBg,
       },
+      _focusVisible: focusRing,
     },
     button: {
-      color: 'white',
-      bg: 'whiteAlpha.100',
+      ...typography.label,
+      color: text.primary,
+      bg: surface.glass2,
+      borderRadius: radius.md,
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.200',
+        bg: surface.glass3,
       },
+      _focusVisible: focusRing,
     },
     clipboardButton: {
-      color: 'white',
+      color: text.secondary,
       bg: 'transparent',
+      borderRadius: radius.sm,
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.200',
+        bg: surface.glass2,
+        color: text.primary,
       },
+      _focusVisible: focusRing,
       size: 'sm',
     },
   },
@@ -529,10 +710,10 @@ export const sidebarStyles = {
       flexDirection: 'column',
       alignItems: 'stretch',
       justifyContent: 'center',
-      bg: 'whiteAlpha.100',
+      bg: surface.glass1,
       border: '1px solid',
-      borderColor: 'whiteAlpha.200',
-      borderRadius: 'md',
+      borderColor: border.subtle,
+      borderRadius: radius.md,
       overflow: 'hidden',
     },
     header: {
@@ -542,40 +723,39 @@ export const sidebarStyles = {
       minWidth: 0,
     },
     icon: {
-      color: 'blue.300',
+      color: accent[300],
       boxSize: '14px',
       flexShrink: 0,
     },
     title: {
-      fontSize: 'xs',
-      color: 'whiteAlpha.900',
-      fontWeight: '600',
+      ...typography.labelSmall,
+      color: text.secondary,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',
       minWidth: 0,
     },
     detail: {
-      fontSize: 'xs',
-      color: 'whiteAlpha.700',
-      fontFamily: 'mono',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '11px',
+      lineHeight: '1.5',
+      color: text.tertiary,
       whiteSpace: 'pre-wrap',
       overflowWrap: 'anywhere',
-      lineHeight: '1.4',
     },
     spinner: {
       size: 'xs',
-      color: 'blue.300',
+      color: accent[300],
       ml: 'auto',
     },
     completedIcon: {
-      color: 'green.300',
+      color: status.successFg,
       boxSize: '14px',
       ml: 'auto',
       flexShrink: 0,
     },
     errorIcon: {
-      color: 'red.300',
+      color: status.dangerFg,
       boxSize: '14px',
       ml: 'auto',
       flexShrink: 0,
@@ -584,81 +764,116 @@ export const sidebarStyles = {
 };
 
 export const chatPanelStyles = css`
+  .cs-main-container,
+  .cs-chat-container,
   .cs-message-list {
-    background: var(--chakra-colors-gray-900) !important;
-    padding: var(--chakra-space-4);
+    min-height: 0 !important;
   }
-  
+
+  .cs-message-list {
+    background: transparent !important;
+    padding: 8px 6px 14px !important;
+  }
+
   .cs-message {
-    margin: 12px 0;
-    // padding-top: 20px !important;
+    margin: 14px 0 !important;
   }
 
   .cs-message__content {
-    background-color: var(--chakra-colors-gray-700) !important;
-    border-radius: var(--chakra-radii-md);
-    padding: 8px !important;
-    color: var(--chakra-colors-white) !important;
-    font-size: 0.95rem !important;
-    line-height: 1.5 !important;
-    margin-top: 4px !important;
+    background: var(--surface-glass-2) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: 6px 17px 17px 17px !important;
+    padding: 10px 12px !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-text) !important;
+    font-size: 0.875rem !important;
+    font-weight: 400 !important;
+    letter-spacing: -0.008em !important;
+    line-height: 1.55 !important;
+    margin-top: 6px !important;
+    box-shadow: var(--elevation-1) !important;
   }
 
   .cs-message__text {
-    padding: 8px 0 !important;
+    padding: 0 !important;
   }
 
   .cs-message--outgoing .cs-message__content {
-    background-color: var(--chakra-colors-gray-600) !important;
+    background: linear-gradient(145deg, #6f7cf6 0%, #7d5ce5 100%) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    border-radius: 17px 6px 17px 17px !important;
+    color: #fff !important;
   }
 
   .cs-chat-container {
     background: transparent !important;
-    border: 1px solid var(--chakra-colors-whiteAlpha-200);
-    border-radius: var(--chakra-radii-lg);
-    padding: var(--chakra-space-2);
+    border: 0 !important;
+    border-radius: var(--radius-xl) !important;
+    padding: 0 !important;
   }
 
   .cs-main-container {
     border: none !important;
-    background: transparent !important;
-    width: calc(100% - 24px) !important;
+    background: var(--surface-glass-1) !important;
+    border-radius: var(--radius-xl) !important;
+    width: 100% !important;
     margin-left: 0 !important;
+    overflow: hidden !important;
   }
 
   .cs-message__sender {
     position: absolute !important;
     top: 0 !important;
     left: 36px !important;
-    font-size: 0.875rem !important;
+    font-family: var(--font-text) !important;
+    font-size: 0.6875rem !important;
     font-weight: 600 !important;
-    color: var(--chakra-colors-whiteAlpha-900) !important;
+    letter-spacing: 0.01em !important;
+    color: var(--text-tertiary) !important;
   }
 
   .cs-message__content-wrapper {
-    max-width: 80%;
-    margin: 0 8px;
+    max-width: 84% !important;
+    margin: 0 7px !important;
   }
 
   .cs-avatar {
-    background-color: var(--chakra-colors-blue-500) !important;
-    color: white !important;
-    width: 28px !important;
-    height: 28px !important;
-    font-size: 14px !important;
+    background: linear-gradient(145deg, #7585ff, #a45ee7) !important;
+    color: #fff !important;
+    width: 30px !important;
+    height: 30px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border-radius: 50% !important;
+    border-radius: var(--radius-sm) !important;
+    box-shadow: var(--elevation-2) !important;
   }
 
   .cs-message--outgoing .cs-avatar {
-    background-color: var(--chakra-colors-green-500) !important;
+    background: var(--surface-glass-3) !important;
   }
 
   .cs-message__header {
     display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
+  }
+
+  .cs-message-list__scroll-wrapper::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .cs-message-list__scroll-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+  }
+
+  .cs-message-list__scroll-wrapper::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.26);
+    background-clip: padding-box;
   }
 `;

@@ -12,7 +12,9 @@ import { Global } from '@emotion/react';
 import { useConfig } from '@/context/character-config-context';
 import { useWebSocket } from '@/context/websocket-context';
 import { FaTools, FaCheck, FaTimes } from 'react-icons/fa';
+import { FiMessageCircle } from 'react-icons/fi';
 import { useTranslation } from 'react-i18next';
+import { accent, border, radius, text, typography } from '@/styles/tokens';
 
 const MAX_TOOL_CONTENT_LENGTH = 360;
 
@@ -72,27 +74,70 @@ function ChatHistoryPanel(): JSX.Element {
 
   return (
     <Box
-      h="full"
-      overflow="hidden"
-      bg="gray.900"
+      {...sidebarStyles.chatHistoryPanel.container}
     >
       <Global styles={chatPanelStyles} />
-      <MainContainer>
-        <ChatContainer>
-          <ChatMessageList>
-            {validMessages.length === 0 ? (
-              <Box
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                height="100%"
-                color="whiteAlpha.500"
-                fontSize="sm"
-              >
-                {t('sidebar.noMessages')}
-              </Box>
-            ) : (
-              validMessages.map((msg) => {
+      <Flex alignItems="center" justifyContent="space-between" px="2" pb="2">
+        <Text {...sidebarStyles.chatHistoryPanel.title} mb="0">
+          {t('sidebar.conversation')}
+        </Text>
+        {validMessages.length > 0 && (
+          <Text
+            {...typography.caption}
+            color={text.quaternary}
+            fontVariantNumeric="tabular-nums"
+          >
+            {t('sidebar.messageCount', { count: validMessages.length })}
+          </Text>
+        )}
+      </Flex>
+      <Box
+        flex="1"
+        minHeight="0"
+        borderRadius={radius.xl}
+        border={`1px solid ${border.subtle}`}
+        overflow="hidden"
+      >
+        <MainContainer>
+          <ChatContainer>
+            <ChatMessageList>
+              {validMessages.length === 0 ? (
+                <Flex
+                  height="100%"
+                  px="6"
+                  alignItems="center"
+                  justifyContent="center"
+                  flexDirection="column"
+                  textAlign="center"
+                >
+                  <Flex
+                    width="48px"
+                    height="48px"
+                    mb="4"
+                    alignItems="center"
+                    justifyContent="center"
+                    borderRadius={radius.xl}
+                    color={accent[300]}
+                    bg={accent.soft}
+                    border={`1px solid ${accent.ring}`}
+                  >
+                    <FiMessageCircle size={21} />
+                  </Flex>
+                  <Text {...typography.bodyStrong} color={text.primary}>
+                    {t('sidebar.emptyTitle')}
+                  </Text>
+                  <Text
+                    {...typography.footnote}
+                    mt="1.5"
+                    maxWidth="220px"
+                    color={text.tertiary}
+                    textWrap="balance"
+                  >
+                    {t('sidebar.noMessages')}
+                  </Text>
+                </Flex>
+              ) : (
+                validMessages.map((msg) => {
                 // Check if it's a tool call message
                 if (msg.type === 'tool_call_status') {
                   const statusLabel = getToolStatusLabel(msg.status);
@@ -182,11 +227,12 @@ function ChatHistoryPanel(): JSX.Element {
                     </ChatAvatar>
                   </ChatMessage>
                 );
-              })
-            )}
-          </ChatMessageList>
-        </ChatContainer>
-      </MainContainer>
+                })
+              )}
+            </ChatMessageList>
+          </ChatContainer>
+        </MainContainer>
+      </Box>
     </Box>
   );
 }

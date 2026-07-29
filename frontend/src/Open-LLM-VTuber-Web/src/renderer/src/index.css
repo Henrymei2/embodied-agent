@@ -1,7 +1,307 @@
-body, html {
-    margin: 0;
-    padding: 0;
-    overflow: visible;
-    background-color: transparent;
+/* ==========================================================================
+   Design tokens
+   Single source of truth for colour, elevation, radius, and motion.
+   The typed accessor lives in `styles/tokens.ts` and points at these vars.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* --- Typography -------------------------------------------------------
+     No webfont is loaded on purpose: this app runs offline, and every
+     supported platform already ships a better-hinted UI face than we could
+     download. Text/Display are split so large text picks up the tighter
+     optical variant where the platform offers one. */
+  --font-text:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+    "Segoe UI", Roboto, ui-sans-serif, system-ui, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-display:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "Segoe UI Variable Display", "Segoe UI", Roboto, ui-sans-serif, system-ui,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
+    Menlo, Consolas, monospace;
+
+  /* --- Surfaces ---------------------------------------------------------
+     Opaque steps for structure, alpha steps for glass stacked over content. */
+  --surface-canvas: #07090e;
+  --surface-sunken: #05070b;
+  --surface-raised: #0d1017;
+  --surface-overlay: #12161f;
+  --surface-glass-1: rgba(255, 255, 255, 0.035);
+  --surface-glass-2: rgba(255, 255, 255, 0.06);
+  --surface-glass-3: rgba(255, 255, 255, 0.09);
+  --surface-scrim: rgba(6, 8, 13, 0.72);
+
+  /* Chrome that floats over the stage. Tuned so backdrop-filter reads as
+     frosted rather than muddy. */
+  --surface-chrome: rgba(13, 16, 24, 0.82);
+  --surface-chrome-solid: rgba(14, 17, 26, 0.97);
+
+  /* --- Text ------------------------------------------------------------- */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.68);
+  --text-tertiary: rgba(255, 255, 255, 0.46);
+  --text-quaternary: rgba(255, 255, 255, 0.3);
+  --text-inverse: #141722;
+
+  /* --- Hairlines --------------------------------------------------------- */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* --- Accent ------------------------------------------------------------ */
+  --accent-50: #eef0ff;
+  --accent-200: #c3caff;
+  --accent-300: #a9b4ff;
+  --accent-400: #8b9cff;
+  --accent-500: #7d8bff;
+  --accent-600: #6b78f0;
+  --accent-contrast: #f5f7ff;
+  --accent-on-solid: #171a27;
+  --accent-soft: rgba(125, 139, 255, 0.14);
+  --accent-soft-hover: rgba(125, 139, 255, 0.22);
+  --accent-ring: rgba(125, 139, 255, 0.4);
+  --accent-glow: rgba(125, 139, 255, 0.5);
+
+  /* --- Status ------------------------------------------------------------ */
+  --success-fg: #86efac;
+  --success-bg: rgba(52, 187, 108, 0.14);
+  --success-border: rgba(90, 224, 143, 0.24);
+  --warning-fg: #fcd9a4;
+  --warning-bg: rgba(240, 172, 78, 0.13);
+  --warning-border: rgba(247, 190, 112, 0.22);
+  --danger-fg: #fda4af;
+  --danger-bg: rgba(240, 77, 88, 0.13);
+  --danger-border: rgba(255, 117, 126, 0.23);
+
+  /* --- Radius ------------------------------------------------------------ */
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-3xl: 28px;
+  --radius-full: 999px;
+
+  /* --- Elevation ---------------------------------------------------------
+     Two-part shadows (tight contact + wide ambient), the way native UI
+     compositors render them. */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.12);
+  --elevation-2: 0 2px 4px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.18);
+  --elevation-3: 0 4px 8px rgba(0, 0, 0, 0.2), 0 12px 28px rgba(0, 0, 0, 0.24);
+  --elevation-4: 0 8px 16px rgba(0, 0, 0, 0.22), 0 24px 56px rgba(0, 0, 0, 0.3);
+  --elevation-5: 0 12px 24px rgba(0, 0, 0, 0.24), 0 40px 88px rgba(0, 0, 0, 0.38);
+  /* Top inner highlight — the 1px catch-light that makes glass read as glass. */
+  --elevation-inset-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* --- Motion ------------------------------------------------------------ */
+  --duration-instant: 90ms;
+  --duration-fast: 150ms;
+  --duration-normal: 220ms;
+  --duration-slow: 320ms;
+  --duration-slower: 420ms;
+  /* Decelerate: things entering or settling. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* Accelerate: things leaving. */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Overshoot, used for panels and anything that should feel physical. */
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* --- Focus ------------------------------------------------------------- */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--accent-400);
+
+  /* Legacy aliases retained so any straggling reference keeps resolving. */
+  --app-bg: var(--surface-canvas);
+  --surface-1: var(--surface-raised);
+  --surface-2: var(--surface-overlay);
+  --accent: var(--accent-500);
+
+  font-family: var(--font-text);
+  font-size: 16px;
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Proportional figures for prose; the `.tabular` rule below opts specific
+     readouts into lining figures. No stylistic-set overrides here — those are
+     font-specific, and picking sets for a font we don't ship would substitute
+     glyphs unpredictably across platforms. */
+  font-variant-numeric: proportional-nums;
+  font-optical-sizing: auto;
 }
 
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+html,
+body {
+  position: fixed;
+  inset: 0;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Headings and large type take the display face plus tighter optical
+   tracking — the single biggest tell between "styled" and "designed". */
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+/* Numeric readouts (budgets, countdowns, counts) must not reflow as they
+   tick. Tabular figures are applied where they're actually needed. */
+.tabular,
+time,
+code,
+kbd,
+pre,
+samp {
+  font-variant-numeric: tabular-nums;
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  color: #fff;
+  background: var(--accent-ring);
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* A single, consistent focus treatment. Pointer users never see it; keyboard
+   users always do. The outline follows each element's own border-radius, so
+   this must not set border-radius itself — doing so would square off pills
+   and circles the moment they take focus. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* --- Scrollbars ----------------------------------------------------------
+   Thin, dim at rest, brighter on hover. Matches native overlay scrollbars
+   without hiding the affordance entirely. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--radius-full);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* --- Motion --------------------------------------------------------------
+   Honour the OS setting. Everything below degrades to an instant state
+   change rather than disappearing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.48;
+    transform: scale(0.88);
+  }
+}
+
+/* Popovers and panels: rise and settle rather than snapping in. */
+@keyframes surfaceIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

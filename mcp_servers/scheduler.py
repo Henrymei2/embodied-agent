@@ -279,13 +279,15 @@ async def _scheduler_loop(client_uid: str) -> None:
                 # Enqueue through the priority queue
                 queue = get_queue(client_uid)
                 await queue.enqueue(
-                    coro=_run_scheduled_task(
+                    coro_factory=lambda task_prompt=task["prompt"],
+                    task_metadata=metadata: _run_scheduled_task(
                         client_uid=client_uid,
-                        prompt=task["prompt"],
-                        metadata=metadata,
+                        prompt=task_prompt,
+                        metadata=task_metadata,
                     ),
                     priority=task.get("priority", PRIORITY_SCHEDULED),
                     label=f"scheduled:{task_id}",
+                    dedupe_key=f"scheduled:{task_id}",
                 )
 
         except asyncio.CancelledError:

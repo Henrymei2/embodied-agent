@@ -9,6 +9,16 @@ WebSocketSend = Callable[[str], Awaitable[None]]
 BroadcastFunc = Callable[[List[str], dict, Optional[str]], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class AgentTurnResult:
+    """Outcome of one interactive or background agent turn."""
+
+    success: bool
+    response: str = ""
+    error: Optional[str] = None
+    reported: bool = True
+
+
 class AudioPayload(TypedDict):
     """Type definition for audio payload"""
 

@@ -78,6 +78,22 @@ async def process_agent_output(
     return full_response
 
 
+async def collect_agent_output(
+    output: Union[AudioOutput, SentenceOutput],
+) -> str:
+    """Consume agent output without producing UI, TTS, or playback events."""
+    full_response = ""
+    if isinstance(output, SentenceOutput):
+        async for display_text, _tts_text, _actions in output:
+            full_response += display_text.text
+    elif isinstance(output, AudioOutput):
+        async for _audio_path, _display_text, transcript, _actions in output:
+            full_response += transcript
+    else:
+        logger.warning(f"Unknown silent output type: {type(output)}")
+    return full_response
+
+
 async def handle_sentence_output(
     output: SentenceOutput,
     tts_engine: TTSInterface,

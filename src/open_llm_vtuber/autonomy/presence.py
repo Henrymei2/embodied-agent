@@ -22,7 +22,7 @@ from .observation import Observation
 from .settings import AutonomySettings
 
 _STATE_FILENAME = "presence_ledger.json"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 HELPFUL = "helpful"
 DISMISSED = "dismissed"
@@ -93,6 +93,11 @@ class PresenceReceipt:
     attention_cost: float
     reason: str
     signals: dict[str, Any]
+    status: str = "queued"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+    budget_charged: bool = False
     feedback: Optional[str] = None
     feedback_at: Optional[str] = None
 
@@ -133,6 +138,17 @@ class PresenceLedger:
                         attention_cost=float(item.get("attention_cost", 0.0)),
                         reason=str(item.get("reason", "")),
                         signals=dict(item.get("signals", {})),
+                        status=str(item.get("status", "succeeded")),
+                        started_at=item.get("started_at"),
+                        completed_at=item.get("completed_at"),
+                        error=item.get("error"),
+                        budget_charged=bool(
+                            item.get(
+                                "budget_charged",
+                                item.get("status", "succeeded")
+                                in {"running", "succeeded"},
+                            )
+                        ),
                         feedback=item.get("feedback"),
                         feedback_at=item.get("feedback_at"),
                     )
@@ -164,6 +180,7 @@ class PresenceLedger:
                 )
                 ledger._path = path
                 ledger.refill(now)
+                ledger.recover_interrupted_actions(now)
                 return ledger
             except Exception as exc:  # noqa: BLE001 - corrupt state is recoverable
                 logger.warning(
@@ -196,11 +213,16 @@ class PresenceLedger:
         }
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
+            temporary = self._path.with_suffix(f".{uuid4().hex}.tmp")
+            temporary.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            temporary.replace(self._path)
         except Exception as exc:  # noqa: BLE001 - persistence is best effort
             logger.warning(f"presence: failed to save state: {exc}")
+        finally:
+            if "temporary" in locals():
+                temporary.unlink(missing_ok=True)
 
     def refill(self, now: Optional[datetime] = None) -> float:
         """Refill the token bucket according to elapsed wall time."""
@@ -218,17 +240,46 @@ class PresenceLedger:
         until = _parse_time(self.snoozed_until)
         return until is not None and until > _as_utc(now)
 
+    def recover_interrupted_actions(self, now: Optional[datetime] = None) -> int:
+        """Close work left queued/running by a previous server process.
+
+        Replaying an arbitrary tool-using prompt after a crash could duplicate
+        side effects. Recovery therefore fails safe: preserve the audit record,
+        refund charged budget, and let the planner produce a fresh proposal.
+        """
+        now = _as_utc(now)
+        recovered = 0
+        for receipt in self.receipts:
+            if receipt.status not in {"queued", "running"}:
+                continue
+            if receipt.budget_charged:
+                self.budget_balance = min(
+                    self.max_budget,
+                    self.budget_balance + receipt.attention_cost,
+                )
+                receipt.budget_charged = False
+            receipt.status = "canceled"
+            receipt.completed_at = now.isoformat()
+            receipt.error = "interrupted by a previous server shutdown"
+            recovered += 1
+        if recovered:
+            self.save()
+        return recovered
+
     def can_afford(
         self,
         cost: float,
         *,
         user_facing: bool,
         focus_mode: bool = False,
+        presence_fresh: bool = True,
         now: Optional[datetime] = None,
     ) -> tuple[bool, str]:
         """Check the presence contract without consuming budget."""
         now = _as_utc(now)
         self.refill(now)
+        if user_facing and not presence_fresh:
+            return False, "presence signal is stale"
         if user_facing and focus_mode:
             return False, "focus mode is active"
         if user_facing and self.is_snoozed(now):
@@ -252,19 +303,54 @@ class PresenceLedger:
         now: Optional[datetime] = None,
         habit_id: Optional[str] = None,
     ) -> PresenceReceipt:
-        """Consume budget and persist a privacy-preserving action receipt."""
+        """Record an already-completed action.
+
+        Runtime dispatch uses ``queue_action``/``start_action``/``complete_action``
+        so failed and canceled work is not mistaken for a successful habit run.
+        This convenience method preserves the original synchronous API.
+        """
+        receipt = self.queue_action(
+            direction=direction,
+            action=action,
+            score=score,
+            reason=reason,
+            observation=observation,
+            now=now,
+            habit_id=habit_id,
+        )
+        allowed, gate_reason = self.start_action(
+            receipt.receipt_id, observation=observation, now=now
+        )
+        if not allowed:
+            self.discard_action(receipt.receipt_id)
+            raise ValueError(gate_reason)
+        self.complete_action(receipt.receipt_id, now=now)
+        return receipt
+
+    def queue_action(
+        self,
+        *,
+        direction: str,
+        action: str,
+        score: float,
+        reason: str,
+        observation: Observation,
+        now: Optional[datetime] = None,
+        habit_id: Optional[str] = None,
+    ) -> PresenceReceipt:
+        """Persist a queued receipt without charging attention yet."""
         now = _as_utc(now)
         cost = attention_cost(action)
         allowed, gate_reason = self.can_afford(
             cost,
             user_facing=action in {"ask", "speak"},
             focus_mode=observation.focus_mode,
+            presence_fresh=observation.presence_fresh,
             now=now,
         )
         if not allowed:
             raise ValueError(gate_reason)
 
-        self.budget_balance = max(0.0, self.budget_balance - cost)
         quiet_minutes = observation.seconds_since_last_spoke
         receipt = PresenceReceipt(
             receipt_id=uuid4().hex,
@@ -274,6 +360,7 @@ class PresenceLedger:
             score=round(score, 4),
             attention_cost=cost,
             reason=reason,
+            status="queued",
             signals={
                 "user_present": observation.user_present,
                 "activity": _idle_band(observation.idle_seconds),
@@ -294,6 +381,78 @@ class PresenceLedger:
         self.save()
         return receipt
 
+    def start_action(
+        self,
+        receipt_id: str,
+        *,
+        observation: Observation,
+        now: Optional[datetime] = None,
+    ) -> tuple[bool, str]:
+        """Atomically re-check policy and charge budget as queued work starts."""
+        receipt = next(
+            (item for item in self.receipts if item.receipt_id == receipt_id), None
+        )
+        if receipt is None:
+            return False, "receipt not found"
+        if receipt.status != "queued":
+            return False, f"receipt is already {receipt.status}"
+
+        now = _as_utc(now)
+        allowed, gate_reason = self.can_afford(
+            receipt.attention_cost,
+            user_facing=receipt.action in {"ask", "speak"},
+            focus_mode=observation.focus_mode,
+            presence_fresh=observation.presence_fresh,
+            now=now,
+        )
+        if not allowed:
+            return False, gate_reason
+
+        self.budget_balance = max(0.0, self.budget_balance - receipt.attention_cost)
+        receipt.status = "running"
+        receipt.started_at = now.isoformat()
+        receipt.budget_charged = True
+        self.save()
+        return True, "started"
+
+    def complete_action(
+        self, receipt_id: str, *, now: Optional[datetime] = None
+    ) -> bool:
+        """Mark a running action successful."""
+        receipt = next(
+            (item for item in self.receipts if item.receipt_id == receipt_id), None
+        )
+        if receipt is None or receipt.status != "running":
+            return False
+        receipt.status = "succeeded"
+        receipt.completed_at = _as_utc(now).isoformat()
+        receipt.error = None
+        self.save()
+        return True
+
+    def fail_action(
+        self,
+        receipt_id: str,
+        error: str,
+        *,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """Mark work failed and refund any budget charged for the attempt."""
+        return self._finish_unsuccessful(receipt_id, "failed", error=error, now=now)
+
+    def discard_action(self, receipt_id: str) -> bool:
+        """Remove work that was rejected before it entered the request queue."""
+        receipt = next(
+            (item for item in self.receipts if item.receipt_id == receipt_id), None
+        )
+        if receipt is None or receipt.status != "queued":
+            return False
+        self.receipts = [
+            item for item in self.receipts if item.receipt_id != receipt_id
+        ]
+        self.save()
+        return True
+
     def apply_feedback(
         self,
         receipt_id: str,
@@ -311,6 +470,8 @@ class PresenceLedger:
         )
         if receipt is None:
             return False, "receipt not found"
+        if receipt.status != "succeeded":
+            return False, "only successful autonomous actions can be rated"
         if receipt.feedback is not None:
             return False, "feedback already recorded for this receipt"
 
@@ -338,20 +499,33 @@ class PresenceLedger:
         self.save()
         return True, "feedback recorded"
 
-    def cancel_action(self, receipt_id: str) -> None:
-        """Roll back a receipt if dispatch fails before the action can run."""
+    def cancel_action(self, receipt_id: str, *, now: Optional[datetime] = None) -> bool:
+        """Retain a canceled receipt while rolling back charged budget."""
+        return self._finish_unsuccessful(receipt_id, "canceled", error=None, now=now)
+
+    def _finish_unsuccessful(
+        self,
+        receipt_id: str,
+        status: str,
+        *,
+        error: Optional[str],
+        now: Optional[datetime],
+    ) -> bool:
         receipt = next(
             (item for item in self.receipts if item.receipt_id == receipt_id), None
         )
-        if receipt is None or receipt.feedback is not None:
-            return
-        self.budget_balance = min(
-            self.max_budget, self.budget_balance + receipt.attention_cost
-        )
-        self.receipts = [
-            item for item in self.receipts if item.receipt_id != receipt_id
-        ]
+        if receipt is None or receipt.status not in {"queued", "running"}:
+            return False
+        if receipt.budget_charged:
+            self.budget_balance = min(
+                self.max_budget, self.budget_balance + receipt.attention_cost
+            )
+            receipt.budget_charged = False
+        receipt.status = status
+        receipt.completed_at = _as_utc(now).isoformat()
+        receipt.error = str(error)[:500] if error else None
         self.save()
+        return True
 
     def snapshot(self, now: Optional[datetime] = None) -> dict[str, Any]:
         """Return frontend-safe state for controls and receipt inspection."""

@@ -1,7 +1,9 @@
 /* eslint-disable react/require-default-props */
-import { Box, Button, Menu } from '@chakra-ui/react';
 import {
-  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers, FiCalendar
+  Box, Button, Flex, HStack, IconButton, Menu, Text,
+} from '@chakra-ui/react';
+import {
+  FiSettings, FiClock, FiPlus, FiChevronLeft, FiUsers, FiLayers, FiCalendar, FiZap,
 } from 'react-icons/fi';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -33,17 +35,24 @@ interface HeaderButtonsProps {
 const ToggleButton = memo(({ isCollapsed, onToggle }: {
   isCollapsed: boolean
   onToggle: () => void
-}) => (
-  <Box
-    {...sidebarStyles.sidebar.toggleButton}
-    style={{
-      transform: isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)',
-    }}
-    onClick={onToggle}
-  >
-    <FiChevronLeft />
-  </Box>
-));
+}) => {
+  const { t } = useTranslation();
+  return (
+    <IconButton
+      {...sidebarStyles.sidebar.toggleButton}
+      aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+      title={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+      onClick={onToggle}
+    >
+      <Box
+        transition="transform 0.28s ease"
+        transform={isCollapsed ? 'rotate(180deg)' : 'rotate(0deg)'}
+      >
+        <FiChevronLeft />
+      </Box>
+    </IconButton>
+  );
+});
 
 ToggleButton.displayName = 'ToggleButton';
 
@@ -51,71 +60,96 @@ const ModeMenu = memo(({ setMode, currentMode, isElectron }: {
   setMode: (mode: ModeType) => void
   currentMode: ModeType
   isElectron: boolean
-}) => (
-  <Menu.Root>
-    <Menu.Trigger as={Button} aria-label="Mode Menu" title="Change Mode">
-      <FiLayers />
-    </Menu.Trigger>
-    <Menu.Positioner>
-      <Menu.Content>
-        <Menu.RadioItemGroup value={currentMode}>
-          <Menu.RadioItem value="window" onClick={() => setMode('window')}>
-            <Menu.ItemIndicator />
-            Live Mode
-          </Menu.RadioItem>
-          <Menu.RadioItem 
-            value="pet" 
-            onClick={() => {
-              if (isElectron) {
-                setMode('pet');
-              }
-            }}
-            disabled={!isElectron}
-            title={!isElectron ? "Pet mode is only available in desktop app" : undefined}
-          >
-            <Menu.ItemIndicator />
-            Pet Mode
-          </Menu.RadioItem>
-        </Menu.RadioItemGroup>
-      </Menu.Content>
-    </Menu.Positioner>
-  </Menu.Root>
-));
+}) => {
+  const { t } = useTranslation();
+  return (
+    <Menu.Root>
+      <Menu.Trigger
+        as={IconButton}
+        {...sidebarStyles.sidebar.utilityButton}
+        aria-label={t('sidebar.changeMode')}
+        title={t('sidebar.changeMode')}
+      >
+        <FiLayers />
+      </Menu.Trigger>
+      <Menu.Positioner>
+        <Menu.Content {...sidebarStyles.sidebar.modeMenu}>
+          <Menu.RadioItemGroup value={currentMode}>
+            <Menu.RadioItem value="window" onClick={() => setMode('window')}>
+              <Menu.ItemIndicator />
+              {t('sidebar.liveMode')}
+            </Menu.RadioItem>
+            <Menu.RadioItem
+              value="pet"
+              onClick={() => {
+                if (isElectron) {
+                  setMode('pet');
+                }
+              }}
+              disabled={!isElectron}
+              title={!isElectron ? t('sidebar.petModeDesktopOnly') : undefined}
+            >
+              <Menu.ItemIndicator />
+              {t('sidebar.petMode')}
+            </Menu.RadioItem>
+          </Menu.RadioItemGroup>
+        </Menu.Content>
+      </Menu.Positioner>
+    </Menu.Root>
+  );
+});
 
 ModeMenu.displayName = 'ModeMenu';
 
 const HeaderButtons = memo(({ onSettingsOpen, onNewHistory, setMode, currentMode, isElectron }: HeaderButtonsProps) => {
   const { t } = useTranslation();
   return (
-    <Box display="flex" gap={1}>
-      <Button onClick={onSettingsOpen}>
-        <FiSettings />
-      </Button>
-
-      <GroupDrawer>
-        <Button>
-          <FiUsers />
-        </Button>
-      </GroupDrawer>
-
-      <HistoryDrawer>
-        <Button>
-          <FiClock />
-        </Button>
-      </HistoryDrawer>
-
-      <ScheduledEventsDrawer>
-        <Button aria-label={t('scheduler.title')} title={t('scheduler.title')}>
-          <FiCalendar />
-        </Button>
-      </ScheduledEventsDrawer>
-
-      <Button onClick={onNewHistory}>
+    <HStack width="100%" gap="2">
+      <Button
+        {...sidebarStyles.sidebar.newConversationButton}
+        onClick={onNewHistory}
+        aria-label={t('sidebar.newConversation')}
+      >
         <FiPlus />
+        {t('sidebar.new')}
       </Button>
-
+      <GroupDrawer>
+        <IconButton
+          {...sidebarStyles.sidebar.utilityButton}
+          aria-label={t('group.management')}
+          title={t('group.management')}
+        >
+          <FiUsers />
+        </IconButton>
+      </GroupDrawer>
+      <HistoryDrawer>
+        <IconButton
+          {...sidebarStyles.sidebar.utilityButton}
+          aria-label={t('history.chatHistoryList')}
+          title={t('history.chatHistoryList')}
+        >
+          <FiClock />
+        </IconButton>
+      </HistoryDrawer>
+      <ScheduledEventsDrawer>
+        <IconButton
+          {...sidebarStyles.sidebar.utilityButton}
+          aria-label={t('scheduler.title')}
+          title={t('scheduler.title')}
+        >
+          <FiCalendar />
+        </IconButton>
+      </ScheduledEventsDrawer>
       <ModeMenu setMode={setMode} currentMode={currentMode} isElectron={isElectron} />
-    </Box>
+      <IconButton
+        {...sidebarStyles.sidebar.utilityButton}
+        onClick={onSettingsOpen}
+        aria-label={t('common.settings')}
+        title={t('common.settings')}
+      >
+        <FiSettings />
+      </IconButton>
+    </HStack>
   );
 });
 
@@ -127,21 +161,35 @@ const SidebarContent = memo(({
   setMode, 
   currentMode,
   isElectron
-}: HeaderButtonsProps) => (
-  <Box {...sidebarStyles.sidebar.content}>
-    <Box {...sidebarStyles.sidebar.header}>
-      <HeaderButtons
-        onSettingsOpen={onSettingsOpen}
-        onNewHistory={onNewHistory}
-        setMode={setMode}
-        currentMode={currentMode}
-        isElectron={isElectron}
-      />
+}: HeaderButtonsProps) => {
+  const { t } = useTranslation();
+  return (
+    <Box {...sidebarStyles.sidebar.content}>
+      <Flex {...sidebarStyles.sidebar.brandRow}>
+        <Flex {...sidebarStyles.sidebar.brandMark}>
+          <FiZap size={17} />
+        </Flex>
+        <Box minWidth={0}>
+          <Text {...sidebarStyles.sidebar.brandName}>SAIL</Text>
+          <Text {...sidebarStyles.sidebar.brandTagline}>
+            {t('sidebar.productTagline')}
+          </Text>
+        </Box>
+      </Flex>
+      <Box {...sidebarStyles.sidebar.header}>
+        <HeaderButtons
+          onSettingsOpen={onSettingsOpen}
+          onNewHistory={onNewHistory}
+          setMode={setMode}
+          currentMode={currentMode}
+          isElectron={isElectron}
+        />
+      </Box>
+      <ChatHistoryPanel />
+      <BottomTab />
     </Box>
-    <ChatHistoryPanel />
-    <BottomTab />
-  </Box>
-));
+  );
+});
 
 SidebarContent.displayName = 'SidebarContent';
 
@@ -159,6 +207,11 @@ function Sidebar({ isCollapsed = false, onToggle }: SidebarProps): JSX.Element {
 
   return (
     <Box {...sidebarStyles.sidebar.container(isCollapsed)}>
+      {isCollapsed && (
+        <Flex {...sidebarStyles.sidebar.collapsedBrand} aria-hidden="true">
+          <FiZap size={16} />
+        </Flex>
+      )}
       <ToggleButton isCollapsed={isCollapsed} onToggle={onToggle} />
 
       {!isCollapsed && !settingsOpen && (

@@ -14,6 +14,18 @@ import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CloseButton } from '@/components/ui/close-button';
 
+import {
+  accent,
+  border,
+  elevation,
+  focusRing,
+  radius,
+  surface,
+  text,
+  transition,
+  typography,
+} from '@/styles/tokens';
+
 import { settingStyles } from './setting-styles';
 import General from './general';
 import ASR from './asr';
@@ -105,7 +117,7 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
           </div>
         </DrawerHeader>
 
-        <DrawerBody>
+        <DrawerBody px={{ base: "4", md: "6" }} py="4">
           <Tabs.Root
             defaultValue="general"
             value={activeTab}
@@ -149,11 +161,36 @@ function SettingUI({ open, onClose }: SettingUIProps): JSX.Element {
           </Tabs.Root>
         </DrawerBody>
 
-        <DrawerFooter>
-          <Button colorPalette="red" onClick={handleCancel}>
+        <DrawerFooter
+          px={{ base: "4", md: "6" }}
+          py="4"
+          borderTop={`1px solid ${border.subtle}`}
+          gap="2"
+        >
+          <Button
+            {...typography.label}
+            variant="ghost"
+            color={text.secondary}
+            borderRadius={radius.md}
+            transition={transition.control}
+            _hover={{ bg: surface.glass2, color: text.primary }}
+            _focusVisible={focusRing}
+            onClick={handleCancel}
+          >
             {t('common.cancel')}
           </Button>
-          <Button colorPalette="blue" onClick={handleSave}>
+          <Button
+            {...typography.label}
+            bg={accent.contrast}
+            color={accent.onSolid}
+            borderRadius={radius.md}
+            px="6"
+            transition={transition.control}
+            _hover={{ bg: "white", transform: "translateY(-1px)", boxShadow: elevation[2] }}
+            _active={{ transform: "translateY(0) scale(0.98)" }}
+            _focusVisible={focusRing}
+            onClick={handleSave}
+          >
             {t('common.save')}
           </Button>
         </DrawerFooter>

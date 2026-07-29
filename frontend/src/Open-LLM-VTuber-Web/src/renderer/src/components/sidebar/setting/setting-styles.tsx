@@ -1,4 +1,35 @@
+import {
+  accent,
+  border,
+  elevation,
+  focusRing,
+  radius,
+  surface,
+  text,
+  transition,
+  typography,
+} from '@/styles/tokens';
+
 const isElectron = window.api !== undefined;
+
+/** Fields share one resting/hover/focus treatment so the form reads as a set. */
+const fieldSurface = {
+  bg: surface.glass1,
+  borderColor: border.subtle,
+  borderRadius: radius.md,
+  color: text.primary,
+  transition: transition.colors,
+  _hover: {
+    bg: surface.glass2,
+    borderColor: border.default,
+  },
+  _focusVisible: {
+    borderColor: accent.ring,
+    boxShadow: `0 0 0 3px ${accent.soft}`,
+    outline: 'none',
+  },
+};
+
 export const settingStyles = {
   settingUI: {
     container: {
@@ -10,15 +41,16 @@ export const settingStyles = {
       overflowY: 'auto',
       css: {
         '&::-webkit-scrollbar': {
-          width: '4px',
+          width: '8px',
         },
         '&::-webkit-scrollbar-track': {
-          bg: 'whiteAlpha.100',
-          borderRadius: 'full',
+          background: 'transparent',
         },
         '&::-webkit-scrollbar-thumb': {
-          bg: 'whiteAlpha.300',
-          borderRadius: 'full',
+          background: 'rgba(255, 255, 255, 0.14)',
+          border: '2px solid transparent',
+          backgroundClip: 'padding-box',
+          borderRadius: '999px',
         },
       },
     },
@@ -29,9 +61,8 @@ export const settingStyles = {
       gap: 1,
     },
     title: {
+      ...typography.titleLarge,
       ml: 4,
-      fontSize: 'lg',
-      fontWeight: 'bold',
     },
     tabs: {
       root: {
@@ -41,22 +72,37 @@ export const settingStyles = {
       },
       content: {},
       trigger: {
-        color: 'whiteAlpha.600',
+        ...typography.labelSmall,
+        fontSize: '12px',
+        flex: 1,
+        minWidth: 'fit-content',
+        height: '36px',
+        px: 3,
+        borderRadius: radius.sm,
+        color: text.tertiary,
+        transition: transition.control,
         _selected: {
-          color: 'white',
+          color: text.primary,
+          bg: surface.glass3,
+          boxShadow: elevation[1],
         },
         _hover: {
-          color: 'white',
+          color: text.secondary,
+          bg: surface.glass2,
         },
+        _focusVisible: focusRing,
       },
       list: {
         display: 'flex',
         justifyContent: 'flex-start',
         width: '100%',
-        borderBottom: '1px solid',
-        borderColor: 'whiteAlpha.200',
+        gap: 1,
+        p: 1,
+        bg: surface.glass1,
+        border: `1px solid ${border.subtle}`,
+        borderRadius: radius.lg,
         mb: 4,
-        pl: 0,
+        overflowX: 'auto',
       },
     },
     footer: {
@@ -67,14 +113,15 @@ export const settingStyles = {
       mt: 'auto',
       pt: 4,
       borderTop: '1px solid',
-      borderColor: 'whiteAlpha.200',
+      borderColor: border.subtle,
     },
     drawerContent: {
-      bg: 'gray.900',
-      maxWidth: '440px',
+      bg: 'rgba(11, 14, 21, 0.98)',
+      backdropFilter: 'blur(32px) saturate(140%)',
+      maxWidth: '500px',
       height: isElectron ? 'calc(100vh - 30px)' : '100vh',
-      borderLeft: '1px solid',
-      borderColor: 'whiteAlpha.200',
+      borderRight: `1px solid ${border.subtle}`,
+      boxShadow: elevation[5],
     },
     drawerHeader: {
       display: 'flex',
@@ -82,61 +129,67 @@ export const settingStyles = {
       justifyContent: 'space-between',
       width: '100%',
       position: 'relative',
+      minHeight: '68px',
       px: 6,
       py: 4,
+      borderBottom: `1px solid ${border.subtle}`,
     },
     drawerTitle: {
-      color: 'white',
-      fontSize: 'lg',
-      fontWeight: 'semibold',
+      ...typography.title,
+      color: text.primary,
     },
     closeButton: {
       position: 'absolute',
-      right: 1,
-      top: 1,
-      color: 'white',
-
+      right: 3,
+      top: 3,
+      color: text.secondary,
     },
   },
   general: {
     container: {
       align: 'stretch',
       gap: 6,
-      p: 4,
+      py: 3,
     },
     field: {
       label: {
-        color: 'whiteAlpha.800',
+        color: text.secondary,
       },
     },
     select: {
       root: {
         colorPalette: 'gray',
-        bg: 'gray.800',
+        bg: surface.glass1,
       },
       trigger: {
-        bg: 'gray.800',
+        ...fieldSurface,
       },
     },
     input: {
-      bg: 'gray.800',
+      ...fieldSurface,
     },
     buttonGroup: {
       gap: 4,
       width: '100%',
     },
     button: {
+      ...typography.label,
       width: '50%',
       variant: 'outline' as const,
-      bg: 'blue',
-      color: 'white',
+      bg: surface.glass1,
+      color: text.primary,
+      borderColor: border.default,
+      borderRadius: radius.md,
+      transition: transition.control,
       _hover: {
-        bg: 'whiteAlpha.300',
+        bg: surface.glass3,
+        borderColor: border.strong,
       },
+      _focusVisible: focusRing,
     },
     fieldLabel: {
-      fontSize: '14px',
-      color: 'gray.600',
+      ...typography.body,
+      color: text.secondary,
     },
   },
   common: {
@@ -144,8 +197,8 @@ export const settingStyles = {
       orientation: 'horizontal' as const,
     },
     fieldLabel: {
-      fontSize: 'sm',
-      color: 'whiteAlpha.800',
+      ...typography.body,
+      color: text.secondary,
       whiteSpace: 'nowrap' as const,
     },
     switch: {
@@ -159,11 +212,8 @@ export const settingStyles = {
         inputMode: 'decimal' as const,
       },
       input: {
-        bg: 'whiteAlpha.100',
-        borderColor: 'whiteAlpha.200',
-        _hover: {
-          bg: 'whiteAlpha.200',
-        },
+        ...fieldSurface,
+        fontVariantNumeric: 'tabular-nums',
       },
     },
     container: {
@@ -172,11 +222,7 @@ export const settingStyles = {
       css: { '--field-label-width': '120px' },
     },
     input: {
-      bg: 'whiteAlpha.100',
-      borderColor: 'whiteAlpha.200',
-      _hover: {
-        bg: 'whiteAlpha.200',
-      },
+      ...fieldSurface,
     },
   },
 };

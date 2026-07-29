@@ -30,6 +30,7 @@ import DynamicStage from "./components/canvas/dynamic-stage";
 import { DynamicStageProvider } from "./context/dynamic-stage-context";
 import { PresenceProvider } from "./context/presence-context";
 import PresenceIndicator from "./components/canvas/presence-indicator";
+import WorkspaceHeader from "./components/shell/workspace-header";
 import {
   StudyConditionProvider,
   useStudyCondition,
@@ -37,7 +38,9 @@ import {
 import { AgentActivityProvider } from "./context/agent-activity-context";
 
 function AppContent(): JSX.Element {
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [showSidebar, setShowSidebar] = useState(
+    () => window.innerWidth >= 1080,
+  );
   const [isFooterCollapsed, setIsFooterCollapsed] = useState(false);
   const { mode } = useMode();
   const isElectron = window.api !== undefined;
@@ -55,40 +58,11 @@ function AppContent(): JSX.Element {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-    
-  document.documentElement.style.overflow = 'hidden';
-  document.body.style.overflow = 'hidden';
-  document.documentElement.style.height = '100%';
-  document.body.style.height = '100%';
-  document.documentElement.style.position = 'fixed';
-  document.body.style.position = 'fixed';
-  document.documentElement.style.width = '100%';
-  document.body.style.width = '100%';
-
-  const sceneBaseStyle = {
+  const scenePetStyle = {
     position: "absolute" as const,
     overflow: "hidden",
     transition: "all 0.3s ease-in-out",
     pointerEvents: "auto" as const,
-  };
-
-  const getResponsiveSceneWindowStyle = (sidebarVisible: boolean) => ({
-    ...sceneBaseStyle,
-    top: isElectron ? "30px" : "0px",
-    height: `calc(100% - ${isElectron ? "30px" : "0px"})`,
-    zIndex: 5,
-    left: {
-      base: "0px",
-      md: sidebarVisible ? "440px" : "24px",
-    },
-    width: {
-      base: "100%",
-      md: `calc(100% - ${sidebarVisible ? "440px" : "24px"})`,
-    },
-  });
-
-  const scenePetStyle = {
-    ...sceneBaseStyle,
     top: 0,
     left: 0,
     width: "100vw",
@@ -98,12 +72,8 @@ function AppContent(): JSX.Element {
 
   return (
     <>
-      {condition.embodiment && (
-        <Box
-          {...(mode === "window"
-            ? getResponsiveSceneWindowStyle(showSidebar)
-            : scenePetStyle)}
-        >
+      {condition.embodiment && mode === "pet" && (
+        <Box {...scenePetStyle}>
           <DynamicStage />
         </Box>
       )}
@@ -116,7 +86,10 @@ function AppContent(): JSX.Element {
           <Flex {...layoutStyles.appContainer}>
             <Box
               {...layoutStyles.sidebar}
-              {...(!showSidebar && { width: "24px" })}
+              width={{
+                base: showSidebar ? "min(88vw, 372px)" : "56px",
+                md: showSidebar ? "372px" : "56px",
+              }}
             >
               <Sidebar
                 isCollapsed={!showSidebar}
@@ -125,19 +98,33 @@ function AppContent(): JSX.Element {
             </Box>
             <Box {...layoutStyles.mainContent}>
               <Background />
-              <Box position="absolute" top="20px" left="20px" zIndex={10}>
-                <WebSocketStatus />
-              </Box>
-              <Box position="absolute" top="20px" right="20px" zIndex={11}>
-                <PresenceIndicator />
+              <WorkspaceHeader
+                sidebarCollapsed={!showSidebar}
+                roomEnabled={condition.embodiment}
+                connectionStatus={<WebSocketStatus />}
+                presenceControl={<PresenceIndicator />}
+              />
+              <Box {...layoutStyles.stageArea}>
+                {condition.embodiment && (
+                  <Box {...layoutStyles.stageFrame}>
+                    <DynamicStage />
+                    <Box
+                      position="absolute"
+                      inset="0"
+                      pointerEvents="none"
+                      bg="linear-gradient(180deg, rgba(4, 6, 12, 0.12) 0%, transparent 18%, transparent 74%, rgba(4, 6, 12, 0.2) 100%)"
+                      zIndex={7}
+                    />
+                  </Box>
+                )}
               </Box>
               <Box
                 position="absolute"
-                bottom={isFooterCollapsed ? "39px" : "135px"}
+                bottom={isFooterCollapsed ? "42px" : "122px"}
                 left="50%"
                 transform="translateX(-50%)"
-                zIndex={10}
-                width="60%"
+                zIndex={15}
+                width={{ base: "calc(100% - 32px)", md: "min(720px, 72%)" }}
               >
                 <Subtitle />
               </Box>

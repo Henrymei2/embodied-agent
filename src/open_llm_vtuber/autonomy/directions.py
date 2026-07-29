@@ -89,6 +89,23 @@ def _always(_obs: "Observation") -> float:
     return 1.0
 
 
+def _approved_work_available(obs: "Observation") -> float:
+    """Only initiate project work when a concrete approved source exists."""
+    if obs.approved_plan_count > 0:
+        return 1.0
+    if obs.open_todo_count > 0:
+        return 0.8
+    return 0.0
+
+
+def _active_reading_available(obs: "Observation") -> float:
+    return _idle_boost(obs) if obs.has_active_reading else 0.0
+
+
+def _recent_context_available(obs: "Observation") -> float:
+    return _idle_boost(obs) if obs.has_recent_context else 0.0
+
+
 CANDIDATES: list[Candidate] = [
     Candidate(
         direction=Direction.CURIOSITY,
@@ -101,7 +118,7 @@ CANDIDATES: list[Candidate] = [
         intrusiveness=0.05,
         risk=0.15,
         delivery=SILENT,
-        relevance=lambda o: 0.7,
+        relevance=lambda o: 0.7 if o.has_recent_context else 0.0,
     ),
     Candidate(
         direction=Direction.CURIOSITY,
@@ -170,7 +187,7 @@ CANDIDATES: list[Candidate] = [
         intrusiveness=0.05,
         risk=0.15,
         delivery=SILENT,
-        relevance=_idle_boost,
+        relevance=_recent_context_available,
     ),
     Candidate(
         direction=Direction.GROWTH,
@@ -184,7 +201,7 @@ CANDIDATES: list[Candidate] = [
         intrusiveness=0.05,
         risk=0.1,
         delivery=SILENT,
-        relevance=_idle_boost,
+        relevance=_active_reading_available,
     ),
     Candidate(
         direction=Direction.GROWTH,
@@ -197,7 +214,7 @@ CANDIDATES: list[Candidate] = [
         intrusiveness=0.05,
         risk=0.1,
         delivery=SILENT,
-        relevance=_idle_boost,
+        relevance=_recent_context_available,
     ),
     Candidate(
         direction=Direction.SOCIAL,
@@ -223,6 +240,6 @@ CANDIDATES: list[Candidate] = [
         intrusiveness=0.05,
         risk=0.25,
         delivery=SILENT,
-        relevance=_always,
+        relevance=_approved_work_available,
     ),
 ]

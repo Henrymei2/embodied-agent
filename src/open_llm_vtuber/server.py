@@ -32,7 +32,7 @@ from .request_security import (
     cors_origin_regex,
     require_trusted_http_request,
 )
-from .workspace import embeddings
+from .workspace import embeddings, ensure_workspace
 
 
 # Static files remain under the app-level restricted CORS middleware.
@@ -107,6 +107,8 @@ class WebSocketServer:
             default_context_cache or ServiceContext()
         )  # Use provided context or initialize a new empty one waiting to be loaded
         # It will be populated during the initialize method call
+        self.app.add_event_handler("startup", self._start_autonomy_runtime)
+        self.app.add_event_handler("shutdown", self._stop_autonomy_runtime)
 
         system_config = config.system_config
         trusted_hosts = build_trusted_hosts(
@@ -200,6 +202,21 @@ class WebSocketServer:
         # seconds the first time, and no conversation turn should wait for it.
         # Until it is ready, workspace recall falls back to keyword matching.
         embeddings.warm_up()
+
+    async def _start_autonomy_runtime(self) -> None:
+        """Own the autonomy supervisor at server scope, not WebSocket scope."""
+        from .autonomy import AutonomySettings
+        from .autonomy.driver import start_autonomy_supervisor
+
+        settings = AutonomySettings.from_config(self.config.system_config)
+        if settings.enabled:
+            start_autonomy_supervisor(ensure_workspace().root)
+
+    @staticmethod
+    async def _stop_autonomy_runtime() -> None:
+        from .autonomy.driver import shutdown_autonomy_supervisors
+
+        await shutdown_autonomy_supervisors()
 
     @staticmethod
     def clean_cache():

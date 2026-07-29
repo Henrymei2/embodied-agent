@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from loguru import logger
 
@@ -65,11 +66,16 @@ class AutonomyState:
         data = {k: v for k, v in asdict(self).items() if not k.startswith("_")}
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
+            temporary = self._path.with_suffix(f".{uuid4().hex}.tmp")
+            temporary.write_text(
                 json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            temporary.replace(self._path)
         except Exception as exc:  # noqa: BLE001 - persistence is best-effort
             logger.warning(f"autonomy: failed to save state: {exc}")
+        finally:
+            if "temporary" in locals():
+                temporary.unlink(missing_ok=True)
 
     # ------------------------------------------------------------------ #
     def novelty(self, direction: Direction) -> float:
@@ -127,3 +133,16 @@ class AutonomyState:
             self.direction_counts.get(direction.value, 0) + 1
         )
         self.save()
+
+
+_states_by_root: dict[str, AutonomyState] = {}
+
+
+def get_or_create_autonomy_state(workspace_root: Path) -> AutonomyState:
+    """Share one mutable planner state across clients using one workspace."""
+    key = str(workspace_root.resolve())
+    state = _states_by_root.get(key)
+    if state is None:
+        state = AutonomyState.load(workspace_root)
+        _states_by_root[key] = state
+    return state

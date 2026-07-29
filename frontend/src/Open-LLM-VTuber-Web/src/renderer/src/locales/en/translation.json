@@ -62,20 +62,44 @@
     }
   },
   "footer": {
-    "typeYourMessage": "Type your message...",
+    "typeYourMessage": "Message your companion...",
+    "send": "Send message",
+    "muteMicrophone": "Mute microphone",
+    "unmuteMicrophone": "Unmute microphone",
+    "nudge": "Nudge companion",
+    "expandComposer": "Expand message composer",
+    "collapseComposer": "Collapse message composer",
     "cameraControl": "Click to start camera",
     "cameraStopping": "Click to stop camera",
     "screenControl": "Click to start screen capture",
     "screenStopping": "Click to stop screen capture"
   },
   "sidebar": {
+    "productTagline": "Personal AI companion",
+    "conversation": "Conversation",
+    "messageCount_one": "{{count}} message",
+    "messageCount_other": "{{count}} messages",
+    "emptyTitle": "A quiet moment",
+    "new": "New",
+    "newConversation": "Start a new conversation",
+    "expand": "Expand sidebar",
+    "collapse": "Collapse sidebar",
+    "changeMode": "Change display mode",
+    "liveMode": "Window mode",
+    "petMode": "Pet mode",
+    "petModeDesktopOnly": "Pet mode is available in the desktop app",
     "camera": "Camera",
     "screen": "Screen",
     "browser": "Browser",
     "live": "Live",
-    "noMessages": "No messages yet. Start a conversation!",
+    "noMessages": "Say hello, ask a question, or share what you are working on.",
     "noBrowserSession": "No active browser session",
     "browserSession": "Browser Session"
+  },
+  "workspace": {
+    "title": "Companion space",
+    "subtitle": "Your shared room is live",
+    "subtitleWithoutRoom": "Your companion is ready"
   },
   "group": {
     "management": "Group Management",

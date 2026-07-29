@@ -43,12 +43,15 @@ The Presence Contract then adds:
 
 1. A bounded affinity adjustment learned from receipt feedback.
 2. A hard focus-mode/snooze gate for `ask` and `speak` actions.
-3. A final budget check before the request enters the LLM queue.
-4. A receipt and budget debit only when dispatch is accepted.
+3. A final budget/presence check when queued work actually starts.
+4. A durable receipt lifecycle (`queued`, `running`, `succeeded`, `failed`, or
+   `canceled`) with failed/canceled attempts refunded.
 
 Silent actions may continue during focus mode or snooze, but they still cost a
 small amount so background work cannot grow without limit. Setting
-`user_present` to `false` pauses all autonomous behavior for that client.
+`user_present` to `false` blocks user-facing initiative while allowing safe
+silent work. Expired presence fails closed in the same way: it can never
+authorize `ask` or `speak`.
 
 ## Configuration
 
@@ -106,7 +109,7 @@ names, screenshots, keystrokes, or raw screen content in this protocol.
 
 ### 2. Receive an autonomous action receipt
 
-Immediately before an autonomous request is queued, the backend sends:
+When an autonomous request starts and when it finishes, the backend sends:
 
 ```json
 {
@@ -119,6 +122,11 @@ Immediately before an autonomous request is queued, the backend sends:
     "score": 0.81,
     "attention_cost": 1.25,
     "reason": "acting on care via ask",
+    "status": "running",
+    "started_at": "2026-07-13T16:20:01+00:00",
+    "completed_at": null,
+    "error": null,
+    "budget_charged": true,
     "signals": {
       "user_present": true,
       "activity": "idle",

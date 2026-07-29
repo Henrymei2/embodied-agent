@@ -18,6 +18,15 @@ _FREQUENCY_MAP: dict[str, tuple[float, float, float]] = {
     "high": (0.80, 600.0, 0.6),
 }
 
+# Minimum wall-clock gap between completed autonomous jobs. Meaningful
+# observation events may wake the planner early, but must not multiply the
+# number of actions merely because the frontend publishes more heartbeats.
+_ACTION_GAP_MAP: dict[str, float] = {
+    "low": 3600.0,
+    "medium": 900.0,
+    "high": 300.0,
+}
+
 # help_style -> additive bias applied to *spoken* deliveries (negative = prefer
 # staying silent, positive = happier to speak).
 _HELP_STYLE_SPEAK_BIAS: dict[str, float] = {
@@ -103,6 +112,10 @@ class AutonomySettings:
     @property
     def min_speak_gap_seconds(self) -> float:
         return _FREQUENCY_MAP[self.interruption_frequency][1]
+
+    @property
+    def min_action_gap_seconds(self) -> float:
+        return _ACTION_GAP_MAP[self.interruption_frequency]
 
     @property
     def intrusion_sensitivity(self) -> float:

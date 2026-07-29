@@ -5,6 +5,7 @@ from loguru import logger
 import numpy as np
 
 from .conversation_utils import (
+    collect_agent_output,
     create_batch_input,
     process_agent_output,
     send_conversation_start_signals,
@@ -13,7 +14,7 @@ from .conversation_utils import (
     cleanup_conversation,
     EMOJI_LIST,
 )
-from .types import WebSocketSend
+from .types import AgentTurnResult, WebSocketSend
 from .tts_manager import TTSTaskManager
 from .agent_activity import AgentActivityTracker
 from ..chat_history_manager import store_message
@@ -31,7 +32,7 @@ async def process_single_conversation(
     images: Optional[List[Dict[str, Any]]] = None,
     session_emoji: str = np.random.choice(EMOJI_LIST),
     metadata: Optional[Dict[str, Any]] = None,
-) -> str:
+) -> AgentTurnResult:
     """Process a single-user conversation turn
 
     Args:
@@ -44,17 +45,21 @@ async def process_single_conversation(
         metadata: Optional metadata for special processing flags
 
     Returns:
-        str: Complete response text
+        AgentTurnResult: Structured completion state and accumulated response
     """
     # Create TTSTaskManager for this conversation
     tts_manager = TTSTaskManager()
     activity = AgentActivityTracker()
     activity_visible = False
     full_response = ""  # Initialize full_response here
+    report = not metadata or bool(metadata.get("report", True))
+    turn_error: Optional[str] = None
 
     try:
-        # Send initial signals
-        await send_conversation_start_signals(websocket_send)
+        # A silent turn still executes the model and tools, but never enters the
+        # transcript, TTS pipeline, or frontend conversation lifecycle.
+        if report:
+            await send_conversation_start_signals(websocket_send)
         logger.info(f"New Conversation Chain {session_emoji} started!")
 
         # Process user input
@@ -93,8 +98,9 @@ async def process_single_conversation(
 
         try:
             # agent.chat yields Union[SentenceOutput, Dict[str, Any]]
-            await websocket_send(json.dumps(activity.thinking()))
-            activity_visible = True
+            if report:
+                await websocket_send(json.dumps(activity.thinking()))
+                activity_visible = True
             agent_output_stream = context.agent_engine.chat(batch_input)
 
             async for output_item in agent_output_stream:
@@ -105,7 +111,8 @@ async def process_single_conversation(
                     activity_message = activity.replace_tools(
                         output_item.get("tools", [])
                     )
-                    await websocket_send(json.dumps(activity_message))
+                    if report:
+                        await websocket_send(json.dumps(activity_message))
 
                 elif (
                     isinstance(output_item, dict)
@@ -115,22 +122,27 @@ async def process_single_conversation(
                     output_item["name"] = context.character_config.character_name
                     logger.debug(f"Sending tool status update: {output_item}")
 
-                    await websocket_send(json.dumps(output_item))
-                    await websocket_send(json.dumps(activity.update_tool(output_item)))
+                    if report:
+                        await websocket_send(json.dumps(output_item))
+                        await websocket_send(
+                            json.dumps(activity.update_tool(output_item))
+                        )
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
-                    if activity_visible:
+                    if report and activity_visible:
                         await websocket_send(json.dumps(activity.idle()))
                         activity_visible = False
-                    # Handle SentenceOutput or AudioOutput
-                    response_part = await process_agent_output(
-                        output=output_item,
-                        character_config=context.character_config,
-                        tts_engine=context.tts_engine,
-                        websocket_send=websocket_send,  # Pass websocket_send for audio/tts messages
-                        tts_manager=tts_manager,
-                        translate_engine=context.translate_engine,
-                    )
+                    if report:
+                        response_part = await process_agent_output(
+                            output=output_item,
+                            character_config=context.character_config,
+                            tts_engine=context.tts_engine,
+                            websocket_send=websocket_send,
+                            tts_manager=tts_manager,
+                            translate_engine=context.translate_engine,
+                        )
+                    else:
+                        response_part = await collect_agent_output(output_item)
                     # Ensure response_part is treated as a string before concatenation
                     response_part_str = (
                         str(response_part) if response_part is not None else ""
@@ -143,30 +155,33 @@ async def process_single_conversation(
                     logger.debug(f"Unexpected item content: {output_item}")
 
         except Exception as e:
+            turn_error = str(e)
             logger.exception(
                 f"Error processing agent response stream: {e}"
             )  # Log with stack trace
-            await websocket_send(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "message": f"Error processing agent response: {str(e)}",
-                    }
+            if report:
+                await websocket_send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": f"Error processing agent response: {str(e)}",
+                        }
+                    )
                 )
-            )
             # full_response will contain partial response before error
         # --- End processing agent response ---
 
         # Wait for any pending TTS tasks
-        if tts_manager.task_list:
+        if report and tts_manager.task_list:
             await asyncio.gather(*tts_manager.task_list)
             await websocket_send(json.dumps({"type": "backend-synth-complete"}))
 
-        await finalize_conversation_turn(
-            tts_manager=tts_manager,
-            websocket_send=websocket_send,
-            client_uid=client_uid,
-        )
+        if report:
+            await finalize_conversation_turn(
+                tts_manager=tts_manager,
+                websocket_send=websocket_send,
+                client_uid=client_uid,
+            )
 
         # Store the AI response too, unless this turn opted out of history
         # (e.g. proactive/autonomous silent actions). Mirrors the user-message
@@ -182,22 +197,33 @@ async def process_single_conversation(
             )
             logger.info(f"AI response: {full_response}")
 
-        return full_response  # Return accumulated full_response
+        return AgentTurnResult(
+            success=turn_error is None,
+            response=full_response,
+            error=turn_error,
+            reported=report,
+        )
 
     except asyncio.CancelledError:
         logger.info(f"🤡👍 Conversation {session_emoji} canceled because interrupted.")
         raise
     except Exception as e:
         logger.error(f"Error in conversation chain: {e}")
-        await websocket_send(
-            json.dumps({"type": "error", "message": f"Conversation error: {str(e)}"})
-        )
+        if report:
+            await websocket_send(
+                json.dumps(
+                    {"type": "error", "message": f"Conversation error: {str(e)}"}
+                )
+            )
         raise
     finally:
-        try:
-            await websocket_send(json.dumps(activity.idle()))
-        except Exception:
-            logger.debug("Unable to clear agent activity during connection cleanup.")
+        if report:
+            try:
+                await websocket_send(json.dumps(activity.idle()))
+            except Exception:
+                logger.debug(
+                    "Unable to clear agent activity during connection cleanup."
+                )
         from ..study import log_turn_finished
 
         # Closes the turn whether it completed, errored, or was interrupted, so

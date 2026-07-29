@@ -129,6 +129,10 @@ def update_screen_context(client_uid: str, data: dict) -> tuple[ScreenContext, b
         context=context,
         recorded_signature=signature if task_changed else stored.recorded_signature,
     )
+    if task_changed:
+        from .observation import signal_observation_change
+
+        signal_observation_change(client_uid)
     return context, task_changed
 
 

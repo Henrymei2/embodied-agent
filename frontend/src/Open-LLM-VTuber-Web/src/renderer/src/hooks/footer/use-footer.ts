@@ -12,6 +12,7 @@ export const useFooter = () => {
     inputText: inputValue,
     setInputText: handleChange,
     handleKeyPress: handleKey,
+    handleSend,
     handleCompositionStart,
     handleCompositionEnd,
   } = useTextInput();
@@ -47,6 +48,7 @@ export const useFooter = () => {
     inputValue,
     handleInputChange,
     handleKeyPress,
+    handleSend,
     handleCompositionStart,
     handleCompositionEnd,
     handleInterrupt,
