@@ -24,7 +24,7 @@ from .world_model import (
 # than a place to put prose.
 LABEL_LIMIT = 80
 
-STAGE_VERSION = 8
+STAGE_VERSION = 9
 STAGE_BASE_DIR = "stage_state"
 # Bumping this rebuilds every stored room from the defaults. v2 re-lays the room
 # into wall/back/front bands so each object keeps its own 150-unit radius: a
@@ -554,6 +554,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "width": 115,
                 "height": 125,
                 "zIndex": 2,
+                "interaction": {"on_click": True},
                 "text": "drawing board",
                 "uiWindow": {
                     "title": "Drawing Board",
@@ -693,7 +694,7 @@ def migrate_stage(stage: Any) -> Any:
     """
     if not isinstance(stage, dict) or stage.get("version") == STAGE_VERSION:
         return stage
-    if stage.get("version") not in {1, 2, 3, 4, 5, 6, 7}:
+    if stage.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8}:
         return stage
 
     metadata = stage.get("metadata") if isinstance(stage.get("metadata"), dict) else {}
