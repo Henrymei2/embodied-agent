@@ -322,6 +322,24 @@ def test_v6_stage_gains_the_tool_rack():
     assert validate_stage(migrated) == (True, [])
 
 
+def test_v8_stage_gains_a_clickable_drawing_board_without_losing_layout():
+    stage = get_default_stage("conf-a")
+    stage["version"] = 8
+    drawing_board = next(
+        node for node in stage["nodes"] if node["id"] == "drawing_board"
+    )
+    drawing_board.pop("interaction")
+    drawing_board["x"] = 321
+
+    migrated = migrate_stage(stage)
+    nodes = {node["id"]: node for node in migrated["nodes"]}
+
+    assert migrated["version"] == STAGE_VERSION
+    assert nodes["drawing_board"]["interaction"] == {"on_click": True}
+    assert nodes["drawing_board"]["x"] == 321
+    assert validate_stage(migrated) == (True, [])
+
+
 def test_migration_keeps_a_custom_spritesheet_untouched():
     stage = get_default_stage("conf-a")
     stage["version"] = 5

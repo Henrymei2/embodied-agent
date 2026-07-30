@@ -122,7 +122,7 @@ export interface StageNodeStyle {
 }
 
 export interface DynamicStageDocument {
-  version: 8;
+  version: 9;
   canvas: {
     width: number;
     height: number;
@@ -196,7 +196,7 @@ interface DynamicStageContextValue {
 
 const ROOM_WIDTH = 960;
 const ROOM_HEIGHT = 540;
-const STAGE_VERSION = 8;
+const STAGE_VERSION = 9;
 // Keep in sync with world_model.py, which owns these.
 const UNITS_PER_METER = 100;
 const REACH_CEILING = 150;
@@ -651,6 +651,7 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
       width: 140,
       height: 100,
       zIndex: 2,
+      interaction: { on_click: true },
       text: "drawing board",
       uiWindow: {
         title: "Drawing Board",
@@ -969,7 +970,7 @@ const migrateStageDocument = (candidate: unknown): unknown => {
   if (candidate.version === STAGE_VERSION) {
     return candidate;
   }
-  if (![1, 2, 3, 4, 5, 6, 7].includes(candidate.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8].includes(candidate.version as number)) {
     return candidate;
   }
 

@@ -24,7 +24,6 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -33,7 +32,6 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from src.open_llm_vtuber.furniture_state import (
-    drawing_board_dir,
     drawing_board_snapshot,
     save_drawing_board_image,
 )
