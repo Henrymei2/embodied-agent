@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from loguru import logger
+
 from .agenda import AgendaEntry
 from .observation import build_observation
 from .presence import PresenceLedger, PresenceReceipt
@@ -81,8 +83,16 @@ class AgendaReporter:
                 await self.run_report(entry, summary)
         except asyncio.CancelledError:
             self.presence.cancel_action(receipt.receipt_id)
-            await self._emit_receipt(receipt)
-            return ReportDelivery(False, "delivery owner changed", False)
+            try:
+                await self._emit_receipt(receipt)
+            except Exception as exc:
+                logger.warning(
+                    "agenda: could not emit canceled report receipt during "
+                    f"ownership handoff: {exc}"
+                )
+            # Cancellation transfers ownership back to the durable outbox.
+            # Propagate it so shutdown and lease handoff cannot be swallowed.
+            raise
         except Exception as exc:
             self.presence.fail_action(receipt.receipt_id, str(exc))
             await self._emit_receipt(receipt)

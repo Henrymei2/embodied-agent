@@ -265,6 +265,40 @@ async def test_due_schedule_preempts_an_autonomous_step(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_due_schedule_preempts_an_intention_still_being_planned(tmp_path):
+    planning_started = asyncio.Event()
+
+    class Planner:
+        async def next_step(self, _entry, _context):
+            planning_started.set()
+            await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    pursuit = _pursuit(status="active")
+    store.add(pursuit)
+    executive = _executive(store, Planner())
+    assert await executive._advance() is True
+    await asyncio.wait_for(planning_started.wait(), timeout=1)
+
+    scheduled = _pursuit(
+        kind="scheduled",
+        title="Due while planning",
+        origin="scheduled",
+        schedule=ScheduleSpec(next_run=utc_now().isoformat()),
+    )
+    store.add(scheduled)
+
+    assert await executive._advance() is True
+    state = store.load()
+    active = next(entry for entry in state.entries if entry.status == "active")
+    original = next(entry for entry in state.entries if entry.id == pursuit.id)
+
+    assert active.kind == "scheduled"
+    assert active.parent_id == scheduled.id
+    assert original.status == "suspended"
+
+
+@pytest.mark.asyncio
 async def test_cancel_after_tool_result_preserves_completed_safe_boundary(tmp_path):
     store = AgendaStore(tmp_path)
     entry = _pursuit(status="active")

@@ -4,20 +4,21 @@ import json
 import uuid
 from pathlib import Path
 from typing import Literal, List, TypedDict, Optional
+
+from filelock import FileLock
 from loguru import logger
 
 from .utils.timezone import now_local
 
 
 class HistoryMessage(TypedDict):
+    id: str
     role: Literal["human", "ai"]
     timestamp: str
     content: str
     # Optional display information for the message
     name: Optional[str]
     avatar: Optional[str]
-    # Stable identifier for retry-safe autonomous messages.
-    message_id: Optional[str]
 
 
 def _is_safe_filename(filename: str) -> bool:
@@ -137,42 +138,50 @@ def store_message(
     filepath = _get_safe_history_path(conf_uid, history_uid)
     logger.debug(f"Storing {role} message to {filepath}")
 
-    history_data = []
-    if os.path.exists(filepath):
+    with FileLock(f"{filepath}.lock", timeout=5):
+        history_data = []
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    history_data = json.load(f)
+            except Exception:
+                logger.error(f"Failed to load history file: {filepath}")
+                raise
+        if not isinstance(history_data, list):
+            raise ValueError("history root must be a list")
+
+        if message_id and any(
+            item.get("id", item.get("message_id")) == message_id
+            for item in history_data
+            if isinstance(item, dict)
+        ):
+            logger.debug(f"Message {message_id} already exists in {filepath}")
+            return
+
+        now_str = now_local().isoformat(timespec="seconds")
+        new_item = {
+            "id": message_id or uuid.uuid4().hex,
+            "role": role,
+            "timestamp": now_str,
+            "content": content,
+        }
+
+        # Add optional display information if provided
+        if name is not None:
+            new_item["name"] = name
+        if avatar is not None:
+            new_item["avatar"] = avatar
+
+        history_data.append(new_item)
+        temporary = Path(filepath).with_suffix(f".{uuid.uuid4().hex}.tmp")
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                history_data = json.load(f)
-        except Exception:
-            logger.error(f"Failed to load history file: {filepath}")
-            pass
-
-    if message_id and any(
-        item.get("message_id") == message_id
-        for item in history_data
-        if isinstance(item, dict)
-    ):
-        logger.debug(f"Message {message_id} already exists in {filepath}")
-        return
-
-    now_str = now_local().isoformat(timespec="seconds")
-    new_item = {
-        "role": role,
-        "timestamp": now_str,
-        "content": content,
-    }
-
-    # Add optional display information if provided
-    if name is not None:
-        new_item["name"] = name
-    if avatar is not None:
-        new_item["avatar"] = avatar
-    if message_id is not None:
-        new_item["message_id"] = message_id
-
-    history_data.append(new_item)
-
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(history_data, f, ensure_ascii=False, indent=2)
+            temporary.write_text(
+                json.dumps(history_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            temporary.replace(filepath)
+        finally:
+            temporary.unlink(missing_ok=True)
     logger.debug(f"Successfully stored {role} message")
 
 
@@ -253,8 +262,21 @@ def get_history(conf_uid: str, history_uid: str) -> List[HistoryMessage]:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             history_data = json.load(f)
-            # Filter out metadata
-            return [msg for msg in history_data if msg["role"] != "metadata"]
+        messages = []
+        for index, message in enumerate(history_data):
+            if not isinstance(message, dict) or message.get("role") == "metadata":
+                continue
+            normalized = dict(message)
+            normalized["id"] = str(
+                normalized.get("id")
+                or normalized.get("message_id")
+                or uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"open-llm-vtuber:{conf_uid}:{history_uid}:{index}",
+                )
+            )
+            messages.append(normalized)
+        return messages
     except Exception:
         return []
 

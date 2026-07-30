@@ -26,7 +26,7 @@ from .idle_relocation import (
     IdleScene,
     validate_idle_placement,
 )
-from .lease import LeaseHandle, LeaseLostError, WorkspaceLease
+from .lease import LeaseHandle, LeaseLostError, WorkspaceLease, lease_context
 from .settings import AutonomySettings
 from .step_policy import StepPolicy
 from .telemetry import AutonomyTracer
@@ -152,6 +152,9 @@ class AgendaExecutive:
                         ),
                         return_exceptions=True,
                     )
+                    self._release_event_claims(
+                        "Agenda ownership changed during successor planning."
+                    )
                     raise
                 except LeaseLostError:
                     raise
@@ -160,6 +163,9 @@ class AgendaExecutive:
                     await self.broadcast_snapshot()
                     await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
                 except Exception as exc:
+                    self._release_event_claims(
+                        f"Successor planning was interrupted: {type(exc).__name__}."
+                    )
                     logger.exception(
                         f"agenda: executive pass failed: "
                         f"{type(exc).__name__}: {exc or '<no message>'}"
@@ -320,6 +326,17 @@ class AgendaExecutive:
         if due:
             await self._cancel_entry_work()
             state = self.store.load()
+            active = next(
+                (item for item in state.entries if item.status == "active"),
+                None,
+            )
+            if active is not None and active.kind != "user":
+                self.store.transition(
+                    active.id,
+                    "suspended",
+                    progress_summary="Suspended for due scheduled work.",
+                )
+                state = self.store.load()
 
         if self._entry_task is not None:
             if not self._entry_task.done():
@@ -475,7 +492,7 @@ class AgendaExecutive:
         if self.connected_client:
             await self._settle_while_generating_successor()
         else:
-            await self._generate_successor()
+            await self._run_settling_task(self._generate_successor())
         return True
 
     def _agenda_context(self):
@@ -578,7 +595,7 @@ class AgendaExecutive:
         except asyncio.CancelledError:
             if not self._settling_interrupted:
                 raise
-            logger.info("agenda: idle relocation was preempted")
+            logger.info("agenda: settling or successor planning was preempted")
             return False
         finally:
             if self._settling_task is task:
@@ -719,6 +736,28 @@ class AgendaExecutive:
         if activity is not None and not activity.done():
             activity.cancel()
             await asyncio.gather(activity, return_exceptions=True)
+        self._release_event_claims(
+            "Agenda work was interrupted before successor planning completed."
+        )
+
+    def _release_event_claims(self, reason: str) -> int:
+        if self.lease_handle is None:
+            return 0
+        try:
+            WorkspaceLease(self.store.root).assert_current(self.lease_handle)
+            with lease_context(self.lease_handle):
+                return self.store.release_claimed_events(
+                    owner_id=self.lease_handle.owner_id,
+                    fencing_token=self.lease_handle.fencing_token,
+                    reason=reason,
+                )
+        except LeaseLostError:
+            # A newer fencing token can reclaim the older owner's event
+            # immediately, so the stale owner must not attempt another write.
+            return 0
+        except Exception as exc:
+            logger.warning(f"agenda: could not release interrupted event claim: {exc}")
+            return 0
 
     async def _generate_successor(self) -> None:
         self._assert_lease()

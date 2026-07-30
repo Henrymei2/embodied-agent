@@ -180,6 +180,9 @@ class WorkspaceAgendaRuntime:
         binding: _ClientBinding,
     ) -> None:
         settings = binding.settings
+        if not settings.enabled:
+            self.lease_status = "standby"
+            return
         lease = WorkspaceLease(
             self.workspace_root,
             ttl_seconds=settings.lease_ttl_seconds,
@@ -214,6 +217,7 @@ class WorkspaceAgendaRuntime:
             self.lease_handle = handle
             runner_task: asyncio.Task | None = None
             lost = False
+            restart = False
             try:
                 with lease_context(handle):
                     runner_task = asyncio.create_task(
@@ -230,7 +234,15 @@ class WorkspaceAgendaRuntime:
                                 asyncio.shield(runner_task),
                                 timeout=settings.lease_renew_seconds,
                             )
-                            return
+                            self.last_error = (
+                                "RuntimeError: agenda runner exited unexpectedly"
+                            )
+                            logger.warning(
+                                "agenda runtime runner exited; restarting after "
+                                "the lease retry interval"
+                            )
+                            restart = True
+                            break
                         except asyncio.TimeoutError:
                             try:
                                 handle = lease.renew(handle)
@@ -259,25 +271,43 @@ class WorkspaceAgendaRuntime:
                     runner_task.cancel()
                     await asyncio.gather(runner_task, return_exceptions=True)
                 raise
+            except Exception as exc:
+                if runner_task is not None and not runner_task.done():
+                    runner_task.cancel()
+                    await asyncio.gather(runner_task, return_exceptions=True)
+                self.lease_status = "standby"
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                logger.exception(
+                    f"agenda runtime runner failed; restarting: {self.last_error}"
+                )
+                restart = True
             finally:
                 try:
                     lease.release(handle)
                 except LeaseError as exc:
                     self.last_error = f"{type(exc).__name__}: {exc}"
                 self.lease_handle = None
-            if lost:
+                if self.lease_status == "held":
+                    self.lease_status = "standby"
+            if lost or restart:
                 await asyncio.sleep(settings.lease_retry_seconds)
 
     def _record_completion(self, task: asyncio.Task) -> None:
-        if task.cancelled():
-            return
-        try:
-            error = task.exception()
-        except asyncio.CancelledError:
-            return
+        error = None
+        if not task.cancelled():
+            try:
+                error = task.exception()
+            except asyncio.CancelledError:
+                pass
         if error is not None:
             self.last_error = f"{type(error).__name__}: {error}"
             logger.error(f"agenda runtime stopped unexpectedly: {self.last_error}")
+        if self.task is task:
+            self.task = None
+            self.owner_uid = None
+            self.lease_handle = None
+            if self.lease_status == "held":
+                self.lease_status = "standby"
 
 
 _runtimes: dict[str, WorkspaceAgendaRuntime] = {}

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.open_llm_vtuber.autonomy.agenda import AgendaStore, create_entry
+from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
 from src.open_llm_vtuber.autonomy.lease import (
     LeaseLostError,
     WorkspaceLease,
@@ -264,6 +265,58 @@ def test_external_event_is_idempotent_and_atomically_acknowledged(tmp_path):
     assert event.status == "acknowledged"
     assert event.linked_entry_id == entry.id
     assert sum(item.id == entry.id for item in state.entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_interrupted_successor_planning_releases_claimed_event(tmp_path):
+    planning_started = asyncio.Event()
+
+    class Planner:
+        async def propose_intention(self, _context):
+            planning_started.set()
+            await asyncio.Event().wait()
+
+    async def run_step(_entry, _checkpoint):
+        return "unused"
+
+    async def emit(_payload):
+        return None
+
+    store = AgendaStore(tmp_path)
+    event = store.publish_event(
+        idempotency_key="mail:interrupted",
+        source="mail",
+        kind="message_arrived",
+        summary="An event is claimed while successor planning is interrupted.",
+        evidence_ref="external:mail:interrupted",
+    )
+    lease = WorkspaceLease(tmp_path)
+    handle = lease.acquire("event-owner", priority=100, holder_label="headless")
+    assert handle is not None
+
+    with lease_context(handle):
+        executive = AgendaExecutive(
+            client_uid="headless",
+            store=store,
+            planner=Planner(),
+            settings=AutonomySettings(restart_recovery_grace_seconds=0),
+            run_step=run_step,
+            emit=emit,
+            connected_client=False,
+            lease_handle=handle,
+        )
+        advance = asyncio.create_task(executive._advance())
+        await asyncio.wait_for(planning_started.wait(), timeout=1)
+    # HTTP/WebSocket controls run in a different task context from the leased
+    # agenda runner, so claim release must establish its own fenced scope.
+    await executive.pause(True)
+    assert await asyncio.wait_for(advance, timeout=1) is True
+
+    released = next(item for item in store.load().inbox if item.id == event.id)
+    assert released.status == "pending"
+    assert released.claimed_at is None
+    assert released.claimed_by is None
+    assert released.claimed_fencing_token is None
 
 
 def test_failed_event_and_activity_enter_dead_letter_store(tmp_path):

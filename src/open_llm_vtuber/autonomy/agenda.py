@@ -1149,6 +1149,57 @@ class AgendaStore:
 
         return self.mutate(operation)
 
+    def release_claimed_events(
+        self,
+        *,
+        owner_id: str,
+        fencing_token: int,
+        reason: str,
+        now: Optional[datetime] = None,
+    ) -> int:
+        """Release this owner's interrupted claims for immediate safe retry."""
+        from .lease import LeaseLostError, current_lease
+
+        handle = current_lease()
+        if (
+            handle is None
+            or handle.owner_id != owner_id
+            or handle.fencing_token != fencing_token
+            or handle.workspace_root.resolve() != self.root.resolve()
+        ):
+            raise LeaseLostError("event release requires the current workspace lease")
+        now = (now or utc_now()).astimezone(timezone.utc)
+
+        def operation(state: AgendaState) -> int:
+            released = 0
+            for event in state.inbox:
+                if (
+                    event.status != "claimed"
+                    or event.claimed_by != owner_id
+                    or event.claimed_fencing_token != fencing_token
+                ):
+                    continue
+                event.status = "pending"
+                event.available_at = _iso(now)
+                event.updated_at = _iso(now)
+                event.error = str(reason)[:500]
+                event.claimed_at = None
+                event.claimed_by = None
+                event.claimed_fencing_token = None
+                self._event(
+                    state,
+                    None,
+                    "external_event_deferred",
+                    {
+                        "event_id": event.id,
+                        "reason": "owner_interrupted",
+                    },
+                )
+                released += 1
+            return released
+
+        return self.mutate(operation)
+
     def retry_dead_event(self, event_id: str) -> ExternalEvent:
         """Explicitly requeue a dead-lettered external event."""
 

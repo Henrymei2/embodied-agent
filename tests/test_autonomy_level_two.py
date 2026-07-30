@@ -16,6 +16,12 @@ from src.open_llm_vtuber.autonomy.change_bus import (
     unsubscribe_agenda_changes,
 )
 from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
+from src.open_llm_vtuber.autonomy.observation import (
+    clear_client_presence,
+    update_client_presence,
+)
+from src.open_llm_vtuber.autonomy.presence import PresenceLedger
+from src.open_llm_vtuber.autonomy.reporting import AgendaReporter
 from src.open_llm_vtuber.autonomy.runtime import WorkspaceAgendaRuntime
 from src.open_llm_vtuber.autonomy.settings import AutonomySettings
 
@@ -85,6 +91,33 @@ async def test_runtime_hands_off_between_headless_and_live_owners(tmp_path):
     assert runtime.owner_uid == "headless"
     assert started == ["headless", "live", "headless"]
     assert runtime.snapshot()["mode"] == "headless"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_restarts_an_unexpectedly_failed_runner(tmp_path):
+    attempts = 0
+    restarted = asyncio.Event()
+
+    async def runner(_client_uid, _settings, _presence):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient runner failure")
+        restarted.set()
+        await asyncio.Event().wait()
+
+    runtime = WorkspaceAgendaRuntime(tmp_path, runner=runner)
+    settings = AutonomySettings(
+        lease_retry_seconds=0.01,
+        lease_renew_seconds=1,
+    )
+    await runtime.attach("live", settings, None)
+    await asyncio.wait_for(restarted.wait(), timeout=2)
+
+    assert attempts == 2
+    assert runtime.task is not None and not runtime.task.done()
+    assert runtime.owner_uid == "live"
     await runtime.close()
 
 
@@ -262,6 +295,56 @@ async def test_deferred_report_retries_after_presence_change(tmp_path):
     assert report.status == "delivered"
     assert report.attempts == 2
     assert report.failures == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_report_delivery_requeues_without_swallowing_shutdown(tmp_path):
+    client_uid = "cancel-report-client"
+    delivery_started = asyncio.Event()
+
+    async def run_report(_entry, _summary):
+        delivery_started.set()
+        await asyncio.Event().wait()
+
+    async def emit(payload):
+        if payload["receipt"]["status"] == "canceled":
+            raise RuntimeError("client disconnected during handoff")
+
+    settings = AutonomySettings(
+        report_retry_seconds=1,
+        restart_recovery_grace_seconds=0,
+    )
+    ledger = PresenceLedger.load(tmp_path, settings)
+    reporter = AgendaReporter(client_uid, ledger, emit, run_report)
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="completed", report_policy="on_completion")
+    store.add(entry)
+    store.enqueue_report(entry.id, "A report interrupted by ownership handoff.")
+    executive = _executive(
+        store,
+        planner=object(),
+        settings=settings,
+        report_result=reporter.deliver,
+    )
+    update_client_presence(
+        client_uid,
+        {"idle_seconds": 0, "user_present": True, "focus_mode": False},
+    )
+
+    try:
+        delivery = asyncio.create_task(executive._deliver_due_report())
+        await asyncio.wait_for(delivery_started.wait(), timeout=1)
+        delivery.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await delivery
+
+        report = store.load().reports[0]
+        assert report.status == "pending"
+        assert report.failures == 0
+        assert ledger.receipts[-1].status == "canceled"
+        assert ledger.receipts[-1].error is None
+    finally:
+        clear_client_presence(client_uid)
 
 
 @pytest.mark.asyncio
