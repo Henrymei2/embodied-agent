@@ -86,3 +86,8 @@ def test_tracker_has_explicit_thinking_and_idle_events():
         "phase": "idle",
         "tools": [],
     }
+    assert AgentActivityTracker.planning() == {
+        "type": "agent_activity",
+        "phase": "planning",
+        "tools": [],
+    }

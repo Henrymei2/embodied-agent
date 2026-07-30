@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, Optional
 
 from loguru import logger
 
+from ..conversations.agent_activity import AgentActivityTracker
 from .activity import ActivityExecutor, ActivityStepTimeout
 from .agenda import (
     AgendaEntry,
@@ -29,6 +30,7 @@ from .settings import AutonomySettings
 
 RoomSnapshot = Callable[[], IdleScene]
 IdleRelocator = Callable[[IdlePlacement], Awaitable[bool]]
+CompletionReporter = Callable[[AgendaEntry, str], Awaitable[None]]
 
 
 class AgendaExecutive:
@@ -45,6 +47,7 @@ class AgendaExecutive:
         object_names: Optional[set[str]] = None,
         room_snapshot: Optional[RoomSnapshot] = None,
         relocate_idle: Optional[IdleRelocator] = None,
+        report_completion: Optional[CompletionReporter] = None,
     ) -> None:
         self.client_uid = client_uid
         self.store = store
@@ -55,6 +58,7 @@ class AgendaExecutive:
         self.object_names = object_names or set()
         self.room_snapshot = room_snapshot
         self.relocate_idle = relocate_idle
+        self.report_completion = report_completion
         self.policy = AgendaPolicy(settings.maximum_pursuit_seconds)
         self.activity = ActivityExecutor(store, run_step, emit)
         self._wake = asyncio.Event()
@@ -347,17 +351,24 @@ class AgendaExecutive:
         scene = self._room_snapshot()
 
         async def settle_and_generate() -> None:
-            placement = await self._choose_idle_placement(context, scene)
-            relocation = asyncio.create_task(self._relocate_idle_safely(placement))
-            generation = asyncio.create_task(self._generate_successor(context))
+            await self.emit(AgentActivityTracker.planning())
             try:
-                await asyncio.gather(relocation, generation)
-            except BaseException:
-                for task in (relocation, generation):
-                    if not task.done():
-                        task.cancel()
-                await asyncio.gather(relocation, generation, return_exceptions=True)
-                raise
+                placement = await self._choose_idle_placement(context, scene)
+                relocation = asyncio.create_task(self._relocate_idle_safely(placement))
+                generation = asyncio.create_task(self._generate_successor(context))
+                try:
+                    await asyncio.gather(relocation, generation)
+                except BaseException:
+                    for task in (relocation, generation):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(relocation, generation, return_exceptions=True)
+                    raise
+            finally:
+                # A user turn owns the status display after preemption and must
+                # not be cleared by the background planner being canceled.
+                if not self._settling_interrupted:
+                    await self.emit(AgentActivityTracker.idle())
 
         await self._run_settling_task(settle_and_generate())
         state = self.store.load()
@@ -518,14 +529,50 @@ class AgendaExecutive:
         complete, summary = await self.planner.evaluate_completion(
             asdict(entry), [result]
         )
-        self.store.transition(
+        updated = self.store.transition(
             entry.id,
             "completed" if complete else "queued",
             progress_summary=summary,
         )
         await self.broadcast_snapshot()
         if complete:
+            await self._report_completed_entry(updated, summary, context)
             self.wake()
+
+    async def _report_completed_entry(
+        self,
+        entry: AgendaEntry,
+        summary: str,
+        context,
+    ) -> None:
+        if self.report_completion is None or entry.report_policy == "silent":
+            return
+        should_report = entry.report_policy in {"on_completion", "ask_first"}
+        if entry.report_policy == "if_noteworthy":
+            try:
+                should_report = await self.planner.is_noteworthy(
+                    asdict(entry),
+                    summary,
+                    context,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    f"agenda: could not evaluate report worthiness for {entry.id!r}: "
+                    f"{exc}"
+                )
+                should_report = False
+        if not should_report:
+            return
+        try:
+            await self.report_completion(entry, summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                f"agenda: could not publish completion for {entry.id!r}: {exc}"
+            )
 
     async def _reconsider_suspended(self) -> None:
         state = self.store.load()

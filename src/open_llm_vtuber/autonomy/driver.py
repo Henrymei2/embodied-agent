@@ -6,6 +6,8 @@ import json
 
 from loguru import logger
 
+from ..agent.output_types import DisplayText
+from ..chat_history_manager import store_message
 from ..conversations.types import AgentTurnResult
 from .agenda import get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
@@ -25,6 +27,42 @@ def _agenda_step_text(result: AgentTurnResult | str) -> str:
     if not result.success:
         raise RuntimeError(result.error or "Agenda conversation step failed.")
     return str(result.response or "")
+
+
+async def _publish_completion(
+    *,
+    send,
+    context,
+    conf_uid: str,
+    entry,
+    summary: str,
+) -> None:
+    """Append one silent autonomous result to the live and persisted transcript."""
+    result = summary.strip() or "The autonomous task finished."
+    message = f"{entry.title}\n\n{result}"[:4000]
+    display = DisplayText(
+        text=message,
+        name=context.character_config.character_name,
+        avatar=context.character_config.avatar,
+    )
+    await send(
+        json.dumps(
+            {
+                "type": "autonomous-message",
+                "display_text": display.to_dict(),
+            },
+            ensure_ascii=False,
+        )
+    )
+    if context.history_uid:
+        store_message(
+            conf_uid=conf_uid,
+            history_uid=context.history_uid,
+            role="ai",
+            content=message,
+            name=context.character_config.character_name,
+            avatar=context.character_config.avatar,
+        )
 
 
 async def agenda_loop(
@@ -101,6 +139,17 @@ async def agenda_loop(
             placement=placement,
         )
 
+    async def report_completion(entry, summary: str) -> None:
+        # A dedicated text event is not filtered by microphone/audio state and
+        # enters the transcript without forcing proactive speech.
+        await _publish_completion(
+            send=send,
+            context=context,
+            conf_uid=conf_uid,
+            entry=entry,
+            summary=summary,
+        )
+
     executive = AgendaExecutive(
         client_uid=client_uid,
         store=get_agenda_store(),
@@ -112,6 +161,7 @@ async def agenda_loop(
         object_names=object_names,
         room_snapshot=lambda: idle_scene_snapshot(conf_uid),
         relocate_idle=relocate_idle,
+        report_completion=report_completion,
     )
     memory_manager = getattr(context.agent_engine, "_memory_manager", None)
     if memory_manager is not None:

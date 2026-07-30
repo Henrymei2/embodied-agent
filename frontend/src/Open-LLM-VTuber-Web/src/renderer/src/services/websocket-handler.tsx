@@ -111,6 +111,20 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           });
         }
         break;
+      case 'autonomous-message':
+        if (message.display_text?.text) {
+          const display = message.display_text;
+          setMessages((current) => [...current, {
+            id: `autonomous-${Date.now()}`,
+            content: display.text,
+            role: 'ai',
+            type: 'text',
+            timestamp: new Date().toISOString(),
+            name: display.name,
+            avatar: display.avatar,
+          }]);
+        }
+        break;
       case 'frontend_action_request':
         handleFrontendAction({
           request_id: message.request_id,

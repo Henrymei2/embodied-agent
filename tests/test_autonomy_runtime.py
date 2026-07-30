@@ -10,7 +10,11 @@ from src.open_llm_vtuber.agent.output_types import (
     DisplayText,
     SentenceOutput,
 )
-from src.open_llm_vtuber.autonomy.driver import _agenda_step_text
+from src.open_llm_vtuber.autonomy.agenda import create_entry
+from src.open_llm_vtuber.autonomy.driver import (
+    _agenda_step_text,
+    _publish_completion,
+)
 from src.open_llm_vtuber.conversations.llm_request_queue import (
     PRIORITY_PASSIVE,
     PRIORITY_USER,
@@ -168,3 +172,48 @@ def test_agenda_step_propagates_agent_turn_failure():
         assert str(exc) == "tool execution failed"
     else:
         raise AssertionError("failed agent turns must fail the agenda step")
+
+
+async def test_autonomous_completion_reaches_live_and_persisted_conversation(
+    monkeypatch,
+):
+    import json
+
+    sent: list[dict] = []
+    stored: list[dict] = []
+    context = _context()
+    context.history_uid = "current-history"
+    entry = create_entry(
+        kind="pursuit",
+        title="Finished background research",
+        description="Review one useful source.",
+        origin="autonomous",
+        evidence_refs=["memory:today.md"],
+        completion_condition="One source was reviewed.",
+        time_budget_seconds=60,
+        report_policy="on_completion",
+    )
+
+    async def send(payload: str) -> None:
+        sent.append(json.loads(payload))
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.driver.store_message",
+        lambda **kwargs: stored.append(kwargs),
+    )
+
+    await _publish_completion(
+        send=send,
+        context=context,
+        conf_uid="test-character",
+        entry=entry,
+        summary="Found a useful source and saved the key point.",
+    )
+
+    assert sent[0]["type"] == "autonomous-message"
+    assert sent[0]["display_text"]["text"] == (
+        "Finished background research\n\nFound a useful source and saved the key point."
+    )
+    assert stored[0]["history_uid"] == "current-history"
+    assert stored[0]["role"] == "ai"
+    assert stored[0]["content"] == sent[0]["display_text"]["text"]

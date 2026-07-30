@@ -166,6 +166,28 @@ class StructuredAgendaPlanner:
         )
         return bool(raw.get("complete", False)), str(raw.get("summary", ""))[:1000]
 
+    async def is_noteworthy(
+        self,
+        entry: dict[str, Any],
+        summary: str,
+        context: AgendaContext,
+    ) -> bool:
+        """Apply the entry's conditional reporting policy to its final result."""
+        raw = _json_object(
+            await self.complete(
+                "Decide whether this completed autonomous result is useful or "
+                "interesting enough to interrupt the user's current conversation. "
+                'Return JSON only: {"noteworthy": boolean}. Be conservative: routine '
+                "completion, no new information, and internal housekeeping are not "
+                "noteworthy. A concrete finding, useful artifact, timely warning, or "
+                "meaningful progress may be noteworthy. "
+                f"Entry: {json.dumps(entry, ensure_ascii=False)}\n"
+                f"Completion summary: {json.dumps(summary, ensure_ascii=False)}\n"
+                f"Context: {json.dumps(context.payload, ensure_ascii=False)}"
+            )
+        )
+        return bool(raw.get("noteworthy", False))
+
     async def reconsider(self, entry: dict[str, Any], context: AgendaContext) -> str:
         raw = _json_object(
             await self.complete(

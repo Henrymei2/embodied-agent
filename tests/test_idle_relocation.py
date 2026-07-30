@@ -262,6 +262,9 @@ class _LifecyclePlanner:
     async def evaluate_completion(self, _entry, _evidence):
         return True, "Completed the queued work."
 
+    async def is_noteworthy(self, _entry, _summary, _context):
+        return True
+
 
 def _executive(
     tmp_path,
@@ -269,10 +272,14 @@ def _executive(
     relocate,
     *,
     scene: IdleScene | None = None,
+    emitted: list[dict] | None = None,
+    report_completion=None,
 ):
     store = AgendaStore(tmp_path)
 
     async def emit(_payload):
+        if emitted is not None:
+            emitted.append(_payload)
         return None
 
     async def run_step(_entry, _checkpoint):
@@ -287,6 +294,7 @@ def _executive(
         emit=emit,
         room_snapshot=lambda: scene or _scene("sofa", "bed"),
         relocate_idle=relocate,
+        report_completion=report_completion,
     )
 
 
@@ -307,7 +315,8 @@ async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_pa
         await relocation_gate.wait()
         return True
 
-    store, executive = _executive(tmp_path, planner, relocate)
+    emitted: list[dict] = []
+    store, executive = _executive(tmp_path, planner, relocate, emitted=emitted)
     store.add(completed)
 
     advance = asyncio.create_task(executive._advance())
@@ -320,6 +329,10 @@ async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_pa
     relocation_gate.set()
     assert await asyncio.wait_for(advance, timeout=1) is True
     assert [entry.kind for entry in store.load().entries] == ["pursuit", "pursuit"]
+    phases = [
+        event["phase"] for event in emitted if event.get("type") == "agent_activity"
+    ]
+    assert phases == ["planning", "idle"]
 
 
 async def test_runnable_queued_work_does_not_trigger_idle_relocation(tmp_path):
@@ -414,7 +427,8 @@ async def test_user_preempts_settling_without_creating_an_idle_entry(tmp_path):
         finally:
             relocation_cancelled.set()
 
-    store, executive = _executive(tmp_path, planner, relocate)
+    emitted: list[dict] = []
+    store, executive = _executive(tmp_path, planner, relocate, emitted=emitted)
     store.add(completed)
 
     advance = asyncio.create_task(executive._advance())
@@ -428,6 +442,10 @@ async def test_user_preempts_settling_without_creating_an_idle_entry(tmp_path):
         next(entry for entry in state.entries if entry.id == user.id).status == "active"
     )
     assert all(entry.kind != "idle" for entry in state.entries)
+    phases = [
+        event["phase"] for event in emitted if event.get("type") == "agent_activity"
+    ]
+    assert phases == ["planning"]
 
 
 async def test_user_preempts_active_agenda_work_without_stopping_executive(tmp_path):
@@ -471,3 +489,56 @@ async def test_user_preempts_active_agenda_work_without_stopping_executive(tmp_p
     assert (
         next(entry for entry in state.entries if entry.id == user.id).status == "active"
     )
+
+
+@pytest.mark.parametrize(
+    ("report_policy", "noteworthy", "expected_reports"),
+    [
+        ("silent", True, 0),
+        ("if_noteworthy", False, 0),
+        ("if_noteworthy", True, 1),
+        ("on_completion", False, 1),
+        ("ask_first", False, 1),
+    ],
+)
+async def test_completion_reporting_honors_entry_policy(
+    tmp_path,
+    report_policy,
+    noteworthy,
+    expected_reports,
+):
+    proposal = _pursuit(title="Unused successor", status="proposed")
+    planner = _LifecyclePlanner(proposal)
+
+    async def is_noteworthy(_entry, _summary, _context):
+        return noteworthy
+
+    planner.is_noteworthy = is_noteworthy
+    reports: list[tuple[str, str, str]] = []
+
+    async def relocate(_placement):
+        return True
+
+    async def report(entry, summary):
+        reports.append((entry.title, entry.status, summary))
+
+    store, executive = _executive(
+        tmp_path,
+        planner,
+        relocate,
+        report_completion=report,
+    )
+    queued = _pursuit(
+        title="Reportable autonomous work",
+        report_policy=report_policy,
+    )
+    store.add(queued)
+
+    assert await executive._advance() is True
+    assert len(reports) == expected_reports
+    if reports:
+        assert reports[0] == (
+            "Reportable autonomous work",
+            "completed",
+            "Completed the queued work.",
+        )

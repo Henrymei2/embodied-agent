@@ -433,6 +433,21 @@ whether the research is a worthwhile autonomous pursuit, and whether its result
 is worth spending the user's attention. The Presence Contract continues to
 govern the second decision.
 
+Agenda steps remain silent so intermediate tool chatter does not enter the
+conversation. When an entry completes, the executive applies its reporting
+policy once: `on_completion` and approved `ask_first` work append a text-only
+result to the live and persisted current conversation, while `if_noteworthy`
+first receives a conservative relevance check. `silent` entries remain absent
+from the transcript. Live delivery uses a dedicated `autonomous-message` event
+so microphone and audio playback state cannot discard a non-spoken result.
+
+While no work is runnable and the successor planner is choosing the next
+intention, the frontend receives a transient `agent_activity` phase of
+`planning`. The avatar status bubble renders this as “Planning what to do
+next…” and returns to idle when planning finishes. User preemption transfers
+ownership of the status display to the user turn instead of clearing it from
+the canceled background planner.
+
 ## Relationship to existing systems
 
 ### Scheduling

@@ -37,6 +37,10 @@ class AgentActivityTracker:
         return {"type": "agent_activity", "phase": "thinking", "tools": []}
 
     @staticmethod
+    def planning() -> dict[str, Any]:
+        return {"type": "agent_activity", "phase": "planning", "tools": []}
+
+    @staticmethod
     def idle() -> dict[str, Any]:
         return {"type": "agent_activity", "phase": "idle", "tools": []}
 

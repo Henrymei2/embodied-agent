@@ -2,7 +2,7 @@ import {
   createContext, useCallback, useContext, useMemo, useState,
 } from "react";
 
-export type AgentActivityPhase = "thinking" | "tools" | "idle";
+export type AgentActivityPhase = "thinking" | "planning" | "tools" | "idle";
 export type AgentToolStatus = "pending" | "running" | "completed" | "error";
 
 export interface AgentActivityTool {

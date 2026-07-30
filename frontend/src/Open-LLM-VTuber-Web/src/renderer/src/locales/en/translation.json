@@ -182,6 +182,7 @@
   },
   "agentActivity": {
     "thinking": "Thinking…",
+    "planningNext": "Planning what to do next…",
     "multipleTasks": "Doing multiple tasks…",
     "unknownTask": "Unknown task",
     "taskList": "Current tasks",
