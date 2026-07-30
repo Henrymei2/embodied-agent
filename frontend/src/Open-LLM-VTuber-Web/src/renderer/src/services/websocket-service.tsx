@@ -56,6 +56,7 @@ export interface Actions {
 
 export interface MessageEvent {
   request_id?: string;
+  message_id?: string;
   tool_id: any;
   tool_name: any;
   name: any;
