@@ -61,17 +61,28 @@ Add these fields under `system_config.autonomy_config` in `conf.yaml`:
 system_config:
   autonomy_config:
     enabled: true
-    tick_seconds: 900
-    interruption_frequency: medium
-    help_style: proactive
-    confidence_threshold: balanced
+    headless_enabled: true
+    default_pursuit_seconds: 900
+    maximum_pursuit_seconds: 1800
+    fallback_reconsideration_seconds: 300
+    store_poll_seconds: 1
+    planner_circuit_failure_threshold: 3
+    planner_circuit_max_seconds: 1800
 
     # Presence Contract
     attention_budget: 6.0
     attention_refill_per_hour: 1.0
     receipt_retention: 50
     default_snooze_minutes: 60
+    report_retry_seconds: 60
+    report_retry_limit: 5
+    report_backlog_limit: 20
 ```
+
+Completion delivery is backed by the agenda's persistent report outbox.
+Headless silent work can record its receipt immediately. User-facing reports
+remain pending until a live, fresh Presence Contract permits delivery; focus,
+snooze, stale presence, and exhausted budget never authorize speech.
 
 Limits enforced by configuration validation:
 
@@ -81,6 +92,9 @@ Limits enforced by configuration validation:
 | `attention_refill_per_hour` | 0-100 | Points restored per elapsed hour |
 | `receipt_retention` | 5-500 | Maximum locally stored receipts |
 | `default_snooze_minutes` | 5-1440 | Snooze duration when the client omits one |
+| `report_retry_seconds` | 5-86400 | Base delay for deferred delivery |
+| `report_retry_limit` | 1-20 | Maximum failed delivery attempts; policy deferrals do not consume it |
+| `report_backlog_limit` | 1-500 | Pending user-facing reports before planning yields to bounded idle |
 
 ## WebSocket protocol
 

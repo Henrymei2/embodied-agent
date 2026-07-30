@@ -169,7 +169,7 @@ class WebSocketHandler:
         register_client(client_uid, session_service_context, websocket.send_text)
         # The agenda owns both continuous behavior and reliable due-time claims.
         # There is deliberately no independent scheduler loop.
-        from .autonomy import AutonomySettings, autonomy_loop
+        from .autonomy import AutonomySettings, attach_autonomy_client
         from .autonomy.presence import get_or_create_presence_ledger
         from .workspace import ensure_workspace
 
@@ -180,8 +180,11 @@ class WebSocketHandler:
             presence = get_or_create_presence_ledger(
                 client_uid, ensure_workspace().root, autonomy_settings
             )
-            self.autonomy_tasks[client_uid] = asyncio.create_task(
-                autonomy_loop(client_uid, autonomy_settings, presence=presence)
+            await attach_autonomy_client(
+                client_uid,
+                ensure_workspace().root,
+                autonomy_settings,
+                presence,
             )
 
         self.chat_group_manager.client_group_map[client_uid] = ""
@@ -451,6 +454,12 @@ class WebSocketHandler:
         self.client_connections.pop(client_uid, None)
         context = self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
+        from .autonomy import detach_autonomy_client
+
+        try:
+            await detach_autonomy_client(client_uid)
+        except Exception as exc:  # noqa: BLE001 - cleanup must continue
+            logger.warning(f"Failed detaching autonomy runtime for {client_uid}: {exc}")
 
         # Every step below is independent, and the context close at the end is
         # the one that releases MCP subprocesses. Nothing here may raise past
@@ -459,6 +468,8 @@ class WebSocketHandler:
             await self._cancel_and_await_tasks(
                 client_uid,
                 [
+                    # Kept for compatibility with callers that attached a
+                    # connection-local task before the workspace runtime.
                     ("autonomy", self.autonomy_tasks.pop(client_uid, None)),
                     ("scheduler", self.scheduler_tasks.pop(client_uid, None)),
                     (

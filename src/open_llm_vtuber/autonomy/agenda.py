@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,8 @@ ENTRY_STATUSES = {
     *TERMINAL_STATUSES,
 }
 REPORT_POLICIES = {"silent", "if_noteworthy", "on_completion", "ask_first"}
+REPORT_STATUSES = {"pending", "delivering", "delivered", "failed"}
+EVENT_STATUSES = {"pending", "claimed", "acknowledged", "dead_letter"}
 STEP_KINDS = {
     "move_to_object",
     "invoke_tool",
@@ -97,6 +100,20 @@ class ExecutionCheckpoint:
             raise ValueError(f"unsupported agenda step kind: {self.kind}")
         if not self.step_id or self.timeout_seconds <= 0:
             raise ValueError("agenda steps require an id and positive timeout")
+        if not isinstance(self.arguments, dict):
+            raise ValueError("agenda step arguments must be an object")
+        if len(json.dumps(self.arguments, ensure_ascii=False)) > 10_000:
+            raise ValueError("agenda step arguments are too large")
+        if self.plausible_duration_seconds < 0:
+            raise ValueError("agenda step duration cannot be negative")
+        for value, field_name in (
+            (self.required_object, "required object"),
+            (self.required_capability, "required capability"),
+        ):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 160
+            ):
+                raise ValueError(f"agenda step {field_name} is invalid")
 
 
 @dataclass
@@ -155,6 +172,18 @@ class AgendaEntry:
                 raise ValueError("agenda entries require a completion condition")
         if self.report_policy not in REPORT_POLICIES:
             raise ValueError(f"invalid report policy: {self.report_policy}")
+        if self.schedule:
+            try:
+                datetime.fromisoformat(self.schedule.next_run)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("scheduled entries require a valid next run") from exc
+            if not 1 <= int(self.schedule.priority) <= 100:
+                raise ValueError("scheduled priority must be between 1 and 100")
+            if (
+                self.schedule.interval_seconds is not None
+                and self.schedule.interval_seconds <= 0
+            ):
+                raise ValueError("scheduled interval must be positive")
         if self.checkpoint:
             self.checkpoint.validate()
 
@@ -177,13 +206,146 @@ class ProposalRejection:
 
 
 @dataclass
+class ReportOutboxItem:
+    """One durable completion report awaiting Presence-gated delivery."""
+
+    id: str
+    entry_id: str
+    summary: str
+    status: str = "pending"
+    attempts: int = 0
+    failures: int = 0
+    next_attempt_at: str = field(default_factory=_iso)
+    created_at: str = field(default_factory=_iso)
+    updated_at: str = field(default_factory=_iso)
+    error: Optional[str] = None
+
+    def validate(self) -> None:
+        if not self.id or not self.entry_id:
+            raise ValueError("report outbox items require ids")
+        if self.status not in REPORT_STATUSES:
+            raise ValueError(f"invalid report outbox status: {self.status}")
+        if not self.summary.strip() or len(self.summary) > 2000:
+            raise ValueError("report summaries must contain at most 2000 characters")
+        if self.attempts < 0 or self.failures < 0:
+            raise ValueError("report attempt counts cannot be negative")
+        try:
+            datetime.fromisoformat(self.next_attempt_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("report next-attempt time is invalid") from exc
+
+
+@dataclass
+class PlannerHealth:
+    """Persistent circuit-breaker state across executive restarts."""
+
+    consecutive_failures: int = 0
+    circuit_open_until: Optional[str] = None
+    last_error: Optional[str] = None
+    last_failure_at: Optional[str] = None
+    last_success_at: Optional[str] = None
+
+
+@dataclass
+class ExternalEvent:
+    """Durable, idempotent signal that may ground the next intention."""
+
+    id: str
+    idempotency_key: str
+    source: str
+    kind: str
+    summary: str
+    evidence_ref: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    status: str = "pending"
+    attempts: int = 0
+    available_at: str = field(default_factory=_iso)
+    created_at: str = field(default_factory=_iso)
+    updated_at: str = field(default_factory=_iso)
+    claimed_at: Optional[str] = None
+    claimed_by: Optional[str] = None
+    claimed_fencing_token: Optional[int] = None
+    linked_entry_id: Optional[str] = None
+    error: Optional[str] = None
+
+    def validate(self) -> None:
+        if not self.id or not self.idempotency_key:
+            raise ValueError("external events require ids and idempotency keys")
+        if len(self.idempotency_key) > 200:
+            raise ValueError("event idempotency key is too long")
+        if not self.source.strip() or not self.kind.strip():
+            raise ValueError("external events require source and kind")
+        if len(self.source) > 100 or len(self.kind) > 100:
+            raise ValueError("event source or kind is too long")
+        if not self.summary.strip() or len(self.summary) > 500:
+            raise ValueError("event summary must contain at most 500 characters")
+        if not self.evidence_ref.strip() or len(self.evidence_ref) > 300:
+            raise ValueError("event evidence reference is invalid")
+        if self.status not in EVENT_STATUSES:
+            raise ValueError(f"invalid external event status: {self.status}")
+        if not isinstance(self.payload, dict):
+            raise ValueError("event payload must be an object")
+        if len(json.dumps(self.payload, ensure_ascii=False)) > 10_000:
+            raise ValueError("event payload is too large")
+        if self.attempts < 0:
+            raise ValueError("event attempts cannot be negative")
+        try:
+            datetime.fromisoformat(self.available_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("event availability timestamp is invalid") from exc
+
+
+@dataclass
+class DeadLetter:
+    id: str
+    category: str
+    reference_id: str
+    reason: str
+    attempts: int
+    created_at: str = field(default_factory=_iso)
+    last_failed_at: str = field(default_factory=_iso)
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        if not self.id or not self.category or not self.reference_id:
+            raise ValueError("dead letters require identity fields")
+        if not self.reason.strip() or len(self.reason) > 500:
+            raise ValueError("dead-letter reason is invalid")
+        if self.attempts < 1:
+            raise ValueError("dead-letter attempts must be positive")
+        if len(json.dumps(self.data, ensure_ascii=False)) > 10_000:
+            raise ValueError("dead-letter data is too large")
+
+
+@dataclass
+class QuotaWindow:
+    window_started_at: str = field(default_factory=_iso)
+    planner_calls: int = 0
+    capability_calls: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class QuotaDecision:
+    allowed: bool
+    remaining: int
+    reset_at: str
+
+
+@dataclass
 class AgendaState:
     version: int = SCHEMA_VERSION
+    revision: int = 0
+    fencing_token: int = 0
     paused: bool = False
     next_reconsideration_at: Optional[str] = None
     entries: list[AgendaEntry] = field(default_factory=list)
     events: list[AgendaEvent] = field(default_factory=list)
     rejections: list[ProposalRejection] = field(default_factory=list)
+    reports: list[ReportOutboxItem] = field(default_factory=list)
+    planner_health: PlannerHealth = field(default_factory=PlannerHealth)
+    inbox: list[ExternalEvent] = field(default_factory=list)
+    dead_letters: list[DeadLetter] = field(default_factory=list)
+    quota: QuotaWindow = field(default_factory=QuotaWindow)
     updated_at: str = field(default_factory=_iso)
 
 
@@ -208,11 +370,18 @@ def _state_from_dict(raw: dict[str, Any]) -> AgendaState:
         raise ValueError("unsupported agenda schema version")
     return AgendaState(
         version=SCHEMA_VERSION,
+        revision=max(0, int(raw.get("revision", 0))),
+        fencing_token=max(0, int(raw.get("fencing_token", 0))),
         paused=bool(raw.get("paused", False)),
         next_reconsideration_at=raw.get("next_reconsideration_at"),
         entries=[_entry_from_dict(item) for item in raw.get("entries", [])],
         events=[AgendaEvent(**item) for item in raw.get("events", [])],
         rejections=[ProposalRejection(**item) for item in raw.get("rejections", [])],
+        reports=[ReportOutboxItem(**item) for item in raw.get("reports", [])],
+        planner_health=PlannerHealth(**raw.get("planner_health", {})),
+        inbox=[ExternalEvent(**item) for item in raw.get("inbox", [])],
+        dead_letters=[DeadLetter(**item) for item in raw.get("dead_letters", [])],
+        quota=QuotaWindow(**raw.get("quota", {})),
         updated_at=str(raw.get("updated_at") or _iso()),
     )
 
@@ -254,14 +423,43 @@ class AgendaStore:
 
     def mutate(self, operation: Callable[[AgendaState], _T]) -> _T:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        from .lease import WorkspaceLease, current_lease
+
+        lease_handle = current_lease()
+        fenced = (
+            lease_handle is not None
+            and lease_handle.workspace_root.resolve() == self.root.resolve()
+        )
+        fence_guard = (
+            WorkspaceLease(self.root).guard_current(lease_handle)
+            if fenced
+            else nullcontext()
+        )
         try:
-            with self.lock:
-                state = self.load()
-                result = operation(state)
-                self.save(state)
-                return result
+            with fence_guard:
+                with self.lock:
+                    state = self.load()
+                    before = asdict(state)
+                    if fenced:
+                        if state.fencing_token > lease_handle.fencing_token:
+                            from .lease import LeaseLostError
+
+                            raise LeaseLostError(
+                                "agenda state has a newer fencing token"
+                            )
+                        state.fencing_token = lease_handle.fencing_token
+                    result = operation(state)
+                    changed = asdict(state) != before
+                    if changed:
+                        state.revision += 1
+                        self.save(state)
         except Timeout as exc:
             raise OSError("agenda store is busy") from exc
+        if changed:
+            from .change_bus import notify_agenda_changed
+
+            notify_agenda_changed(self.root)
+        return result
 
     @staticmethod
     def _validate_state(state: AgendaState) -> None:
@@ -275,18 +473,84 @@ class AgendaStore:
             active += int(entry.status == "active")
         if active > 1:
             raise ValueError("agenda may have at most one active foreground entry")
+        if state.fencing_token < 0:
+            raise ValueError("agenda fencing token cannot be negative")
+        report_ids: set[str] = set()
+        for report in state.reports:
+            report.validate()
+            if report.id in report_ids:
+                raise ValueError(f"duplicate report outbox id: {report.id}")
+            report_ids.add(report.id)
+        if state.planner_health.consecutive_failures < 0:
+            raise ValueError("planner failure count cannot be negative")
+        event_ids: set[str] = set()
+        idempotency_keys: set[tuple[str, str]] = set()
+        for event in state.inbox:
+            event.validate()
+            if event.id in event_ids:
+                raise ValueError(f"duplicate external event id: {event.id}")
+            idempotency_identity = (event.source, event.idempotency_key)
+            if idempotency_identity in idempotency_keys:
+                raise ValueError(
+                    "duplicate event idempotency key for source: "
+                    f"{event.source}:{event.idempotency_key}"
+                )
+            event_ids.add(event.id)
+            idempotency_keys.add(idempotency_identity)
+        dead_letter_ids: set[str] = set()
+        for item in state.dead_letters:
+            item.validate()
+            if item.id in dead_letter_ids:
+                raise ValueError(f"duplicate dead-letter id: {item.id}")
+            dead_letter_ids.add(item.id)
+        if state.quota.planner_calls < 0 or any(
+            value < 0 for value in state.quota.capability_calls.values()
+        ):
+            raise ValueError("quota usage cannot be negative")
+        try:
+            datetime.fromisoformat(state.quota.window_started_at)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("quota window timestamp is invalid") from exc
 
     def snapshot(self, *, offset: int = 0, limit: int = 100) -> dict[str, Any]:
         state = self.load()
         active = next((e for e in state.entries if e.status == "active"), None)
         ordered = sorted(state.entries, key=lambda e: e.created_at, reverse=True)
+        terminal = [
+            entry for entry in state.entries if entry.status in TERMINAL_STATUSES
+        ]
+        terminal_counts = {
+            status: sum(1 for entry in terminal if entry.status == status)
+            for status in sorted(TERMINAL_STATUSES)
+        }
+        finished = sum(terminal_counts.values())
+        completion_rate = terminal_counts["completed"] / finished if finished else None
+        report_counts = {
+            status: sum(1 for report in state.reports if report.status == status)
+            for status in sorted(REPORT_STATUSES)
+        }
+        event_counts = {
+            status: sum(1 for event in state.inbox if event.status == status)
+            for status in sorted(EVENT_STATUSES)
+        }
         return {
             "version": state.version,
+            "revision": state.revision,
+            "fencing_token": state.fencing_token,
             "paused": state.paused,
             "next_reconsideration_at": state.next_reconsideration_at,
             "active": asdict(active) if active else None,
             "entries": [asdict(e) for e in ordered[offset : offset + limit]],
             "total": len(ordered),
+            "health": {
+                "terminal": terminal_counts,
+                "completion_rate": completion_rate,
+                "reports": report_counts,
+                "events": event_counts,
+                "dead_letters": len(state.dead_letters),
+                "quota": asdict(state.quota),
+                "planner": asdict(state.planner_health),
+            },
             "updated_at": state.updated_at,
         }
 
@@ -374,6 +638,606 @@ class AgendaStore:
 
         return self.mutate(operation)
 
+    def add_from_event(
+        self,
+        entry: AgendaEntry,
+        *,
+        event_id: str,
+        fencing_token: int,
+    ) -> AgendaEntry:
+        """Atomically accept an intention and acknowledge its grounding event."""
+        entry.validate()
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            event = self._find_event(state, event_id)
+            self._assert_event_claim(event, fencing_token)
+            if any(existing.id == entry.id for existing in state.entries):
+                raise ValueError(f"agenda entry already exists: {entry.id}")
+            if entry.status == "active":
+                self._suspend_active(state, except_id=entry.id)
+                entry.started_at = entry.started_at or _iso()
+            state.entries.append(entry)
+            event.status = "acknowledged"
+            event.linked_entry_id = entry.id
+            event.updated_at = _iso()
+            event.error = None
+            self._event(state, entry.id, "created")
+            self._event(
+                state,
+                entry.id,
+                "external_event_acknowledged",
+                {"event_id": event.id},
+            )
+            self._trim_inbox(state)
+            return entry
+
+        return self.mutate(operation)
+
+    def update_metadata(self, entry_id: str, **values: Any) -> AgendaEntry:
+        """Merge bounded runtime metadata into an existing agenda entry."""
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            entry.metadata.update(values)
+            return entry
+
+        return self.mutate(operation)
+
+    def enqueue_report(self, entry_id: str, summary: str) -> ReportOutboxItem:
+        """Persist one idempotent completion report for an agenda entry."""
+        cleaned = " ".join(str(summary).split())[:2000]
+        if not cleaned:
+            cleaned = "Agenda intention completed."
+
+        def operation(state: AgendaState) -> ReportOutboxItem:
+            self._find(state, entry_id)
+            existing = next(
+                (report for report in state.reports if report.entry_id == entry_id),
+                None,
+            )
+            if existing is not None:
+                return existing
+            report = ReportOutboxItem(
+                id=f"report_{uuid.uuid4().hex}",
+                entry_id=entry_id,
+                summary=cleaned,
+            )
+            state.reports.append(report)
+            entry = self._find(state, entry_id)
+            entry.metadata["report_status"] = "pending"
+            self._event(state, entry_id, "report_queued", {"report_id": report.id})
+            return report
+
+        return self.mutate(operation)
+
+    def claim_due_report(
+        self,
+        now: Optional[datetime] = None,
+        *,
+        silent_only: bool = False,
+    ) -> Optional[ReportOutboxItem]:
+        """Atomically claim the oldest due report for one delivery attempt."""
+        now = (now or utc_now()).astimezone(timezone.utc)
+
+        def operation(state: AgendaState) -> Optional[ReportOutboxItem]:
+            due = []
+            for report in state.reports:
+                if report.status != "pending":
+                    continue
+                if silent_only:
+                    entry = self._find(state, report.entry_id)
+                    if entry.report_policy != "silent":
+                        continue
+                candidate = datetime.fromisoformat(report.next_attempt_at)
+                if candidate.tzinfo is None:
+                    candidate = candidate.replace(tzinfo=timezone.utc)
+                if candidate <= now:
+                    due.append(report)
+            if not due:
+                return None
+            report = min(due, key=lambda item: (item.next_attempt_at, item.created_at))
+            report.status = "delivering"
+            report.attempts += 1
+            report.updated_at = _iso(now)
+            report.error = None
+            self._event(
+                state,
+                report.entry_id,
+                "report_delivery_started",
+                {"report_id": report.id, "attempt": report.attempts},
+            )
+            return ReportOutboxItem(**asdict(report))
+
+        return self.mutate(operation)
+
+    def expedite_pending_reports(self) -> int:
+        """Make deferred reports eligible after a meaningful presence change."""
+        now_value = utc_now()
+        now = _iso(now_value)
+
+        def operation(state: AgendaState) -> int:
+            changed = 0
+            for report in state.reports:
+                if report.status != "pending":
+                    continue
+                due = datetime.fromisoformat(report.next_attempt_at)
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=timezone.utc)
+                if due <= now_value:
+                    continue
+                report.next_attempt_at = now
+                report.updated_at = now
+                changed += 1
+            return changed
+
+        return self.mutate(operation)
+
+    def finish_report(
+        self,
+        report_id: str,
+        *,
+        delivered: bool,
+        error: Optional[str] = None,
+        retry_seconds: float = 60,
+        max_attempts: int = 5,
+        counts_as_failure: bool = True,
+        now: Optional[datetime] = None,
+    ) -> ReportOutboxItem:
+        """Complete or reschedule a claimed report without duplicating it."""
+        now = (now or utc_now()).astimezone(timezone.utc)
+
+        def operation(state: AgendaState) -> ReportOutboxItem:
+            report = next(
+                (item for item in state.reports if item.id == report_id),
+                None,
+            )
+            if report is None:
+                raise KeyError(report_id)
+            if report.status != "delivering":
+                raise ValueError("only a delivering report may be finished")
+            report.updated_at = _iso(now)
+            report.error = str(error)[:500] if error else None
+            entry = self._find(state, report.entry_id)
+            if delivered:
+                report.status = "delivered"
+                entry.metadata["report_status"] = "reported"
+                event = "report_delivered"
+            else:
+                if counts_as_failure:
+                    report.failures += 1
+            if not delivered and report.failures >= max(1, int(max_attempts)):
+                report.status = "failed"
+                entry.metadata["report_status"] = "failed"
+                self._append_dead_letter(
+                    state,
+                    category="completion_report",
+                    reference_id=report.id,
+                    reason=report.error or "completion report delivery failed",
+                    attempts=max(1, report.failures),
+                    data={"entry_id": report.entry_id},
+                )
+                event = "report_failed"
+            elif not delivered:
+                report.status = "pending"
+                report.next_attempt_at = _iso(
+                    now + timedelta(seconds=max(1.0, float(retry_seconds)))
+                )
+                entry.metadata["report_status"] = "deferred"
+                event = "report_deferred"
+            self._event(
+                state,
+                report.entry_id,
+                event,
+                {"report_id": report.id, "attempt": report.attempts},
+            )
+            return report
+
+        return self.mutate(operation)
+
+    def record_execution_failure(
+        self,
+        entry_id: str,
+        *,
+        error: str,
+        max_attempts: int,
+    ) -> AgendaEntry:
+        """Bound repeated activity failures and dead-letter the terminal entry."""
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            failures = int(entry.metadata.get("execution_failures", 0)) + 1
+            entry.metadata["execution_failures"] = failures
+            entry.metadata["last_execution_error"] = str(error)[:500]
+            if failures >= max(1, int(max_attempts)):
+                entry.status = "failed"
+                entry.ended_at = _iso()
+                entry.checkpoint = None
+                entry.progress_summary = (
+                    f"Execution failed repeatedly: {str(error)[:450]}"
+                )
+                self._append_dead_letter(
+                    state,
+                    category="activity_step",
+                    reference_id=entry.id,
+                    reason=str(error)[:500] or "activity execution failed",
+                    attempts=failures,
+                    data={"kind": entry.kind},
+                )
+                self._event(
+                    state,
+                    entry.id,
+                    "execution_dead_lettered",
+                    {"attempts": failures},
+                )
+            else:
+                if entry.status == "active":
+                    entry.status = "suspended"
+                self._event(
+                    state,
+                    entry.id,
+                    "execution_failed",
+                    {"attempts": failures},
+                )
+            return entry
+
+        return self.mutate(operation)
+
+    def record_planner_failure(
+        self,
+        error: str,
+        *,
+        circuit_open_until: Optional[str],
+    ) -> PlannerHealth:
+        def operation(state: AgendaState) -> PlannerHealth:
+            health = state.planner_health
+            health.consecutive_failures += 1
+            health.last_error = str(error)[:500]
+            health.last_failure_at = _iso()
+            health.circuit_open_until = circuit_open_until
+            return health
+
+        return self.mutate(operation)
+
+    def record_planner_success(self) -> PlannerHealth:
+        def operation(state: AgendaState) -> PlannerHealth:
+            health = state.planner_health
+            health.consecutive_failures = 0
+            health.circuit_open_until = None
+            health.last_error = None
+            health.last_success_at = _iso()
+            state.next_reconsideration_at = None
+            return health
+
+        return self.mutate(operation)
+
+    def set_reconsideration(self, next_at: Optional[str]) -> None:
+        def operation(state: AgendaState) -> None:
+            state.next_reconsideration_at = next_at
+
+        self.mutate(operation)
+
+    def publish_event(
+        self,
+        *,
+        idempotency_key: str,
+        source: str,
+        kind: str,
+        summary: str,
+        evidence_ref: str,
+        payload: Optional[dict[str, Any]] = None,
+        backlog_limit: int = 500,
+    ) -> ExternalEvent:
+        """Publish one external event, returning the prior copy on replay."""
+        candidate = ExternalEvent(
+            id=f"event_{uuid.uuid4().hex}",
+            idempotency_key=str(idempotency_key).strip(),
+            source=str(source).strip(),
+            kind=str(kind).strip(),
+            summary=" ".join(str(summary).split())[:500],
+            evidence_ref=str(evidence_ref).strip(),
+            payload=dict(payload or {}),
+        )
+        candidate.validate()
+
+        def operation(state: AgendaState) -> ExternalEvent:
+            existing = next(
+                (
+                    event
+                    for event in state.inbox
+                    if event.source == candidate.source
+                    and event.idempotency_key == candidate.idempotency_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            backlog = sum(
+                event.status in {"pending", "claimed"} for event in state.inbox
+            )
+            if backlog >= max(1, int(backlog_limit)):
+                raise ValueError("external event inbox backlog is full")
+            state.inbox.append(candidate)
+            self._event(
+                state,
+                None,
+                "external_event_published",
+                {
+                    "event_id": candidate.id,
+                    "source": candidate.source,
+                    "kind": candidate.kind,
+                },
+            )
+            self._trim_inbox(state)
+            return candidate
+
+        return self.mutate(operation)
+
+    def claim_next_event(
+        self,
+        *,
+        owner_id: str,
+        fencing_token: int,
+        now: Optional[datetime] = None,
+        claim_timeout_seconds: float = 300,
+    ) -> Optional[ExternalEvent]:
+        """Claim one due event under the active fenced workspace lease."""
+        from .lease import LeaseLostError, current_lease
+
+        handle = current_lease()
+        if (
+            handle is None
+            or handle.owner_id != owner_id
+            or handle.fencing_token != fencing_token
+            or handle.workspace_root.resolve() != self.root.resolve()
+        ):
+            raise LeaseLostError("event claims require the current workspace lease")
+        now = (now or utc_now()).astimezone(timezone.utc)
+        claim_cutoff = now - timedelta(seconds=max(1.0, claim_timeout_seconds))
+
+        def operation(state: AgendaState) -> Optional[ExternalEvent]:
+            for event in state.inbox:
+                if event.status != "claimed":
+                    continue
+                claimed_at = (
+                    datetime.fromisoformat(event.claimed_at)
+                    if event.claimed_at
+                    else claim_cutoff
+                )
+                if claimed_at.tzinfo is None:
+                    claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+                if (
+                    event.claimed_fencing_token is not None
+                    and event.claimed_fencing_token < fencing_token
+                ) or claimed_at <= claim_cutoff:
+                    event.status = "pending"
+                    event.claimed_at = None
+                    event.claimed_by = None
+                    event.claimed_fencing_token = None
+                    event.updated_at = _iso(now)
+
+            due = []
+            for event in state.inbox:
+                if event.status != "pending":
+                    continue
+                available = datetime.fromisoformat(event.available_at)
+                if available.tzinfo is None:
+                    available = available.replace(tzinfo=timezone.utc)
+                if available <= now:
+                    due.append(event)
+            if not due:
+                return None
+            event = min(due, key=lambda item: (item.available_at, item.created_at))
+            event.status = "claimed"
+            event.attempts += 1
+            event.claimed_at = _iso(now)
+            event.claimed_by = owner_id
+            event.claimed_fencing_token = fencing_token
+            event.updated_at = _iso(now)
+            event.error = None
+            self._event(
+                state,
+                None,
+                "external_event_claimed",
+                {
+                    "event_id": event.id,
+                    "attempt": event.attempts,
+                    "fencing_token": fencing_token,
+                },
+            )
+            return ExternalEvent(**asdict(event))
+
+        return self.mutate(operation)
+
+    def acknowledge_event(
+        self,
+        event_id: str,
+        *,
+        fencing_token: int,
+        linked_entry_id: Optional[str] = None,
+    ) -> ExternalEvent:
+        def operation(state: AgendaState) -> ExternalEvent:
+            event = self._find_event(state, event_id)
+            self._assert_event_claim(event, fencing_token)
+            event.status = "acknowledged"
+            event.linked_entry_id = linked_entry_id
+            event.updated_at = _iso()
+            event.error = None
+            self._event(
+                state,
+                linked_entry_id,
+                "external_event_acknowledged",
+                {"event_id": event.id},
+            )
+            self._trim_inbox(state)
+            return event
+
+        return self.mutate(operation)
+
+    def fail_event(
+        self,
+        event_id: str,
+        *,
+        fencing_token: int,
+        error: str,
+        retry_seconds: float,
+        max_attempts: int,
+    ) -> ExternalEvent:
+        def operation(state: AgendaState) -> ExternalEvent:
+            event = self._find_event(state, event_id)
+            self._assert_event_claim(event, fencing_token)
+            event.error = str(error)[:500]
+            event.updated_at = _iso()
+            event.claimed_at = None
+            event.claimed_by = None
+            event.claimed_fencing_token = None
+            if event.attempts >= max(1, int(max_attempts)):
+                event.status = "dead_letter"
+                self._append_dead_letter(
+                    state,
+                    category="external_event",
+                    reference_id=event.id,
+                    reason=event.error or "external event failed",
+                    attempts=event.attempts,
+                    data={"source": event.source, "kind": event.kind},
+                )
+                event_type = "external_event_dead_lettered"
+            else:
+                event.status = "pending"
+                event.available_at = _iso(
+                    utc_now() + timedelta(seconds=max(1.0, retry_seconds))
+                )
+                event_type = "external_event_deferred"
+            self._event(
+                state,
+                None,
+                event_type,
+                {"event_id": event.id, "attempt": event.attempts},
+            )
+            self._trim_inbox(state)
+            return event
+
+        return self.mutate(operation)
+
+    def defer_event(
+        self,
+        event_id: str,
+        *,
+        fencing_token: int,
+        available_at: str,
+        reason: str,
+    ) -> ExternalEvent:
+        """Release a claim for operational backpressure without dead-lettering."""
+
+        def operation(state: AgendaState) -> ExternalEvent:
+            event = self._find_event(state, event_id)
+            self._assert_event_claim(event, fencing_token)
+            datetime.fromisoformat(available_at)
+            event.status = "pending"
+            event.available_at = available_at
+            event.updated_at = _iso()
+            event.error = str(reason)[:500]
+            event.claimed_at = None
+            event.claimed_by = None
+            event.claimed_fencing_token = None
+            self._event(
+                state,
+                None,
+                "external_event_deferred",
+                {"event_id": event.id, "reason": "operational_backpressure"},
+            )
+            return event
+
+        return self.mutate(operation)
+
+    def retry_dead_event(self, event_id: str) -> ExternalEvent:
+        """Explicitly requeue a dead-lettered external event."""
+
+        def operation(state: AgendaState) -> ExternalEvent:
+            event = self._find_event(state, event_id)
+            if event.status != "dead_letter":
+                raise ValueError("only dead-lettered events may be retried")
+            event.status = "pending"
+            event.attempts = 0
+            event.available_at = _iso()
+            event.updated_at = _iso()
+            event.error = None
+            event.claimed_at = None
+            event.claimed_by = None
+            event.claimed_fencing_token = None
+            self._event(
+                state,
+                None,
+                "external_event_requeued",
+                {"event_id": event.id},
+            )
+            return event
+
+        return self.mutate(operation)
+
+    def add_dead_letter(
+        self,
+        *,
+        category: str,
+        reference_id: str,
+        reason: str,
+        attempts: int,
+        data: Optional[dict[str, Any]] = None,
+    ) -> DeadLetter:
+        def operation(state: AgendaState) -> DeadLetter:
+            return self._append_dead_letter(
+                state,
+                category=category,
+                reference_id=reference_id,
+                reason=reason,
+                attempts=attempts,
+                data=data or {},
+            )
+
+        return self.mutate(operation)
+
+    def consume_quota(
+        self,
+        *,
+        category: str,
+        key: str = "",
+        limit: int,
+        window_seconds: int = 3600,
+        now: Optional[datetime] = None,
+    ) -> QuotaDecision:
+        """Atomically consume one planner or per-capability quota unit."""
+        if category not in {"planner", "capability"}:
+            raise ValueError("quota category must be planner or capability")
+        if category == "capability" and not key:
+            raise ValueError("capability quota requires a key")
+        now = (now or utc_now()).astimezone(timezone.utc)
+        limit = max(1, int(limit))
+        window_seconds = max(1, int(window_seconds))
+
+        def operation(state: AgendaState) -> QuotaDecision:
+            started = datetime.fromisoformat(state.quota.window_started_at)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            reset = started + timedelta(seconds=window_seconds)
+            if now >= reset:
+                state.quota = QuotaWindow(window_started_at=_iso(now))
+                started = now
+                reset = now + timedelta(seconds=window_seconds)
+            if category == "planner":
+                current = state.quota.planner_calls
+                if current >= limit:
+                    return QuotaDecision(False, 0, _iso(reset))
+                state.quota.planner_calls += 1
+                remaining = limit - state.quota.planner_calls
+            else:
+                current = int(state.quota.capability_calls.get(key, 0))
+                if current >= limit:
+                    return QuotaDecision(False, 0, _iso(reset))
+                state.quota.capability_calls[key] = current + 1
+                remaining = limit - current - 1
+            return QuotaDecision(True, remaining, _iso(reset))
+
+        return self.mutate(operation)
+
     def claim_due(self, now: Optional[datetime] = None) -> list[AgendaEntry]:
         now = (now or utc_now()).astimezone(timezone.utc)
 
@@ -397,6 +1261,7 @@ class AgendaStore:
                 occurrence.created_at = _iso(now)
                 occurrence.schedule = None
                 occurrence.metadata["schedule_occurrence"] = True
+                occurrence.metadata["queue_priority"] = template.schedule.priority
                 claimed.append(occurrence)
                 state.entries.append(occurrence)
                 template.schedule.run_count += 1
@@ -421,9 +1286,24 @@ class AgendaStore:
                 if entry.checkpoint and entry.checkpoint.side_effecting:
                     entry.checkpoint.state = "uncertain"
                 entry.status = "suspended"
-                entry.progress_summary = "Interrupted by restart; requires reconsideration."
+                entry.progress_summary = (
+                    "Interrupted by restart; requires reconsideration."
+                )
                 recovered.append(entry.id)
                 self._event(state, entry.id, "restart_recovery")
+            for report in state.reports:
+                if report.status != "delivering":
+                    continue
+                report.status = "pending"
+                report.next_attempt_at = _iso()
+                report.updated_at = _iso()
+                report.error = "delivery interrupted by server restart"
+                self._event(
+                    state,
+                    report.entry_id,
+                    "report_recovered",
+                    {"report_id": report.id},
+                )
             return recovered
 
         return self.mutate(operation)
@@ -438,7 +1318,16 @@ class AgendaStore:
         """Write semantic digests to memory before pruning terminal entries."""
         state = self.load()
         terminal = sorted(
-            (entry for entry in state.entries if entry.status in TERMINAL_STATUSES),
+            (
+                entry
+                for entry in state.entries
+                if entry.status in TERMINAL_STATUSES
+                and not any(
+                    report.entry_id == entry.id
+                    and report.status in {"pending", "delivering"}
+                    for report in state.reports
+                )
+            ),
             key=lambda entry: entry.ended_at or entry.created_at,
             reverse=True,
         )
@@ -454,7 +1343,9 @@ class AgendaStore:
         lines = ["Agenda history digest:"]
         for entry in reversed(expired):
             relationship = f"; parent={entry.parent_id}" if entry.parent_id else ""
-            progress = f"; outcome={entry.progress_summary}" if entry.progress_summary else ""
+            progress = (
+                f"; outcome={entry.progress_summary}" if entry.progress_summary else ""
+            )
             lines.append(
                 f"- [{entry.status}] {entry.title}: {entry.description}"
                 f"{progress}{relationship}; evidence={','.join(entry.motivation.evidence_refs)}"
@@ -470,6 +1361,11 @@ class AgendaStore:
             current.events = [
                 event for event in current.events if event.entry_id not in expired_ids
             ]
+            current.reports = [
+                report
+                for report in current.reports
+                if report.entry_id not in expired_ids
+            ]
             return len(expired_ids)
 
         return self.mutate(operation)
@@ -482,11 +1378,82 @@ class AgendaStore:
         raise KeyError(entry_id)
 
     @staticmethod
+    def _find_event(state: AgendaState, event_id: str) -> ExternalEvent:
+        for event in state.inbox:
+            if event.id == event_id:
+                return event
+        raise KeyError(event_id)
+
+    @staticmethod
+    def _assert_event_claim(event: ExternalEvent, fencing_token: int) -> None:
+        if event.status != "claimed" or event.claimed_fencing_token != int(
+            fencing_token
+        ):
+            raise ValueError("external event is not claimed by this fence")
+
+    @staticmethod
+    def _append_dead_letter(
+        state: AgendaState,
+        *,
+        category: str,
+        reference_id: str,
+        reason: str,
+        attempts: int,
+        data: dict[str, Any],
+    ) -> DeadLetter:
+        existing = next(
+            (
+                item
+                for item in state.dead_letters
+                if item.category == category and item.reference_id == reference_id
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.reason = str(reason)[:500]
+            existing.attempts = max(existing.attempts, int(attempts))
+            existing.last_failed_at = _iso()
+            return existing
+        item = DeadLetter(
+            id=f"dead_{uuid.uuid4().hex}",
+            category=str(category)[:100],
+            reference_id=str(reference_id)[:200],
+            reason=str(reason)[:500] or "autonomous work failed",
+            attempts=max(1, int(attempts)),
+            data=dict(data),
+        )
+        item.validate()
+        state.dead_letters.append(item)
+        state.dead_letters = state.dead_letters[-500:]
+        return item
+
+    @staticmethod
+    def _trim_inbox(state: AgendaState, retention: int = 1000) -> None:
+        excess = len(state.inbox) - max(1, retention)
+        if excess <= 0:
+            return
+        removable = {
+            event.id
+            for event in sorted(state.inbox, key=lambda item: item.updated_at)
+            if event.status in {"acknowledged", "dead_letter"}
+        }
+        retained = []
+        removed = 0
+        for event in state.inbox:
+            if removed < excess and event.id in removable:
+                removed += 1
+                continue
+            retained.append(event)
+        state.inbox = retained
+
+    @staticmethod
     def _suspend_active(state: AgendaState, except_id: str) -> None:
         for entry in state.entries:
             if entry.id != except_id and entry.status == "active":
                 entry.status = "suspended"
-                entry.progress_summary = entry.progress_summary or "Preempted by foreground work."
+                entry.progress_summary = (
+                    entry.progress_summary or "Preempted by foreground work."
+                )
 
     @staticmethod
     def _event(

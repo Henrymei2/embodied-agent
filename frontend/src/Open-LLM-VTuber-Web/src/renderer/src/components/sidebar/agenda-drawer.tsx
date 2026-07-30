@@ -48,6 +48,8 @@ function Entry({ entry, action }: {
 export default function AgendaDrawer({ children }: { children: React.ReactNode }) {
   const { snapshot, loading, error, refresh, action } = useAgenda();
   const entries = snapshot?.entries || [];
+  const capabilityCalls = Object.values(snapshot?.health.quota.capability_calls || {})
+    .reduce((total, calls) => total + calls, 0);
   return (
     <DrawerRoot placement="start">
       <DrawerBackdrop />
@@ -65,6 +67,55 @@ export default function AgendaDrawer({ children }: { children: React.ReactNode }
             </Button>
             <Button onClick={() => void refresh()}><FiRefreshCw />Refresh</Button>
           </Box>
+          {snapshot && (
+            <Box {...sidebarStyles.schedulerDrawer.eventItem} marginBottom={3}>
+              <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+                <Badge {...sidebarStyles.schedulerDrawer.kindBadge}>
+                  {snapshot.runtime.mode} runtime
+                </Badge>
+                <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                  {snapshot.runtime.running ? 'running' : 'stopped'}
+                  {' · '}
+                  revision {snapshot.revision}
+                  {' · '}
+                  fence {snapshot.runtime.fencing_token ?? snapshot.fencing_token}
+                </Text>
+              </Box>
+              <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                Lease {snapshot.runtime.lease_status}
+                {' · '}
+                pending events {snapshot.health.events.pending}
+                {' · '}
+                dead letters {snapshot.health.dead_letters}
+              </Text>
+              <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                Completion{' '}
+                {snapshot.health.completion_rate === null
+                  ? '—'
+                  : `${Math.round(snapshot.health.completion_rate * 100)}%`}
+                {' · '}
+                pending reports {snapshot.health.reports.pending}
+                {' · '}
+                planner failures {snapshot.health.planner.consecutive_failures}
+              </Text>
+              <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                Window usage: {snapshot.health.quota.planner_calls} planner
+                {' · '}
+                {capabilityCalls} capability
+              </Text>
+              {snapshot.health.planner.circuit_open_until && (
+                <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                  Planner cooldown until{' '}
+                  {new Date(snapshot.health.planner.circuit_open_until).toLocaleTimeString()}
+                </Text>
+              )}
+              {(snapshot.runtime.last_error || snapshot.health.planner.last_error) && (
+                <Text {...sidebarStyles.schedulerDrawer.prompt}>
+                  {snapshot.runtime.last_error || snapshot.health.planner.last_error}
+                </Text>
+              )}
+            </Box>
+          )}
           {loading && !snapshot && <Spinner />}
           {error && <Text>Agenda could not be loaded.</Text>}
           {!loading && !error && entries.length === 0 && <Text>No agenda entries yet.</Text>}

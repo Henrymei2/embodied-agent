@@ -8,6 +8,7 @@ It uses FastAPI for the server and Starlette for static file serving.
 
 import os
 import shutil
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from starlette.middleware.cors import CORSMiddleware
@@ -102,8 +103,12 @@ class WebSocketServer:
     """
 
     def __init__(self, config: Config, default_context_cache: ServiceContext = None):
-        self.app = FastAPI(title="Open-LLM-VTuber Server")  # Added title for clarity
+        self.app = FastAPI(
+            title="Open-LLM-VTuber Server",
+            lifespan=self._lifespan,
+        )
         self.config = config
+        self._headless_autonomy_started = False
         self.default_context_cache = (
             default_context_cache or ServiceContext()
         )  # Use provided context or initialize a new empty one waiting to be loaded
@@ -192,6 +197,68 @@ class WebSocketServer:
             CORSStaticFiles(directory="frontend", html=True),
             name="frontend",
         )
+
+    @asynccontextmanager
+    async def _lifespan(self, _app: FastAPI):
+        await self._start_headless_autonomy()
+        try:
+            yield
+        finally:
+            await self._stop_headless_autonomy()
+
+    async def _start_headless_autonomy(self) -> None:
+        """Start the safe server-lifetime owner after context initialization."""
+        if self._headless_autonomy_started:
+            return
+        system_config = getattr(self.default_context_cache, "system_config", None)
+        if system_config is None:
+            return
+
+        from .autonomy import (
+            HEADLESS_CLIENT_UID,
+            AutonomySettings,
+            configure_headless_runtime,
+        )
+
+        settings = AutonomySettings.from_config(system_config)
+        if not settings.enabled or not settings.headless_enabled:
+            return
+
+        async def discard_output(_payload: str) -> None:
+            return None
+
+        from .autonomy.presence import get_or_create_presence_ledger
+        from .client_registry import register_client
+        from .workspace import ensure_workspace
+
+        workspace_root = ensure_workspace().root
+        presence = get_or_create_presence_ledger(
+            HEADLESS_CLIENT_UID,
+            workspace_root,
+            settings,
+        )
+        register_client(
+            HEADLESS_CLIENT_UID,
+            self.default_context_cache,
+            discard_output,
+        )
+        await configure_headless_runtime(workspace_root, settings, presence)
+        self._headless_autonomy_started = True
+
+    async def _stop_headless_autonomy(self) -> None:
+        if not self._headless_autonomy_started:
+            return
+        from .autonomy import HEADLESS_CLIENT_UID
+        from .autonomy.presence import unregister_presence_ledger
+        from .autonomy.runtime import reset_runtimes
+        from .client_registry import unregister_client
+        from .conversations.llm_request_queue import remove_queue
+
+        await reset_runtimes()
+        remove_queue(HEADLESS_CLIENT_UID)
+        unregister_client(HEADLESS_CLIENT_UID)
+        unregister_presence_ledger(HEADLESS_CLIENT_UID)
+        self._headless_autonomy_started = False
 
     async def initialize(self):
         """Asynchronously load the service context from config.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from time import monotonic
 from typing import Optional
 
@@ -66,6 +67,12 @@ def signal_observation_change(client_uid: str) -> None:
     event = _CLIENT_CHANGE_EVENTS.get(client_uid)
     if event is not None:
         event.set()
+    try:
+        from .executive import wake_executive
+
+        wake_executive(client_uid)
+    except ImportError:
+        pass
 
 
 async def wait_for_observation_change(client_uid: str, timeout: float) -> bool:
@@ -142,6 +149,51 @@ def get_client_presence(client_uid: str) -> ClientPresenceSignal:
     if signal is None or monotonic() - signal.updated_at > _SIGNAL_TTL_SECONDS:
         return ClientPresenceSignal(user_present=False, fresh=False)
     return signal
+
+
+def build_observation(client_uid: str) -> Observation:
+    """Combine privacy-minimal live signals with content-free workspace state."""
+    signal = get_client_presence(client_uid)
+    screen_summary = None
+    try:
+        from .screen_context import get_screen_context
+
+        screen = get_screen_context(client_uid)
+        screen_summary = screen.summary() if screen is not None else None
+    except Exception:
+        pass
+
+    approved_plan_count = 0
+    open_todo_count = 0
+    has_active_reading = False
+    try:
+        from ..furniture_state import (
+            active_session,
+            load_library,
+            load_plans,
+            todo_snapshot,
+        )
+
+        approved_plan_count = sum(
+            1 for plan in load_plans() if plan.get("status") == "approved"
+        )
+        open_todo_count = int(todo_snapshot().get("open_count", 0))
+        has_active_reading = active_session(load_library()) is not None
+    except (OSError, TypeError, ValueError):
+        pass
+
+    return Observation(
+        idle_seconds=signal.idle_seconds,
+        user_present=signal.user_present,
+        hour_of_day=datetime.now().hour,
+        focus_mode=signal.focus_mode,
+        presence_fresh=signal.fresh,
+        screen_context=screen_summary,
+        approved_plan_count=approved_plan_count,
+        open_todo_count=open_todo_count,
+        has_active_reading=has_active_reading,
+        has_recent_context=screen_summary is not None,
+    )
 
 
 def clear_client_presence(client_uid: str) -> None:

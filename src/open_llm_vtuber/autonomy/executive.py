@@ -26,11 +26,19 @@ from .idle_relocation import (
     IdleScene,
     validate_idle_placement,
 )
+from .lease import LeaseHandle, LeaseLostError, WorkspaceLease
 from .settings import AutonomySettings
+from .step_policy import StepPolicy
+from .telemetry import AutonomyTracer
 
 RoomSnapshot = Callable[[], IdleScene]
 IdleRelocator = Callable[[IdlePlacement], Awaitable[bool]]
-CompletionReporter = Callable[[AgendaEntry, str], Awaitable[None]]
+
+
+class PlannerQuotaExceeded(RuntimeError):
+    def __init__(self, reset_at: str) -> None:
+        super().__init__(f"planner quota exhausted until {reset_at}")
+        self.reset_at = reset_at
 
 
 class AgendaExecutive:
@@ -45,9 +53,12 @@ class AgendaExecutive:
         emit: Callable[[dict], Awaitable[None]],
         capabilities: Optional[set[str]] = None,
         object_names: Optional[set[str]] = None,
+        capability_objects: Optional[dict[str, str]] = None,
+        report_result: Optional[Callable[[AgendaEntry, str], Awaitable[object]]] = None,
+        connected_client: bool = True,
+        lease_handle: LeaseHandle | None = None,
         room_snapshot: Optional[RoomSnapshot] = None,
         relocate_idle: Optional[IdleRelocator] = None,
-        report_completion: Optional[CompletionReporter] = None,
     ) -> None:
         self.client_uid = client_uid
         self.store = store
@@ -56,71 +67,169 @@ class AgendaExecutive:
         self.emit = emit
         self.capabilities = capabilities or set()
         self.object_names = object_names or set()
+        self.capability_objects = capability_objects or {}
+        self.connected_client = connected_client
+        self.lease_handle = lease_handle
         self.room_snapshot = room_snapshot
         self.relocate_idle = relocate_idle
-        self.report_completion = report_completion
         self.policy = AgendaPolicy(settings.maximum_pursuit_seconds)
-        self.activity = ActivityExecutor(store, run_step, emit)
+        self.step_policy = StepPolicy(
+            capabilities=self.capabilities,
+            object_names=self.object_names,
+            capability_objects=self.capability_objects,
+            connected_client=connected_client,
+        )
+        self.tracer = AutonomyTracer(
+            store.root,
+            max_bytes=settings.trace_max_bytes,
+        )
+        self.activity = ActivityExecutor(
+            store,
+            run_step,
+            emit,
+            tracer=self.tracer,
+        )
         self._wake = asyncio.Event()
         self._activity_task: Optional[asyncio.Task] = None
-        self._activity_interrupted = False
+        self._entry_task: Optional[asyncio.Task] = None
+        self._entry_task_entry_id: Optional[str] = None
         self._settling_task: Optional[asyncio.Task] = None
         self._settling_interrupted = False
         self._settled_hold_key: Optional[str] = None
         self._memory_digest_writer: Optional[Callable[[str], bool]] = None
+        self._report_result = report_result
 
     async def run(self) -> None:
-        recovered = self.store.recover_interrupted()
-        if recovered:
-            logger.info(f"agenda: recovered {len(recovered)} interrupted entries")
-        await self.broadcast_snapshot()
-        while True:
-            try:
-                if self._memory_digest_writer is not None:
-                    self.store.compact_terminal_history(
-                        self._memory_digest_writer,
-                        retention_hours=self.settings.terminal_history_hours,
-                        retention_entries=self.settings.terminal_history_entries,
-                    )
-                progressed = await self._advance()
-                if progressed:
-                    # Completing, queueing, or generating an entry must lead
-                    # directly to the next lifecycle pass. Waiting here breaks
-                    # the continuous-chain invariant and makes the agenda look
-                    # idle for the full fallback cadence.
-                    continue
-                self._wake.clear()
+        from .change_bus import subscribe_agenda_changes, unsubscribe_agenda_changes
+
+        subscription = subscribe_agenda_changes(self.store.root, self.wake)
+        try:
+            recovered = self.store.recover_interrupted()
+            if recovered:
+                logger.info(f"agenda: recovered {len(recovered)} interrupted entries")
+                if self.settings.restart_recovery_grace_seconds:
+                    await asyncio.sleep(self.settings.restart_recovery_grace_seconds)
+            await self.broadcast_snapshot()
+            while True:
                 try:
-                    await asyncio.wait_for(
-                        self._wake.wait(),
-                        timeout=self._next_wake_seconds(),
+                    if self._memory_digest_writer is not None:
+                        self.store.compact_terminal_history(
+                            self._memory_digest_writer,
+                            retention_hours=self.settings.terminal_history_hours,
+                            retention_entries=self.settings.terminal_history_entries,
+                        )
+                    progressed = await self._advance()
+                    if progressed:
+                        # Completing, queueing, or generating an entry must lead
+                        # directly to the next lifecycle pass. Waiting here breaks
+                        # the continuous-chain invariant and makes the agenda look
+                        # idle for the full fallback cadence.
+                        continue
+                    self._wake.clear()
+                    try:
+                        await asyncio.wait_for(
+                            self._wake.wait(),
+                            timeout=self._next_wake_seconds(),
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+                except asyncio.CancelledError:
+                    if self._entry_task and not self._entry_task.done():
+                        self._entry_task.cancel()
+                    if self._activity_task and not self._activity_task.done():
+                        self._activity_task.cancel()
+                    if self._settling_task and not self._settling_task.done():
+                        self._settling_task.cancel()
+                    await asyncio.gather(
+                        *(
+                            task
+                            for task in (
+                                self._entry_task,
+                                self._activity_task,
+                                self._settling_task,
+                            )
+                            if task is not None
+                        ),
+                        return_exceptions=True,
                     )
-                except asyncio.TimeoutError:
-                    pass
-            except asyncio.CancelledError:
-                if self._activity_task and not self._activity_task.done():
-                    self._activity_task.cancel()
-                if self._settling_task and not self._settling_task.done():
-                    self._settling_task.cancel()
-                raise
-            except ActivityStepTimeout as exc:
-                logger.warning(f"agenda: {exc}")
-                await self.broadcast_snapshot()
-                await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
-            except Exception as exc:
-                logger.exception(
-                    f"agenda: executive pass failed: "
-                    f"{type(exc).__name__}: {exc or '<no message>'}"
-                )
-                await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
+                    raise
+                except LeaseLostError:
+                    raise
+                except ActivityStepTimeout as exc:
+                    logger.warning(f"agenda: {exc}")
+                    await self.broadcast_snapshot()
+                    await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
+                except Exception as exc:
+                    logger.exception(
+                        f"agenda: executive pass failed: "
+                        f"{type(exc).__name__}: {exc or '<no message>'}"
+                    )
+                    await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
+        finally:
+            unsubscribe_agenda_changes(subscription)
 
     def _next_wake_seconds(self) -> float:
-        timeout = float(self.settings.fallback_reconsideration_seconds)
+        timeout = min(
+            float(self.settings.fallback_reconsideration_seconds),
+            self.settings.store_poll_seconds,
+        )
         now = utc_now()
-        for entry in self.store.load().entries:
+        state = self.store.load()
+        if state.next_reconsideration_at:
+            try:
+                reconsider = datetime.fromisoformat(state.next_reconsideration_at)
+                if reconsider.tzinfo is None:
+                    reconsider = reconsider.replace(tzinfo=now.tzinfo)
+                timeout = min(timeout, max(0.1, (reconsider - now).total_seconds()))
+            except (TypeError, ValueError):
+                pass
+        for entry in state.entries:
+            if (
+                entry.kind == "idle"
+                and entry.status == "active"
+                and entry.budget.deadline_at
+            ):
+                due = datetime.fromisoformat(entry.budget.deadline_at)
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=now.tzinfo)
+                timeout = min(timeout, max(0.1, (due - now).total_seconds()))
             if not entry.schedule or entry.status not in {"queued", "suspended"}:
                 continue
             due = datetime.fromisoformat(entry.schedule.next_run)
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=now.tzinfo)
+            timeout = min(timeout, max(0.1, (due - now).total_seconds()))
+        if self._report_result is not None:
+            for report in state.reports:
+                if report.status != "pending":
+                    continue
+                if not self.connected_client:
+                    entry = next(
+                        (
+                            candidate
+                            for candidate in state.entries
+                            if candidate.id == report.entry_id
+                        ),
+                        None,
+                    )
+                    if entry is None or entry.report_policy != "silent":
+                        continue
+                due = datetime.fromisoformat(report.next_attempt_at)
+                if due.tzinfo is None:
+                    due = due.replace(tzinfo=now.tzinfo)
+                timeout = min(timeout, max(0.1, (due - now).total_seconds()))
+        for event in state.inbox:
+            if event.status != "pending":
+                continue
+            due = datetime.fromisoformat(event.available_at)
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=now.tzinfo)
+            timeout = min(timeout, max(0.1, (due - now).total_seconds()))
+        for entry in state.entries:
+            deferred_until = entry.metadata.get("quota_deferred_until")
+            if entry.status != "suspended" or not deferred_until:
+                continue
+            due = datetime.fromisoformat(str(deferred_until))
             if due.tzinfo is None:
                 due = due.replace(tzinfo=now.tzinfo)
             timeout = min(timeout, max(0.1, (due - now).total_seconds()))
@@ -129,18 +238,13 @@ class AgendaExecutive:
     def wake(self) -> None:
         self._wake.set()
 
+    def observation_changed(self) -> None:
+        if self.connected_client:
+            self.store.expedite_pending_reports()
+        self.wake()
+
     def set_memory_digest_writer(self, writer: Callable[[str], bool]) -> None:
         self._memory_digest_writer = writer
-
-    def _interrupt_activity(self) -> None:
-        if self._activity_task and not self._activity_task.done():
-            self._activity_interrupted = True
-            self._activity_task.cancel()
-
-    def _interrupt_settling(self) -> None:
-        if self._settling_task and not self._settling_task.done():
-            self._settling_interrupted = True
-            self._settling_task.cancel()
 
     async def broadcast_snapshot(self) -> None:
         await self.emit(
@@ -151,8 +255,7 @@ class AgendaExecutive:
         )
 
     async def preempt_for_user(self, title: str) -> AgendaEntry:
-        self._interrupt_activity()
-        self._interrupt_settling()
+        await self._cancel_entry_work()
         self._settled_hold_key = None
         state = self.store.load()
         for active in state.entries:
@@ -185,9 +288,8 @@ class AgendaExecutive:
 
     async def pause(self, paused: bool) -> None:
         if paused:
-            self._interrupt_activity()
-            self._interrupt_settling()
-        if not paused:
+            await self._cancel_entry_work()
+        else:
             self._settled_hold_key = None
         self.store.pause(paused)
         self.wake()
@@ -199,8 +301,8 @@ class AgendaExecutive:
     async def abandon(self, entry_id: str) -> None:
         state = self.store.load()
         entry = next(item for item in state.entries if item.id == entry_id)
-        if entry.status == "active" and self._activity_task:
-            self._interrupt_activity()
+        if entry.status == "active":
+            await self._cancel_entry_work()
         self.store.transition(
             entry_id, "abandoned", progress_summary="Stopped by user."
         )
@@ -208,21 +310,51 @@ class AgendaExecutive:
         await self.broadcast_snapshot()
 
     async def _advance(self) -> bool:
+        self._assert_lease()
         state = self.store.load()
-        active = next((item for item in state.entries if item.status == "active"), None)
         if state.paused:
-            if active and active.kind == "user":
-                return False
-            return not await self._settle_for_hold("paused")
-
+            return False
+        if await self._deliver_due_report():
+            return True
         due = self.store.claim_due()
         if due:
+            await self._cancel_entry_work()
             state = self.store.load()
+
+        if self._entry_task is not None:
+            if not self._entry_task.done():
+                return False
+            task = self._entry_task
+            entry_id = self._entry_task_entry_id
+            self._entry_task = None
+            self._entry_task_entry_id = None
+            try:
+                return task.result()
+            except asyncio.CancelledError:
+                return True
+            except LeaseLostError:
+                raise
+            except Exception as exc:
+                if entry_id is not None:
+                    self.store.record_execution_failure(
+                        entry_id,
+                        error=f"{type(exc).__name__}: {str(exc)[:400]}",
+                        max_attempts=self.settings.execution_failure_limit,
+                    )
+                    await self.broadcast_snapshot()
+                    return True
+                raise
+
         active = next((item for item in state.entries if item.status == "active"), None)
         if active:
             self._settled_hold_key = None
             if active.kind != "user":
-                await self._advance_entry(active)
+                self._entry_task = asyncio.create_task(
+                    self._advance_entry(active),
+                    name=f"agenda-entry:{active.id}",
+                )
+                self._entry_task_entry_id = active.id
+                self._entry_task.add_done_callback(lambda _task: self.wake())
                 return True
             return False
 
@@ -233,16 +365,20 @@ class AgendaExecutive:
                 if item.status == "queued" and item.schedule is None
             ),
             key=lambda item: (
-                item.schedule.priority if item.schedule else 10,
+                int(
+                    item.metadata.get(
+                        "queue_priority",
+                        10 if item.kind == "scheduled" else 20,
+                    )
+                ),
                 item.queue_position,
                 item.created_at,
             ),
         )
         if queued:
             self._settled_hold_key = None
-            entry = self.store.transition(queued[0].id, "active")
+            self.store.transition(queued[0].id, "active")
             await self.broadcast_snapshot()
-            await self._advance_entry(entry)
             return True
         held = [
             item
@@ -252,21 +388,94 @@ class AgendaExecutive:
         if held:
             # Exactly one generated successor is retained. Do not generate
             # additional work while that successor awaits user approval.
-            key = "held:" + ",".join(
-                f"{item.id}:{item.status}" for item in sorted(held, key=lambda x: x.id)
-            )
-            return not await self._settle_for_hold(key)
+            if self.connected_client:
+                key = "held:" + ",".join(
+                    f"{item.id}:{item.status}"
+                    for item in sorted(held, key=lambda candidate: candidate.id)
+                )
+                return not await self._settle_for_hold(key)
+            return False
+        now = utc_now()
         suspended = [
             item
             for item in state.entries
-            if item.status == "suspended" and item.origin == "autonomous"
+            if item.status == "suspended"
+            and item.kind != "user"
+            and (
+                self.connected_client
+                or not bool(item.metadata.get("waiting_for_client"))
+            )
+            and self._quota_defer_is_due(item, now)
         ]
         if suspended:
             self._settled_hold_key = None
             await self._reconsider_suspended()
             return True
+        if not self.connected_client and any(
+            item.status == "suspended" and bool(item.metadata.get("waiting_for_client"))
+            for item in state.entries
+        ):
+            return False
+        if any(
+            item.status == "suspended"
+            and item.metadata.get("quota_deferred_until")
+            and not self._quota_defer_is_due(item, now)
+            for item in state.entries
+        ):
+            return False
+        entries_by_id = {entry.id: entry for entry in state.entries}
+        pending_user_reports = sum(
+            1
+            for report in state.reports
+            if report.status in {"pending", "delivering"}
+            and (
+                (entry := entries_by_id.get(report.entry_id)) is not None
+                and entry.report_policy != "silent"
+            )
+        )
+        if pending_user_reports >= self.settings.report_backlog_limit:
+            backpressure = create_entry(
+                kind="idle",
+                title="Wait for report delivery capacity",
+                description=(
+                    "Remain available while completed user-facing reports await "
+                    "Presence-gated delivery."
+                ),
+                origin="recovery",
+                evidence_refs=["system:report-backpressure"],
+                completion_condition="Wait until the bounded capacity review.",
+                time_budget_seconds=max(
+                    self.settings.idle_min_seconds,
+                    min(
+                        self.settings.idle_max_seconds,
+                        self.settings.fallback_reconsideration_seconds,
+                    ),
+                ),
+                status="queued",
+                report_policy="silent",
+                metadata={
+                    "queue_priority": 20,
+                    "report_backpressure": True,
+                },
+            )
+            self.store.add(backpressure)
+            await self.broadcast_snapshot()
+            return True
+        if state.next_reconsideration_at:
+            try:
+                reconsider_at = datetime.fromisoformat(state.next_reconsideration_at)
+                if reconsider_at.tzinfo is None:
+                    reconsider_at = reconsider_at.replace(tzinfo=utc_now().tzinfo)
+                if utc_now() < reconsider_at:
+                    return False
+            except (TypeError, ValueError):
+                logger.warning("agenda: clearing invalid reconsideration timestamp")
+            self.store.set_reconsideration(None)
         self._settled_hold_key = None
-        await self._settle_while_generating_successor()
+        if self.connected_client:
+            await self._settle_while_generating_successor()
+        else:
+            await self._generate_successor()
         return True
 
     def _agenda_context(self):
@@ -275,10 +484,11 @@ class AgendaExecutive:
             client_uid=self.client_uid,
             capabilities=self.capabilities,
             object_names=self.object_names,
+            execution_mode="live" if self.connected_client else "headless",
         )
 
     def _room_snapshot(self) -> IdleScene:
-        if self.room_snapshot is None:
+        if not self.connected_client or self.room_snapshot is None:
             return IdleScene(current_position=None, objects=())
         try:
             return self.room_snapshot()
@@ -291,11 +501,28 @@ class AgendaExecutive:
         context,
         scene: IdleScene,
     ) -> IdlePlacement:
-        if not scene.objects:
-            return IdlePlacement(None, "No room objects are available.")
+        if not self.connected_client or not scene.objects:
+            return IdlePlacement(None, "No live room objects are available.")
+        self._assert_lease()
         try:
-            placement = await self.planner.choose_idle_placement(context, scene)
+            self._consume_planner_quota()
+        except PlannerQuotaExceeded:
+            return validate_idle_placement(
+                IdlePlacement(None, "Idle placement planner quota is exhausted."),
+                scene,
+            )
+        try:
+            with self.tracer.span(
+                "agenda.planner.idle_placement",
+                attributes={
+                    "agenda.execution_mode": "live",
+                    "agenda.room_object_count": len(scene.objects),
+                },
+            ):
+                placement = await self.planner.choose_idle_placement(context, scene)
         except asyncio.CancelledError:
+            raise
+        except LeaseLostError:
             raise
         except Exception as exc:
             logger.warning(f"agenda: idle placement planner failed: {exc}")
@@ -303,11 +530,38 @@ class AgendaExecutive:
         return validate_idle_placement(placement, scene)
 
     async def _relocate_idle_safely(self, placement: IdlePlacement) -> None:
-        if placement.object_id is None or self.relocate_idle is None:
+        if (
+            not self.connected_client
+            or placement.object_id is None
+            or self.relocate_idle is None
+        ):
+            return
+        self._assert_lease()
+        quota = self.store.consume_quota(
+            category="capability",
+            key="idle_relocation",
+            limit=self.settings.capability_calls_per_window,
+            window_seconds=self.settings.quota_window_seconds,
+        )
+        if not quota.allowed:
+            logger.info(
+                "agenda: idle relocation skipped because its capability quota "
+                f"is exhausted until {quota.reset_at}"
+            )
             return
         try:
-            await self.relocate_idle(placement)
+            with self.tracer.span(
+                "agenda.activity.idle_relocation",
+                attributes={
+                    "agenda.destination_object": placement.object_id,
+                    "agenda.execution_mode": "live",
+                },
+            ):
+                await self.relocate_idle(placement)
+            self._assert_lease()
         except asyncio.CancelledError:
+            raise
+        except LeaseLostError:
             raise
         except Exception as exc:
             logger.warning(
@@ -322,8 +576,6 @@ class AgendaExecutive:
             await task
             return True
         except asyncio.CancelledError:
-            # User preemption cancels this child task, while shutting down the
-            # agenda cancels the current task itself. Only swallow the former.
             if not self._settling_interrupted:
                 raise
             logger.info("agenda: idle relocation was preempted")
@@ -352,21 +604,27 @@ class AgendaExecutive:
 
         async def settle_and_generate() -> None:
             await self.emit(AgentActivityTracker.planning())
+            generation = asyncio.create_task(self._generate_successor())
+            relocation: asyncio.Task | None = None
             try:
+                # Let successor generation reserve its planner quota and claim a
+                # durable external event before optional placement planning.
+                await asyncio.sleep(0)
                 placement = await self._choose_idle_placement(context, scene)
-                relocation = asyncio.create_task(self._relocate_idle_safely(placement))
-                generation = asyncio.create_task(self._generate_successor(context))
-                try:
-                    await asyncio.gather(relocation, generation)
-                except BaseException:
-                    for task in (relocation, generation):
-                        if not task.done():
-                            task.cancel()
-                    await asyncio.gather(relocation, generation, return_exceptions=True)
-                    raise
+                relocation = asyncio.create_task(
+                    self._relocate_idle_safely(placement)
+                )
+                await asyncio.gather(generation, relocation)
+            except BaseException:
+                for task in (generation, relocation):
+                    if task is not None and not task.done():
+                        task.cancel()
+                await asyncio.gather(
+                    *(task for task in (generation, relocation) if task is not None),
+                    return_exceptions=True,
+                )
+                raise
             finally:
-                # A user turn owns the status display after preemption and must
-                # not be cleared by the background planner being canceled.
                 if not self._settling_interrupted:
                     await self.emit(AgentActivityTracker.idle())
 
@@ -379,13 +637,162 @@ class AgendaExecutive:
         ]
         if held:
             self._settled_hold_key = "held:" + ",".join(
-                f"{item.id}:{item.status}" for item in sorted(held, key=lambda x: x.id)
+                f"{item.id}:{item.status}"
+                for item in sorted(held, key=lambda candidate: candidate.id)
             )
 
-    async def _generate_successor(self, context=None) -> None:
-        context = context or self._agenda_context()
-        for _ in range(self.settings.planner_retry_limit):
-            proposal = await self.planner.propose_intention(context)
+    async def _deliver_due_report(self) -> bool:
+        self._assert_lease()
+        if self._report_result is None:
+            return False
+        report = self.store.claim_due_report(silent_only=not self.connected_client)
+        if report is None:
+            return False
+        try:
+            state = self.store.load()
+            entry = next(item for item in state.entries if item.id == report.entry_id)
+            with self.tracer.span(
+                "agenda.report.deliver",
+                trace_id=entry.metadata.get("trace_id"),
+                attributes={
+                    "agenda.entry_id": entry.id,
+                    "agenda.report_id": report.id,
+                    "agenda.report_attempt": report.attempts,
+                    "agenda.report_policy": entry.report_policy,
+                },
+            ):
+                outcome = await self._report_result(entry, report.summary)
+            if isinstance(outcome, bool):
+                delivered = outcome
+                error = None if delivered else "Presence Contract deferred delivery."
+                counts_as_failure = False
+            else:
+                delivered = bool(getattr(outcome, "delivered", False))
+                error = getattr(outcome, "reason", None)
+                counts_as_failure = bool(getattr(outcome, "counts_as_failure", False))
+        except asyncio.CancelledError:
+            self.store.finish_report(
+                report.id,
+                delivered=False,
+                error="delivery owner changed",
+                retry_seconds=self.settings.report_retry_seconds,
+                max_attempts=self.settings.report_retry_limit,
+                counts_as_failure=False,
+            )
+            raise
+        except Exception as exc:
+            delivered = False
+            error = f"{type(exc).__name__}: {str(exc)[:400]}"
+            counts_as_failure = True
+            logger.warning(f"agenda: report delivery failed: {error}")
+        retry_seconds = min(
+            self.settings.planner_circuit_max_seconds,
+            self.settings.report_retry_seconds * (2 ** max(0, report.attempts - 1)),
+        )
+        self.store.finish_report(
+            report.id,
+            delivered=delivered,
+            error=error,
+            retry_seconds=retry_seconds,
+            max_attempts=self.settings.report_retry_limit,
+            counts_as_failure=counts_as_failure,
+        )
+        await self.broadcast_snapshot()
+        return True
+
+    async def _cancel_entry_work(self) -> None:
+        settling = self._settling_task
+        if settling is not None and not settling.done():
+            self._settling_interrupted = True
+            settling.cancel()
+            await asyncio.gather(settling, return_exceptions=True)
+        if self._settling_task is settling:
+            self._settling_task = None
+        task = self._entry_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if self._entry_task is task:
+            self._entry_task = None
+            self._entry_task_entry_id = None
+        activity = self._activity_task
+        if activity is not None and not activity.done():
+            activity.cancel()
+            await asyncio.gather(activity, return_exceptions=True)
+
+    async def _generate_successor(self) -> None:
+        self._assert_lease()
+        claimed_event = None
+        try:
+            self._consume_planner_quota()
+        except PlannerQuotaExceeded as exc:
+            await self._queue_quota_idle(exc.reset_at)
+            return
+        if self.lease_handle is not None:
+            with self.tracer.span(
+                "agenda.event.claim",
+                attributes={
+                    "agenda.fencing_token": self.lease_handle.fencing_token,
+                },
+            ):
+                claimed_event = self.store.claim_next_event(
+                    owner_id=self.lease_handle.owner_id,
+                    fencing_token=self.lease_handle.fencing_token,
+                    claim_timeout_seconds=self.settings.event_claim_timeout_seconds,
+                )
+        context = build_agenda_context(
+            self.store,
+            client_uid=self.client_uid,
+            capabilities=self.capabilities,
+            object_names=self.object_names,
+            execution_mode="live" if self.connected_client else "headless",
+        )
+        last_reason = "planner retry limit exhausted"
+        for attempt in range(self.settings.planner_retry_limit):
+            if attempt:
+                try:
+                    self._consume_planner_quota()
+                except PlannerQuotaExceeded as exc:
+                    if claimed_event is not None and self.lease_handle is not None:
+                        self.store.defer_event(
+                            claimed_event.id,
+                            fencing_token=self.lease_handle.fencing_token,
+                            available_at=exc.reset_at,
+                            reason="planner quota exhausted",
+                        )
+                    await self._queue_quota_idle(exc.reset_at)
+                    return
+            try:
+                with self.tracer.span(
+                    "agenda.planner.propose",
+                    attributes={
+                        "agenda.planner_attempt": attempt + 1,
+                        "agenda.event_id": (
+                            claimed_event.id if claimed_event is not None else None
+                        ),
+                        "agenda.execution_mode": (
+                            "live" if self.connected_client else "headless"
+                        ),
+                    },
+                ) as span:
+                    proposal = await self.planner.propose_intention(context)
+                    proposal.metadata.setdefault("trace_id", span.trace_id)
+            except Exception as exc:
+                reason = (
+                    f"planner failure: {type(exc).__name__}: "
+                    f"{str(exc)[:300] or '<no message>'}"
+                )
+                last_reason = reason
+                self._record_rejection("<planner failure>", reason)
+                logger.warning(f"agenda: {reason}")
+                if attempt + 1 < self.settings.planner_retry_limit:
+                    await asyncio.sleep(
+                        min(
+                            60.0,
+                            self.settings.planner_retry_backoff_seconds * (2**attempt),
+                        )
+                    )
+                continue
             state = self.store.load()
             verdict = self.policy.validate(
                 proposal,
@@ -398,13 +805,35 @@ class AgendaExecutive:
                     if item.status not in {"failed", "abandoned"}
                 ],
             )
-            if verdict.accepted:
+            event_grounded = (
+                claimed_event is None
+                or claimed_event.evidence_ref in proposal.motivation.evidence_refs
+                or f"event:{claimed_event.id}" in proposal.motivation.evidence_refs
+            )
+            if verdict.accepted and event_grounded:
+                if proposal.kind == "idle":
+                    proposal.budget.time_budget_seconds = max(
+                        self.settings.idle_min_seconds,
+                        min(
+                            proposal.budget.time_budget_seconds,
+                            self.settings.idle_max_seconds,
+                        ),
+                    )
                 proposal.status = (
                     "blocked_approval" if proposal.requires_approval else "queued"
                 )
+                proposal.metadata["queue_priority"] = 20
                 if proposal.requires_approval:
                     proposal.plan_id = self._draft_approval_plan(proposal)
-                self.store.add(proposal)
+                if claimed_event is not None and self.lease_handle is not None:
+                    self.store.add_from_event(
+                        proposal,
+                        event_id=claimed_event.id,
+                        fencing_token=self.lease_handle.fencing_token,
+                    )
+                else:
+                    self.store.add(proposal)
+                self.store.record_planner_success()
                 logger.info(
                     f"agenda: accepted {proposal.kind} proposal "
                     f"{proposal.id!r}: {proposal.title!r}"
@@ -412,22 +841,60 @@ class AgendaExecutive:
                 await self.broadcast_snapshot()
                 return
 
-            def reject(current):
-                current.rejections.append(
-                    ProposalRejection(
-                        created_at=utc_now().isoformat(),
-                        title=proposal.title,
-                        reason=verdict.reason,
+            rejection_reason = (
+                verdict.reason
+                if not verdict.accepted
+                else "proposal did not cite the claimed external event"
+            )
+            self._record_rejection(proposal.title, rejection_reason)
+            last_reason = rejection_reason
+            logger.warning(
+                f"agenda: rejected proposal {proposal.title!r}: {rejection_reason}"
+            )
+            if attempt + 1 < self.settings.planner_retry_limit:
+                await asyncio.sleep(
+                    min(
+                        60.0,
+                        self.settings.planner_retry_backoff_seconds * (2**attempt),
                     )
                 )
-                current.rejections = current.rejections[-50:]
 
-            self.store.mutate(reject)
-            logger.warning(
-                f"agenda: rejected proposal {proposal.title!r}: {verdict.reason}"
+        state = self.store.load()
+        failure_number = state.planner_health.consecutive_failures + 1
+        threshold = self.settings.planner_circuit_failure_threshold
+        if failure_number >= threshold:
+            cooldown = min(
+                self.settings.planner_circuit_max_seconds,
+                self.settings.fallback_reconsideration_seconds
+                * (2 ** max(0, failure_number - threshold)),
             )
-            await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
-
+            circuit_open_until = (utc_now() + timedelta(seconds=cooldown)).isoformat()
+        else:
+            cooldown = self.settings.idle_min_seconds
+            circuit_open_until = None
+        next_reconsideration = (
+            circuit_open_until
+            or (
+                utc_now() + timedelta(seconds=self.settings.idle_min_seconds)
+            ).isoformat()
+        )
+        self.store.record_planner_failure(
+            last_reason,
+            circuit_open_until=circuit_open_until,
+        )
+        if claimed_event is not None and self.lease_handle is not None:
+            self.store.fail_event(
+                claimed_event.id,
+                fencing_token=self.lease_handle.fencing_token,
+                error=last_reason,
+                retry_seconds=min(
+                    self.settings.planner_circuit_max_seconds,
+                    self.settings.event_retry_seconds
+                    * (2 ** max(0, claimed_event.attempts - 1)),
+                ),
+                max_attempts=self.settings.event_retry_limit,
+            )
+        self.store.set_reconsideration(next_reconsideration)
         idle = create_entry(
             kind="idle",
             title="Pause and reconsider",
@@ -435,23 +902,28 @@ class AgendaExecutive:
             origin="recovery",
             evidence_refs=["system:proposal-retries-exhausted"],
             completion_condition="Remain available until reconsideration.",
-            time_budget_seconds=self.settings.idle_min_seconds,
+            time_budget_seconds=max(self.settings.idle_min_seconds, cooldown),
             status="queued",
+            metadata={"queue_priority": 20},
         )
         self.store.add(idle)
         logger.warning(
             "agenda: proposal retry limit exhausted; queued bounded reconsideration"
         )
-        self.store.mutate(
-            lambda state: setattr(
-                state,
-                "next_reconsideration_at",
-                (
-                    utc_now() + timedelta(seconds=self.settings.idle_min_seconds)
-                ).isoformat(),
-            )
-        )
         await self.broadcast_snapshot()
+
+    def _record_rejection(self, title: str, reason: str) -> None:
+        def reject(current):
+            current.rejections.append(
+                ProposalRejection(
+                    created_at=utc_now().isoformat(),
+                    title=title[:160],
+                    reason=reason[:500],
+                )
+            )
+            current.rejections = current.rejections[-50:]
+
+        self.store.mutate(reject)
 
     @staticmethod
     def _draft_approval_plan(proposal: AgendaEntry) -> str:
@@ -473,29 +945,117 @@ class AgendaExecutive:
             raise ValueError("could not create the required approval plan")
         return str(payload["plan"]["plan_id"])
 
-    async def _advance_entry(self, entry: AgendaEntry) -> None:
+    async def _advance_entry(self, entry: AgendaEntry) -> bool:
+        self._assert_lease()
         deadline = entry.budget.deadline_at
+        if entry.kind == "idle":
+            if deadline is None:
+                entry = self.store.transition(entry.id, "active")
+                deadline = entry.budget.deadline_at
+            if deadline and utc_now() < datetime.fromisoformat(deadline):
+                return False
+            self.store.transition(entry.id, "completed")
+            self.store.enqueue_report(
+                entry.id,
+                entry.progress_summary or "Idle interval completed.",
+            )
+            await self.broadcast_snapshot()
+            return True
         if deadline and utc_now() >= datetime.fromisoformat(deadline):
             self.store.transition(
-                entry.id, "failed", progress_summary="Time budget expired."
+                entry.id,
+                "failed",
+                progress_summary="Time budget expired.",
             )
             await self.broadcast_snapshot()
-            return
-        if entry.kind == "idle":
-            await asyncio.sleep(
-                min(entry.budget.time_budget_seconds, self.settings.idle_max_seconds)
+            return True
+        if not self.connected_client and (
+            entry.preferred_object is not None
+            or any(
+                capability in self.capability_objects
+                for capability in entry.required_capabilities
             )
-            self.store.transition(entry.id, "completed")
+        ):
+            self.store.update_metadata(entry.id, waiting_for_client=True)
+            self.store.transition(
+                entry.id,
+                "suspended",
+                progress_summary="Waiting for a connected client and embodied room.",
+            )
             await self.broadcast_snapshot()
-            return
+            return True
 
         context = build_agenda_context(
             self.store,
             client_uid=self.client_uid,
             capabilities=self.capabilities,
             object_names=self.object_names,
+            execution_mode="live" if self.connected_client else "headless",
         )
-        checkpoint = await self.planner.next_step(asdict(entry), context)
+        try:
+            self._consume_planner_quota()
+        except PlannerQuotaExceeded as exc:
+            self._defer_entry_for_quota(
+                entry,
+                reset_at=exc.reset_at,
+                reason="activity planner quota exhausted",
+            )
+            await self.broadcast_snapshot()
+            return True
+        with self.tracer.span(
+            "agenda.planner.next_step",
+            trace_id=entry.metadata.get("trace_id"),
+            attributes={"agenda.entry_id": entry.id},
+        ):
+            checkpoint = await self.planner.next_step(asdict(entry), context)
+        verdict = self.step_policy.validate(entry, checkpoint)
+        if not verdict.accepted:
+            if verdict.retryable:
+                self.store.update_metadata(entry.id, waiting_for_client=True)
+                self.store.transition(
+                    entry.id,
+                    "suspended",
+                    progress_summary=verdict.reason,
+                )
+                await self.broadcast_snapshot()
+                return True
+            rejection_count = int(entry.metadata.get("step_rejections", 0)) + 1
+            self.store.update_metadata(entry.id, step_rejections=rejection_count)
+            terminal = rejection_count >= self.settings.planner_retry_limit
+            self.store.transition(
+                entry.id,
+                "failed" if terminal else "queued",
+                progress_summary=f"Rejected activity step: {verdict.reason}",
+            )
+            if terminal:
+                self.store.add_dead_letter(
+                    category="activity_policy",
+                    reference_id=entry.id,
+                    reason=verdict.reason,
+                    attempts=rejection_count,
+                    data={"step_kind": checkpoint.kind},
+                )
+            await self.broadcast_snapshot()
+            return True
+        if entry.metadata.get("step_rejections"):
+            self.store.update_metadata(entry.id, step_rejections=0)
+        if checkpoint.required_capability:
+            capability_quota = self.store.consume_quota(
+                category="capability",
+                key=checkpoint.required_capability,
+                limit=self.settings.capability_calls_per_window,
+                window_seconds=self.settings.quota_window_seconds,
+            )
+            if not capability_quota.allowed:
+                self._defer_entry_for_quota(
+                    entry,
+                    reset_at=capability_quota.reset_at,
+                    reason=(
+                        f"capability quota exhausted: {checkpoint.required_capability}"
+                    ),
+                )
+                await self.broadcast_snapshot()
+                return True
         # The configured timeout is the operational minimum for an LLM/tool
         # round trip. Models may request more time for a step, but may not
         # accidentally cancel a healthy provider request after only a few
@@ -512,89 +1072,166 @@ class AgendaExecutive:
                 checkpoint.timeout_seconds,
                 remaining_budget,
             )
+            checkpoint.plausible_duration_seconds = min(
+                checkpoint.plausible_duration_seconds,
+                float(remaining_budget),
+            )
         self._activity_task = asyncio.create_task(
             self.activity.execute(entry, checkpoint)
         )
-        self._activity_interrupted = False
+        result = await self._activity_task
+        if entry.metadata.get("execution_failures"):
+            self.store.update_metadata(entry.id, execution_failures=0)
         try:
-            result = await self._activity_task
-        except asyncio.CancelledError:
-            if not self._activity_interrupted:
-                raise
-            logger.info(f"agenda: activity for {entry.id!r} was preempted")
-            return
-        finally:
-            self._activity_task = None
-            self._activity_interrupted = False
-        complete, summary = await self.planner.evaluate_completion(
-            asdict(entry), [result]
-        )
-        updated = self.store.transition(
+            self._consume_planner_quota()
+        except PlannerQuotaExceeded as exc:
+            self._defer_entry_for_quota(
+                entry,
+                reset_at=exc.reset_at,
+                reason="completion evaluation quota exhausted",
+            )
+            await self.broadcast_snapshot()
+            return True
+        with self.tracer.span(
+            "agenda.planner.evaluate_completion",
+            trace_id=entry.metadata.get("trace_id"),
+            attributes={"agenda.entry_id": entry.id},
+        ):
+            complete, summary = await self.planner.evaluate_completion(
+                asdict(entry), [result]
+            )
+        self.store.transition(
             entry.id,
             "completed" if complete else "queued",
             progress_summary=summary,
         )
+        if complete:
+            self.store.enqueue_report(entry.id, summary)
         await self.broadcast_snapshot()
         if complete:
-            await self._report_completed_entry(updated, summary, context)
             self.wake()
-
-    async def _report_completed_entry(
-        self,
-        entry: AgendaEntry,
-        summary: str,
-        context,
-    ) -> None:
-        if self.report_completion is None or entry.report_policy == "silent":
-            return
-        should_report = entry.report_policy in {"on_completion", "ask_first"}
-        if entry.report_policy == "if_noteworthy":
-            try:
-                should_report = await self.planner.is_noteworthy(
-                    asdict(entry),
-                    summary,
-                    context,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    f"agenda: could not evaluate report worthiness for {entry.id!r}: "
-                    f"{exc}"
-                )
-                should_report = False
-        if not should_report:
-            return
-        try:
-            await self.report_completion(entry, summary)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                f"agenda: could not publish completion for {entry.id!r}: {exc}"
-            )
+        return True
 
     async def _reconsider_suspended(self) -> None:
+        self._assert_lease()
         state = self.store.load()
         candidates = [
             entry
             for entry in state.entries
-            if entry.status == "suspended" and entry.origin == "autonomous"
+            if entry.status == "suspended"
+            and entry.kind != "user"
+            and self._quota_defer_is_due(entry, utc_now())
         ]
         if not candidates:
             return
         entry = candidates[-1]
+        if entry.metadata.get("quota_deferred_until"):
+            self.store.update_metadata(
+                entry.id,
+                quota_deferred_until=None,
+                quota_deferred_reason=None,
+            )
+        if self.connected_client and entry.metadata.get("waiting_for_client"):
+            self.store.update_metadata(entry.id, waiting_for_client=False)
+        if entry.kind in {"idle", "scheduled"}:
+            self.store.transition(entry.id, "queued")
+            return
         context = build_agenda_context(
             self.store,
             client_uid=self.client_uid,
             capabilities=self.capabilities,
             object_names=self.object_names,
+            execution_mode="live" if self.connected_client else "headless",
         )
-        decision = await self.planner.reconsider(asdict(entry), context)
+        try:
+            self._consume_planner_quota()
+        except PlannerQuotaExceeded as exc:
+            self._defer_entry_for_quota(
+                entry,
+                reset_at=exc.reset_at,
+                reason="reconsideration quota exhausted",
+            )
+            return
+        with self.tracer.span(
+            "agenda.planner.reconsider",
+            trace_id=entry.metadata.get("trace_id"),
+            attributes={"agenda.entry_id": entry.id},
+        ):
+            decision = await self.planner.reconsider(asdict(entry), context)
         target = {"resume": "queued", "queue": "queued", "abandon": "abandoned"}[
             decision
         ]
         self.store.transition(entry.id, target)
+
+    def _assert_lease(self) -> None:
+        if self.lease_handle is not None:
+            WorkspaceLease(self.store.root).assert_current(self.lease_handle)
+
+    @staticmethod
+    def _quota_defer_is_due(entry: AgendaEntry, now: datetime) -> bool:
+        value = entry.metadata.get("quota_deferred_until")
+        if not value:
+            return True
+        try:
+            due = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return True
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=now.tzinfo)
+        return due <= now
+
+    def _consume_planner_quota(self) -> None:
+        decision = self.store.consume_quota(
+            category="planner",
+            limit=self.settings.planner_calls_per_window,
+            window_seconds=self.settings.quota_window_seconds,
+        )
+        if not decision.allowed:
+            raise PlannerQuotaExceeded(decision.reset_at)
+
+    def _defer_entry_for_quota(
+        self,
+        entry: AgendaEntry,
+        *,
+        reset_at: str,
+        reason: str,
+    ) -> None:
+        self.store.update_metadata(
+            entry.id,
+            quota_deferred_until=reset_at,
+            quota_deferred_reason=reason[:300],
+        )
+        self.store.transition(
+            entry.id,
+            "suspended",
+            progress_summary=f"Deferred by autonomy quota until {reset_at}.",
+        )
+
+    async def _queue_quota_idle(self, reset_at: str) -> None:
+        try:
+            reset = datetime.fromisoformat(reset_at)
+            if reset.tzinfo is None:
+                reset = reset.replace(tzinfo=utc_now().tzinfo)
+            wait_seconds = max(1, int((reset - utc_now()).total_seconds()))
+        except (TypeError, ValueError):
+            wait_seconds = self.settings.idle_min_seconds
+        idle = create_entry(
+            kind="idle",
+            title="Wait for autonomy quota",
+            description="Remain available until bounded planner capacity returns.",
+            origin="recovery",
+            evidence_refs=["system:autonomy-quota"],
+            completion_condition="Wait until the next quota capacity review.",
+            time_budget_seconds=max(
+                self.settings.idle_min_seconds,
+                min(self.settings.idle_max_seconds, wait_seconds),
+            ),
+            status="queued",
+            report_policy="silent",
+            metadata={"queue_priority": 20, "quota_backpressure": True},
+        )
+        self.store.add(idle)
+        await self.broadcast_snapshot()
 
 
 _executives: dict[str, AgendaExecutive] = {}
@@ -605,7 +1242,7 @@ def register_executive(client_uid: str, executive: AgendaExecutive) -> None:
 
 
 def get_executive(client_uid: str) -> Optional[AgendaExecutive]:
-    return _executives.get(client_uid)
+    return _executives.get(client_uid) or get_connected_executive()
 
 
 def get_connected_executive() -> Optional[AgendaExecutive]:
@@ -614,3 +1251,12 @@ def get_connected_executive() -> Optional[AgendaExecutive]:
 
 def unregister_executive(client_uid: str) -> None:
     _executives.pop(client_uid, None)
+
+
+def wake_executive(client_uid: str) -> bool:
+    """Wake only the executive bound to this client, without fallback routing."""
+    executive = _executives.get(client_uid)
+    if executive is None:
+        return False
+    executive.observation_changed()
+    return True

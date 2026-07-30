@@ -2,9 +2,12 @@
 
 ## Status
 
-This document describes the implemented global-agenda architecture. The
+This document describes the implemented Level 3 global-agenda architecture. The
 authoritative local store is `agenda/agenda.json`; the frontend exposes its
 timeline and controls through the agenda sidebar drawer.
+
+The staged delivery and acceptance boundaries are recorded in
+[AUTONOMY_LEVELS.md](AUTONOMY_LEVELS.md).
 
 ## Goal
 
@@ -222,6 +225,9 @@ turning validation failure into uncontrolled compute consumption.
 
 The executive owns lifecycle and priority. The LLM proposes intentions; the
 executive decides when an accepted intention runs, suspends, resumes, or ends.
+One live client owns it when a room is connected. A server-lifetime headless
+binding takes over otherwise, but deterministically parks movement and
+object-bound work until a live room returns.
 
 When no active, due, or queued work is immediately runnable, the executive also
 starts a connection-local settling transition while it generates the next
@@ -494,7 +500,7 @@ Continuous private behavior must not imply continuous demands on the user's
 attention. Receipts, focus mode, snooze, affinity, and attention budgets remain
 in force.
 
-## Proposed module boundaries
+## Implemented module boundaries
 
 ```text
 src/open_llm_vtuber/autonomy/
@@ -502,19 +508,59 @@ src/open_llm_vtuber/autonomy/
   agenda_context.py     # targeted workspace and memory retrieval
   agenda_planner.py     # structured LLM intention proposal
   agenda_policy.py      # validation, novelty, budgets, approval rules
+  step_policy.py        # deterministic activity-step capability and risk gate
   executive.py          # foreground ownership, preemption, resume selection
   idle_relocation.py    # bounded room snapshot, destination validation, movement
   activity.py           # step execution and progress/completion events
   driver.py             # event and fallback-cadence orchestration
+  reporting.py          # Presence Contract receipts and result delivery
+  runtime.py            # one live or headless owner per workspace
+  change_bus.py         # immediate in-process wakes; file polling remains fallback
+  lease.py              # renewable cross-process ownership and fencing tokens
+  telemetry.py          # content-free spans and long-horizon quality reports
 ```
 
 The agenda store should be local, bounded, and human-readable. Older completed
 entries can be compacted into summaries while recent entries retain enough
 structure for novelty and coherence evaluation.
 
-## Initial implementation slice
+## Level 3 operational boundary
 
-The first version should:
+Only the process holding `agenda/lease.json` may run the executive. The lease
+renews before expiry; a live owner may fence a remote headless owner, while
+equal-priority owners wait. Every fenced agenda mutation rechecks the current
+owner and monotonically increasing token under the agenda file lock. A stale
+process may finish in-memory cleanup, but it cannot commit more agenda work.
+
+External systems publish bounded signals through `POST /api/agenda/events`.
+`idempotency_key` is the producer's stable delivery key. The executive claims
+one due event under its lease, requires a proposed pursuit to cite that event's
+evidence reference, then commits the entry and acknowledgement atomically.
+Expired claims are recoverable; exhausted events and activity steps move to
+`GET /api/agenda/dead-letters`.
+
+Planner calls and each capability use a durable rolling quota window. Exhausted
+quota suspends or defers work until the recorded reset time. It never bypasses
+the step policy, approval gate, queue priority, spatial authorization, or
+Presence Contract.
+
+Operational spans are appended to `agenda/traces.jsonl` and rotated to
+`agenda/traces.1.jsonl`. They contain identifiers, timing, status, capability
+names, and counters—not prompts or results. A content-free quality summary is
+available from `GET /api/agenda/report?hours=168` or:
+
+```bash
+uv run python scripts/autonomy_report.py --hours 168
+```
+
+Operators can inspect `GET /api/agenda` for the current lease/fence and backlog
+health, and `GET /api/agenda/events?status=dead_letter` for failed external
+signals. A dead external event can be explicitly returned to the pending queue
+with `POST /api/agenda/events/{event_id}/retry`.
+
+## Baseline implementation invariants
+
+The implemented chain:
 
 1. Persist recent entries, one active entry, suspended entries, and a small
    future queue.

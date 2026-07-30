@@ -61,11 +61,9 @@ backend memory directly and returns only coarse labels.
 
 ## Interruption controls
 
-The when/how of help is governed by the autonomy settings (see
-`autonomy/settings.py`): `interruption_frequency` (low/medium/high),
-`help_style` (quiet/proactive/talkative), and `confidence_threshold`
-(strict/balanced/loose). Screen context feeds those decisions; it does not
-bypass them.
+The when/how of help is governed by the agenda entry's reporting policy plus
+the Presence Contract's freshness, focus mode, snooze, and attention-budget
+checks. Screen context feeds those decisions; it does not bypass them.
 
 ## Live desktop capture (remaining step)
 

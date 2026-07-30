@@ -1,6 +1,7 @@
 import io
 import json
 import wave
+from dataclasses import asdict
 from uuid import uuid4
 
 import numpy as np
@@ -14,7 +15,12 @@ from fastapi import (
 )
 from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    FileResponse,
+)
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
@@ -335,6 +341,11 @@ def init_furniture_routes() -> APIRouter:
             )
             if linked is not None:
                 await run_in_threadpool(
+                    agenda.update_metadata,
+                    linked.id,
+                    approval_status=decision,
+                )
+                await run_in_threadpool(
                     agenda.transition,
                     linked.id,
                     "queued" if decision == "approved" else "abandoned",
@@ -362,8 +373,12 @@ def init_furniture_routes() -> APIRouter:
     async def drawing_board_latest_image():
         path = await run_in_threadpool(drawing_board_image_path)
         if not path.exists():
-            return JSONResponse({"error": "no drawing has been generated yet"}, status_code=404)
-        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                {"error": "no drawing has been generated yet"}, status_code=404
+            )
+        return FileResponse(
+            path, media_type="image/png", headers={"Cache-Control": "no-store"}
+        )
 
     return router
 
@@ -439,6 +454,24 @@ def init_agenda_routes() -> APIRouter:
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=503)
+        from .autonomy.runtime import get_workspace_runtime
+
+        runtime = get_workspace_runtime(get_agenda_store().root)
+        payload["runtime"] = (
+            runtime.snapshot()
+            if runtime is not None
+            else {
+                "mode": "stopped",
+                "running": False,
+                "headless_enabled": False,
+                "clients": [],
+                "instance_id": None,
+                "lease_status": "standby",
+                "fencing_token": None,
+                "workspace_lease": {"held": False, "fencing_token": 0},
+                "last_error": None,
+            }
+        )
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @router.post("/pause")
@@ -463,9 +496,123 @@ def init_agenda_routes() -> APIRouter:
     async def reconsider_agenda():
         executive = get_connected_executive()
         if executive is None:
-            return JSONResponse({"error": "no connected agenda session"}, status_code=409)
+            return JSONResponse({"error": "no running agenda runtime"}, status_code=409)
         executive.wake()
         return JSONResponse({"accepted": True})
+
+    @router.get("/events")
+    async def agenda_events(status: str = "", limit: int = 100):
+        if status and status not in {
+            "pending",
+            "claimed",
+            "acknowledged",
+            "dead_letter",
+        }:
+            return JSONResponse({"error": "invalid event status"}, status_code=400)
+        if limit < 1 or limit > 500:
+            return JSONResponse({"error": "invalid event limit"}, status_code=400)
+        state = await run_in_threadpool(get_agenda_store().load)
+        events = [
+            event
+            for event in reversed(state.inbox)
+            if not status or event.status == status
+        ][:limit]
+        return JSONResponse(
+            {"events": [asdict(event) for event in events]},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/events")
+    async def publish_agenda_event(payload: dict = Body(...)):
+        if not isinstance(payload, dict):
+            return JSONResponse(
+                {"error": "event body must be an object"}, status_code=400
+            )
+        key = payload.get("idempotency_key")
+        source = payload.get("source")
+        kind = payload.get("kind")
+        summary = payload.get("summary")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (
+                key,
+                source,
+                kind,
+                summary,
+            )
+        ):
+            return JSONResponse(
+                {"error": ("idempotency_key, source, kind, and summary are required")},
+                status_code=400,
+            )
+        evidence_ref = payload.get("evidence_ref")
+        if not isinstance(evidence_ref, str) or not evidence_ref.strip():
+            evidence_ref = f"external:{source.strip()}:{key.strip()}"
+        event_payload = payload.get("payload", {})
+        if not isinstance(event_payload, dict):
+            return JSONResponse(
+                {"error": "event payload must be an object"}, status_code=400
+            )
+        from .autonomy.runtime import get_workspace_runtime
+
+        store = get_agenda_store()
+        runtime = get_workspace_runtime(store.root)
+        active_settings = runtime.active_settings if runtime is not None else None
+        backlog_limit = (
+            active_settings.event_backlog_limit if active_settings is not None else 500
+        )
+        try:
+            event = await run_in_threadpool(
+                store.publish_event,
+                idempotency_key=key,
+                source=source,
+                kind=kind,
+                summary=summary,
+                evidence_ref=evidence_ref,
+                payload=event_payload,
+                backlog_limit=backlog_limit,
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(asdict(event), headers={"Cache-Control": "no-store"})
+
+    @router.post("/events/{event_id}/retry")
+    async def retry_agenda_event(event_id: str):
+        try:
+            event = await run_in_threadpool(
+                get_agenda_store().retry_dead_event,
+                event_id,
+            )
+        except (KeyError, ValueError):
+            return JSONResponse({"error": "event cannot be retried"}, status_code=409)
+        return JSONResponse(asdict(event), headers={"Cache-Control": "no-store"})
+
+    @router.get("/dead-letters")
+    async def agenda_dead_letters(limit: int = 100):
+        if limit < 1 or limit > 500:
+            return JSONResponse(
+                {"error": "invalid dead-letter limit"},
+                status_code=400,
+            )
+        state = await run_in_threadpool(get_agenda_store().load)
+        items = list(reversed(state.dead_letters))[:limit]
+        return JSONResponse(
+            {"dead_letters": [asdict(item) for item in items]},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/report")
+    async def agenda_quality_report(hours: int = 168):
+        if hours < 1 or hours > 8760:
+            return JSONResponse({"error": "invalid report horizon"}, status_code=400)
+        from .autonomy.telemetry import build_chain_report
+
+        report = await run_in_threadpool(
+            build_chain_report,
+            get_agenda_store(),
+            horizon_hours=hours,
+        )
+        return JSONResponse(report, headers={"Cache-Control": "no-store"})
 
     @router.post("/entries/{entry_id}/abandon")
     async def abandon_agenda_entry(entry_id: str):
@@ -487,6 +634,13 @@ def init_agenda_routes() -> APIRouter:
     @router.post("/entries/{entry_id}/resume")
     async def resume_agenda_entry(entry_id: str):
         try:
+            state = await run_in_threadpool(get_agenda_store().load)
+            candidate = next(
+                (entry for entry in state.entries if entry.id == entry_id),
+                None,
+            )
+            if candidate is None or candidate.status == "blocked_approval":
+                raise ValueError("entry requires an explicit approval decision")
             entry = await run_in_threadpool(
                 get_agenda_store().transition, entry_id, "queued"
             )

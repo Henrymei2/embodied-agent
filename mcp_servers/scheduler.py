@@ -88,8 +88,24 @@ def schedule_task(
     Returns:
         Confirmation string with the new task's ID.
     """
-    if priority == 0:
-        return "Error: priority 0 is reserved for live user requests. Use 10 or higher."
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        return "Error: priority must be an integer from 1 to 100."
+    if not 1 <= priority <= 100:
+        return "Error: priority must be between 1 and 100."
+    if interval_seconds is not None and (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, (int, float))
+        or interval_seconds <= 0
+    ):
+        return "Error: interval_seconds must be a positive number."
+    if (
+        isinstance(delay_seconds, bool)
+        or not isinstance(delay_seconds, (int, float))
+        or delay_seconds < 0
+    ):
+        return "Error: delay_seconds must be a non-negative number."
+    if not isinstance(report, bool):
+        return "Error: report must be true or false."
 
     next_run = _iso(now_local() + timedelta(seconds=delay_seconds))
     entry = create_entry(

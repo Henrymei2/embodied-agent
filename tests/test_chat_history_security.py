@@ -8,6 +8,8 @@ from src.open_llm_vtuber.chat_history_manager import (
     _get_safe_history_path,
     _is_safe_filename,
     create_new_history,
+    get_history,
+    store_message,
 )
 
 
@@ -58,3 +60,21 @@ def test_valid_history_is_created_under_character_directory(tmp_path, monkeypatc
 
     assert path.is_file()
     assert path.parent == (tmp_path / "chat_history" / "character-1").resolve()
+
+
+def test_stable_message_id_makes_history_delivery_idempotent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    history_uid = create_new_history("character-1")
+
+    for _ in range(2):
+        store_message(
+            conf_uid="character-1",
+            history_uid=history_uid,
+            role="ai",
+            content="A retry-safe autonomous result.",
+            message_id="agenda-report:entry-1",
+        )
+
+    messages = get_history("character-1", history_uid)
+    assert len(messages) == 1
+    assert messages[0]["message_id"] == "agenda-report:entry-1"

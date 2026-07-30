@@ -381,6 +381,44 @@ class PresenceLedger:
         self.save()
         return receipt
 
+    def record_blocked_action(
+        self,
+        *,
+        direction: str,
+        action: str,
+        score: float,
+        reason: str,
+        observation: Observation,
+        error: str,
+        now: Optional[datetime] = None,
+    ) -> PresenceReceipt:
+        """Retain an inspectable receipt for work denied before dispatch."""
+        now = _as_utc(now)
+        receipt = PresenceReceipt(
+            receipt_id=uuid4().hex,
+            created_at=now.isoformat(),
+            direction=direction,
+            action=action,
+            score=round(score, 4),
+            attention_cost=attention_cost(action),
+            reason=reason,
+            signals={
+                "user_present": observation.user_present,
+                "activity": _idle_band(observation.idle_seconds),
+                "focus_mode": observation.focus_mode,
+                "quiet_minutes": None,
+                "hour_of_day": observation.hour_of_day,
+                "habit_id": None,
+            },
+            status="canceled",
+            completed_at=now.isoformat(),
+            error=str(error)[:500],
+        )
+        self.receipts.append(receipt)
+        self.receipts = self.receipts[-self.receipt_retention :]
+        self.save()
+        return receipt
+
     def start_action(
         self,
         receipt_id: str,

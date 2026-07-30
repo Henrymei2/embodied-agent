@@ -75,9 +75,13 @@ scheduling, and consent-aware autonomous behavior.
   from the stored stage.
 - **Agent runtime:** priority-queued user, scheduled, and autonomous work with
   workspace-sandboxed file and shell tools.
-- **Autonomous behavior:** a scored planner (usefulness, novelty,
-  intrusiveness, risk, cadence, learned direction affinity) chooses among
-  curiosity, care, housekeeping, growth, social, and work directions.
+- **Autonomous behavior:** a persistent global agenda generates grounded,
+  bounded intentions, advances them through validated interruptible steps, and
+  safely continues under a headless server owner when the room UI disconnects.
+  Renewable fenced ownership, an idempotent event inbox, durable quotas/dead
+  letters, and content-free chain telemetry make continuous behavior safe to
+  operate across server processes. See
+  [the completed 3× autonomy roadmap](doc/AUTONOMY_LEVELS.md).
 - **Presence Contract:** autonomous actions spend a refillable attention budget,
   respect focus/snooze state, produce why-I-acted receipts, and learn bounded
   preferences from explicit feedback.

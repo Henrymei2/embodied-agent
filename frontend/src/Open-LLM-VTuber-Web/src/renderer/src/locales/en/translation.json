@@ -206,7 +206,7 @@
     "focusOff": "Focus off",
     "snoozed": "Proactive speech is snoozed",
     "latestReceipt": "Why I acted",
-    "receiptContext": "{{activity}} · {{score}}% confidence",
+    "receiptContext": "{{activity}} · {{score}}% confidence · {{status}}",
     "helpful": "Helpful",
     "notNow": "Not now",
     "snooze": "Snooze 1h",

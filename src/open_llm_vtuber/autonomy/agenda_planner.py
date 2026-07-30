@@ -53,6 +53,7 @@ def _json_object(text: str) -> dict[str, Any]:
 @dataclass
 class StructuredAgendaPlanner:
     complete: LLMComplete
+    default_pursuit_seconds: int = 900
 
     async def choose_idle_placement(
         self,
@@ -111,7 +112,9 @@ class StructuredAgendaPlanner:
             origin="autonomous",
             evidence_refs=[str(value) for value in raw["evidence_refs"]],
             completion_condition=str(raw["completion_condition"])[:1000],
-            time_budget_seconds=int(raw["time_budget_seconds"]),
+            time_budget_seconds=int(
+                raw.get("time_budget_seconds", self.default_pursuit_seconds)
+            ),
             status="proposed",
             preferred_object=raw.get("preferred_object"),
             required_capabilities=[

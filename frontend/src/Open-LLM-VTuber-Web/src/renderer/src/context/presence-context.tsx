@@ -56,6 +56,8 @@ export interface PresenceReceipt {
   score: number;
   attention_cost: number;
   reason: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "canceled";
+  error: string | null;
   signals: {
     user_present: boolean;
     activity: "active" | "recently-active" | "idle" | "away" | "unknown";

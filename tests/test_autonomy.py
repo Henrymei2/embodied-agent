@@ -1,6 +1,7 @@
 """Configuration tests for agenda-driven autonomy."""
 
 from src.open_llm_vtuber.autonomy import AutonomySettings
+from src.open_llm_vtuber.config_manager.autonomy import AutonomyConfig
 
 
 def test_agenda_settings_apply_safe_lower_bounds():
@@ -19,3 +20,16 @@ def test_agenda_settings_apply_safe_lower_bounds():
     assert settings.idle_max_seconds == 5
     assert settings.planner_retry_limit == 1
     assert settings.fallback_reconsideration_seconds == 10
+
+
+def test_legacy_tick_setting_migrates_to_the_agenda_cadence():
+    config = AutonomyConfig.model_validate(
+        {
+            "tick_seconds": 45,
+            "interruption_frequency": "medium",
+            "help_style": "proactive",
+            "confidence_threshold": "balanced",
+        }
+    )
+
+    assert config.fallback_reconsideration_seconds == 45

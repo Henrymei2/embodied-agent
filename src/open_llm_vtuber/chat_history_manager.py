@@ -16,6 +16,8 @@ class HistoryMessage(TypedDict):
     # Optional display information for the message
     name: Optional[str]
     avatar: Optional[str]
+    # Stable identifier for retry-safe autonomous messages.
+    message_id: Optional[str]
 
 
 def _is_safe_filename(filename: str) -> bool:
@@ -112,6 +114,7 @@ def store_message(
     content: str,
     name: str | None = None,
     avatar: str | None = None,
+    message_id: str | None = None,
 ):
     """Store a message in a specific history file
 
@@ -122,6 +125,7 @@ def store_message(
         content: Message content
         name: Optional display name (default None)
         avatar: Optional avatar URL (default None)
+        message_id: Optional stable identifier used to suppress delivery retries
     """
     if not conf_uid or not history_uid:
         if not conf_uid:
@@ -142,6 +146,14 @@ def store_message(
             logger.error(f"Failed to load history file: {filepath}")
             pass
 
+    if message_id and any(
+        item.get("message_id") == message_id
+        for item in history_data
+        if isinstance(item, dict)
+    ):
+        logger.debug(f"Message {message_id} already exists in {filepath}")
+        return
+
     now_str = now_local().isoformat(timespec="seconds")
     new_item = {
         "role": role,
@@ -154,6 +166,8 @@ def store_message(
         new_item["name"] = name
     if avatar is not None:
         new_item["avatar"] = avatar
+    if message_id is not None:
+        new_item["message_id"] = message_id
 
     history_data.append(new_item)
 

@@ -93,11 +93,20 @@ including what that evidence cannot settle on its own.
   timers, reminders, restart recovery, and atomic due claims.
 - Presence Contract adds a finite attention budget, focus mode, snooze, coarse
   presence signals, receipts, and explicit helpful/dismissed feedback.
-- A server-owned supervisor survives frontend disconnects, elects one active
-  client for each workspace, and wakes immediately on meaningful presence or
-  screen-context changes while retaining a periodic safety heartbeat.
-- Silent work bypasses transcript/TTS output, user work preempts background
-  requests, and state/habit learning advances only after successful execution.
+- A workspace-scoped runtime elects one active client, hands ownership to
+  another connected client on disconnect, and prevents competing agenda loops.
+  A safe server-lifetime headless owner takes over when no UI is connected;
+  movement and object-bound work park until the embodied room returns.
+- In-process agenda and presence changes wake the executive immediately.
+  Changes made by MCP subprocesses are noticed through a persisted revision and
+  bounded poll; due scheduled work preempts autonomous work.
+- Silent work bypasses transcript/TTS output, all LLM work uses the priority
+  queue, and reported results pass through focus, snooze, freshness, budget,
+  and receipt checks. A persistent report outbox survives restarts and retries
+  deferred delivery after presence changes.
+- Repeated failed planning passes open a persistent exponential cooldown, and
+  runtime mode, completion rate, report backlog, planner health, and errors are
+  visible through the agenda API and drawer.
 
 ### Voice and visual presence
 
@@ -139,10 +148,10 @@ Persistent stage <---- validated result ---+
 
 | Original deliverable | Status | Evidence |
 | --- | --- | --- |
-| 2D room and navigation | Complete | stage v8, world model, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
+| 2D room and navigation | Complete | stage v9, world model, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
 | Memory and personality | Complete | contextual/daily/long-term memory, hybrid keyword/embedding retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
-| Continuous autonomous behavior | Complete | persistent agenda, structured steps, true user preemption, unified schedules, Presence Contract |
+| Continuous autonomous behavior | Level 3 operational | fenced renewable cross-process ownership, durable idempotent event inbox, quotas and dead letters, content-free traces and long-horizon chain reports, plus all Level 1–2 continuity and safety gates |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |
 | Calendar object/tool | Complete | Google OAuth, primary-calendar CRUD, connection window, dual proximity enforcement |
 | Just-in-time contextual help | Complete | coarse screen context, confidence/frequency gating, daily-memory task changes |
@@ -154,8 +163,8 @@ Persistent stage <---- validated result ---+
 
 ## 5. External integration boundaries
 
-The remaining partial items require authority or infrastructure outside this
-repository rather than unfinished local code:
+Some remaining partial items require authority or infrastructure outside this
+repository:
 
 - Google Calendar, Drive, and Gmail require an operator-supplied OAuth client and
   explicit user consent; the application implements token storage, refresh, and

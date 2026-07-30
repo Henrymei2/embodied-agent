@@ -14,6 +14,7 @@ from ..stage_state_manager import load_stage_state, load_world
 IdlePosture = Literal["standing", "sitting"]
 _SEATED_OBJECT_IDS = frozenset({"sofa", "reading_chair"})
 IDLE_RELOCATION_TIMEOUT_SECONDS = 15.0
+MAX_IDLE_SCENE_OBJECTS = 128
 
 
 @dataclass(frozen=True)
@@ -45,19 +46,26 @@ class IdlePlacement:
 
 
 def idle_scene_snapshot(conf_uid: str) -> IdleScene:
-    """Read all non-avatar world objects and the persisted avatar position."""
+    """Read a bounded nearest-first room view and the persisted avatar position."""
     world = load_world(conf_uid)
     origin = world.agent_position
+    ordered_objects = sorted(
+        world.objects,
+        key=lambda obj: (
+            obj.position.distance_to(origin) if origin is not None else 0.0,
+            obj.id,
+        ),
+    )[:MAX_IDLE_SCENE_OBJECTS]
     objects = tuple(
         IdleObject(
             object_id=obj.id,
-            label=obj.label,
+            label=str(obj.label)[:160],
             x=obj.position.x,
             y=obj.position.y,
             distance=obj.position.distance_to(origin) if origin is not None else None,
             posture="sitting" if obj.id in _SEATED_OBJECT_IDS else "standing",
         )
-        for obj in world.objects
+        for obj in ordered_objects
     )
     current = (origin.x, origin.y) if origin is not None else None
     return IdleScene(current_position=current, objects=objects)

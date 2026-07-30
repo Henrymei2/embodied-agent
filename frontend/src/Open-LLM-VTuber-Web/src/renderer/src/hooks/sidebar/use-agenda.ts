@@ -12,9 +12,46 @@ export interface AgendaEntry {
 }
 
 export interface AgendaSnapshot {
+  revision: number;
+  fencing_token: number;
   paused: boolean;
   active: AgendaEntry | null;
   entries: AgendaEntry[];
+  health: {
+    terminal: Record<'completed' | 'failed' | 'abandoned', number>;
+    completion_rate: number | null;
+    reports: Record<'pending' | 'delivering' | 'delivered' | 'failed', number>;
+    events: Record<'pending' | 'claimed' | 'acknowledged' | 'dead_letter', number>;
+    dead_letters: number;
+    quota: {
+      window_started_at: string;
+      planner_calls: number;
+      capability_calls: Record<string, number>;
+    };
+    planner: {
+      consecutive_failures: number;
+      circuit_open_until: string | null;
+      last_error: string | null;
+    };
+  };
+  runtime: {
+    mode: 'live' | 'headless' | 'stopped';
+    running: boolean;
+    headless_enabled: boolean;
+    clients: string[];
+    instance_id: string | null;
+    lease_status: 'held' | 'standby' | 'fenced';
+    fencing_token: number | null;
+    workspace_lease: {
+      held: boolean;
+      owner_id?: string;
+      holder_label?: string;
+      fencing_token?: number;
+      remaining_seconds?: number;
+      error?: string;
+    };
+    last_error: string | null;
+  };
   updated_at: string;
 }
 

@@ -21,6 +21,12 @@ from src.open_llm_vtuber.autonomy.idle_relocation import (
     relocate_for_idle,
     validate_idle_placement,
 )
+from src.open_llm_vtuber.autonomy.observation import (
+    clear_client_presence,
+    update_client_presence,
+)
+from src.open_llm_vtuber.autonomy.presence import PresenceLedger
+from src.open_llm_vtuber.autonomy.reporting import AgendaReporter
 from src.open_llm_vtuber.autonomy.settings import AutonomySettings
 from src.open_llm_vtuber.stage_state_manager import get_default_stage
 from src.open_llm_vtuber.world_model import world_from_stage
@@ -273,7 +279,7 @@ def _executive(
     *,
     scene: IdleScene | None = None,
     emitted: list[dict] | None = None,
-    report_completion=None,
+    report_result=None,
 ):
     store = AgendaStore(tmp_path)
 
@@ -294,8 +300,20 @@ def _executive(
         emit=emit,
         room_snapshot=lambda: scene or _scene("sofa", "bed"),
         relocate_idle=relocate,
-        report_completion=report_completion,
+        report_result=report_result,
     )
+
+
+async def _complete_entry(executive, store, entry_id: str) -> None:
+    for _ in range(10):
+        await executive._advance()
+        task = executive._entry_task
+        if task is not None:
+            await asyncio.wait_for(asyncio.shield(task), timeout=1)
+        entry = next(item for item in store.load().entries if item.id == entry_id)
+        if entry.status == "completed":
+            return
+    raise AssertionError(f"entry {entry_id} did not complete")
 
 
 async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_path):
@@ -348,7 +366,7 @@ async def test_runnable_queued_work_does_not_trigger_idle_relocation(tmp_path):
     queued = _pursuit(title="Already queued")
     store.add(queued)
 
-    assert await executive._advance() is True
+    await _complete_entry(executive, store, queued.id)
     assert planner.choose_calls == 0
     assert relocations == []
     assert store.load().entries[0].status == "completed"
@@ -383,7 +401,7 @@ async def test_invalid_planner_output_and_relocation_failure_do_not_block_succes
     assert any(entry.title == proposal.title for entry in store.load().entries)
 
 
-async def test_held_and_paused_states_settle_once_per_episode(tmp_path):
+async def test_held_state_settles_once_and_pause_stops_relocation(tmp_path):
     proposal = _pursuit(status="blocked_approval", requires_approval=True)
     planner = _LifecyclePlanner(proposal)
 
@@ -397,15 +415,15 @@ async def test_held_and_paused_states_settle_once_per_episode(tmp_path):
     assert await executive._advance() is False
     assert planner.choose_calls == 1
 
-    store.pause(True)
+    await executive.pause(True)
+    assert await executive._advance() is False
+    assert await executive._advance() is False
+    assert planner.choose_calls == 1
+
+    await executive.pause(False)
     assert await executive._advance() is False
     assert await executive._advance() is False
     assert planner.choose_calls == 2
-
-    await executive.pause(False)
-    store.pause(True)
-    assert await executive._advance() is False
-    assert planner.choose_calls == 3
 
 
 async def test_user_preempts_settling_without_creating_an_idle_entry(tmp_path):
@@ -510,11 +528,8 @@ async def test_completion_reporting_honors_entry_policy(
     proposal = _pursuit(title="Unused successor", status="proposed")
     planner = _LifecyclePlanner(proposal)
 
-    async def is_noteworthy(_entry, _summary, _context):
-        return noteworthy
-
-    planner.is_noteworthy = is_noteworthy
     reports: list[tuple[str, str, str]] = []
+    emitted: list[dict] = []
 
     async def relocate(_placement):
         return True
@@ -522,11 +537,32 @@ async def test_completion_reporting_honors_entry_policy(
     async def report(entry, summary):
         reports.append((entry.title, entry.status, summary))
 
+    async def emit(payload):
+        emitted.append(payload)
+
+    async def evaluate_completion(_entry, _evidence):
+        if noteworthy:
+            return True, "Completed a substantial, useful autonomous result."
+        return True, "Done."
+
+    planner.evaluate_completion = evaluate_completion
+    settings = AutonomySettings()
+    reporter = AgendaReporter(
+        "client",
+        PresenceLedger.load(tmp_path, settings),
+        emit,
+        report,
+    )
+    update_client_presence(
+        "client",
+        {"idle_seconds": 0, "user_present": True, "focus_mode": False},
+    )
     store, executive = _executive(
         tmp_path,
         planner,
         relocate,
-        report_completion=report,
+        emitted=emitted,
+        report_result=reporter.deliver,
     )
     queued = _pursuit(
         title="Reportable autonomous work",
@@ -534,11 +570,20 @@ async def test_completion_reporting_honors_entry_policy(
     )
     store.add(queued)
 
-    assert await executive._advance() is True
-    assert len(reports) == expected_reports
-    if reports:
-        assert reports[0] == (
-            "Reportable autonomous work",
-            "completed",
-            "Completed the queued work.",
-        )
+    try:
+        await _complete_entry(executive, store, queued.id)
+        assert await executive._deliver_due_report() is True
+        assert len(reports) == expected_reports
+        assert store.load().reports[0].status == "delivered"
+        if reports:
+            assert reports[0] == (
+                "Reportable autonomous work",
+                "completed",
+                (
+                    "Completed a substantial, useful autonomous result."
+                    if noteworthy
+                    else "Done."
+                ),
+            )
+    finally:
+        clear_client_presence("client")

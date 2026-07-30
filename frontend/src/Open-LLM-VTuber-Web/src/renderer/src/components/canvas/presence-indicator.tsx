@@ -26,7 +26,8 @@ function PresenceIndicator(): JSX.Element {
   const maxBudget = state.attention_budget_max ?? 0;
   const fillPercent =
     maxBudget > 0 ? Math.min(100, (budget / maxBudget) * 100) : 0;
-  const receiptNeedsFeedback = latestReceipt && latestReceipt.feedback === null;
+  const receiptNeedsFeedback =
+    latestReceipt?.status === "succeeded" && latestReceipt.feedback === null;
 
   return (
     <Box position="relative">
@@ -198,8 +199,18 @@ function PresenceIndicator(): JSX.Element {
                       {t("presence.receiptContext", {
                         activity: latestReceipt.signals.activity,
                         score: Math.round(latestReceipt.score * 100),
+                        status: latestReceipt.status,
                       })}
                     </Text>
+                    {latestReceipt.error && (
+                      <Text
+                        {...typography.caption}
+                        mt="1"
+                        color={status.dangerFg}
+                      >
+                        {latestReceipt.error}
+                      </Text>
+                    )}
                     <HStack mt="3" gap="2">
                       <Button
                         size="xs"

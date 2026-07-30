@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Coroutine, Dict, Optional
+from typing import Any, Awaitable, Callable, Coroutine, Dict, Optional
 
 from loguru import logger
 
@@ -59,6 +59,7 @@ class ClientRequestQueue:
         self._current_priority: Optional[int] = None
         self._current_item: Optional[_QueueItem] = None
         self._pending_keys: set[str] = set()
+        self._canceled_keys: set[str] = set()
         self._sequence = 0
         self._stopping = False
 
@@ -166,6 +167,65 @@ class ClientRequestQueue:
         )
         return True
 
+    async def enqueue_and_wait(
+        self,
+        *,
+        coro_factory: Callable[[], Coroutine],
+        priority: int,
+        label: str,
+        dedupe_key: str,
+        entry_id: Optional[str] = None,
+        work_class: str = "autonomous",
+    ) -> Any:
+        """Enqueue work and return its result to the lifecycle that owns it."""
+        loop = asyncio.get_running_loop()
+        result: asyncio.Future = loop.create_future()
+
+        async def tracked_work():
+            try:
+                value = await coro_factory()
+            except asyncio.CancelledError:
+                if not result.done():
+                    result.cancel()
+                raise
+            except BaseException as exc:
+                if not result.done():
+                    result.set_exception(exc)
+                raise
+            if not result.done():
+                result.set_result(value)
+            return value
+
+        accepted = await self.enqueue(
+            coro_factory=tracked_work,
+            priority=priority,
+            label=label,
+            dedupe_key=dedupe_key,
+            entry_id=entry_id,
+            work_class=work_class,
+        )
+        if not accepted:
+            raise RuntimeError(f"duplicate queued work: {dedupe_key}")
+        try:
+            return await result
+        except asyncio.CancelledError:
+            self.cancel_work(dedupe_key)
+            raise
+
+    def cancel_work(self, dedupe_key: str) -> bool:
+        """Cancel current or not-yet-started work by its stable key."""
+        if not dedupe_key:
+            return False
+        self._canceled_keys.add(dedupe_key)
+        if (
+            self._current_item is not None
+            and self._current_item.dedupe_key == dedupe_key
+            and self._current_task is not None
+            and not self._current_task.done()
+        ):
+            self._current_task.cancel()
+        return dedupe_key in self._pending_keys
+
     def _dispose_item(
         self,
         item: _QueueItem,
@@ -190,6 +250,11 @@ class ClientRequestQueue:
         while True:
             try:
                 item: _QueueItem = await self._queue.get()
+                if item.dedupe_key and item.dedupe_key in self._canceled_keys:
+                    self._canceled_keys.discard(item.dedupe_key)
+                    self._dispose_item(item, "canceled", None)
+                    self._queue.task_done()
+                    continue
                 logger.info(
                     f"LLMQueue: executing '{item.label}' "
                     f"(priority {item.priority}) for {self.client_uid}"
@@ -234,6 +299,8 @@ class ClientRequestQueue:
                     self._current_task = None
                     self._current_priority = None
                     self._current_item = None
+                    if item.dedupe_key:
+                        self._canceled_keys.discard(item.dedupe_key)
                     self._dispose_item(item, status, error)
                     self._queue.task_done()
             except asyncio.CancelledError:

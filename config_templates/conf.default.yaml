@@ -41,14 +41,21 @@ system_config:
   # work) and how to deliver it, subject to these interruption controls.
   autonomy_config:
     enabled: true
+    headless_enabled: true
+    lease_ttl_seconds: 30
+    lease_renew_seconds: 10
+    lease_retry_seconds: 2
     default_pursuit_seconds: 900
     maximum_pursuit_seconds: 1800
     idle_min_seconds: 60
     idle_max_seconds: 600
     planner_retry_limit: 3
     planner_retry_backoff_seconds: 2
+    planner_circuit_failure_threshold: 3
+    planner_circuit_max_seconds: 1800
     step_timeout_seconds: 120
     fallback_reconsideration_seconds: 300
+    store_poll_seconds: 1
     restart_recovery_grace_seconds: 10
     terminal_history_hours: 24
     terminal_history_entries: 30
@@ -58,6 +65,19 @@ system_config:
     attention_refill_per_hour: 1.0
     receipt_retention: 50
     default_snooze_minutes: 60
+    report_retry_seconds: 60
+    report_retry_limit: 5
+    report_backlog_limit: 20
+    event_backlog_limit: 500
+    event_retry_limit: 5
+    event_retry_seconds: 60
+    event_claim_timeout_seconds: 300
+    quota_window_seconds: 3600
+    planner_calls_per_window: 120
+    capability_calls_per_window: 30
+    execution_failure_limit: 3
+    trace_max_bytes: 10000000
+    chain_report_hours: 168
 
 # configuration for the default character
 character_config:

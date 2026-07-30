@@ -211,9 +211,11 @@ async def test_autonomous_completion_reaches_live_and_persisted_conversation(
     )
 
     assert sent[0]["type"] == "autonomous-message"
+    assert sent[0]["message_id"] == f"agenda-report:{entry.id}"
     assert sent[0]["display_text"]["text"] == (
         "Finished background research\n\nFound a useful source and saved the key point."
     )
     assert stored[0]["history_uid"] == "current-history"
     assert stored[0]["role"] == "ai"
     assert stored[0]["content"] == sent[0]["display_text"]["text"]
+    assert stored[0]["message_id"] == sent[0]["message_id"]

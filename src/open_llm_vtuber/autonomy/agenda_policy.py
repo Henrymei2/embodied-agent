@@ -8,6 +8,7 @@ from difflib import SequenceMatcher
 from typing import Iterable
 
 from .agenda import AgendaEntry, ENTRY_KINDS, REPORT_POLICIES
+from .step_policy import capability_requires_approval
 
 
 @dataclass(frozen=True)
@@ -40,14 +41,29 @@ class AgendaPolicy:
         if proposal.budget.time_budget_seconds > self.maximum_pursuit_seconds:
             return PolicyVerdict(False, "time budget exceeds configured maximum")
         if not set(proposal.motivation.evidence_refs).issubset(supplied_evidence_refs):
-            return PolicyVerdict(False, "motivation cites evidence outside planner context")
+            return PolicyVerdict(
+                False, "motivation cites evidence outside planner context"
+            )
         missing = set(proposal.required_capabilities) - capabilities
         if missing:
-            return PolicyVerdict(False, f"missing capabilities: {', '.join(sorted(missing))}")
+            return PolicyVerdict(
+                False, f"missing capabilities: {', '.join(sorted(missing))}"
+            )
         if proposal.preferred_object and proposal.preferred_object not in object_names:
             return PolicyVerdict(False, "preferred furniture is not present")
         if proposal.requires_approval and proposal.report_policy != "ask_first":
             return PolicyVerdict(False, "consequential work must use ask_first")
+        consequential = sorted(
+            capability
+            for capability in proposal.required_capabilities
+            if capability_requires_approval(capability)
+        )
+        if consequential and not proposal.requires_approval:
+            return PolicyVerdict(
+                False,
+                "consequential capabilities require approval: "
+                + ", ".join(consequential),
+            )
         if self._is_duplicate(proposal, comparison_entries):
             return PolicyVerdict(False, "semantic duplicate of recent or pending work")
         return PolicyVerdict(True, "accepted")

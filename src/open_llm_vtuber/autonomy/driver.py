@@ -1,4 +1,4 @@
-"""Connection-scoped driver for the persistent global agenda."""
+"""Live or headless driver for the persistent global agenda."""
 
 from __future__ import annotations
 
@@ -37,9 +37,10 @@ async def _publish_completion(
     entry,
     summary: str,
 ) -> None:
-    """Append one silent autonomous result to the live and persisted transcript."""
+    """Append one Presence-approved autonomous result to the conversation."""
     result = summary.strip() or "The autonomous task finished."
     message = f"{entry.title}\n\n{result}"[:4000]
+    message_id = f"agenda-report:{entry.id}"
     display = DisplayText(
         text=message,
         name=context.character_config.character_name,
@@ -49,6 +50,7 @@ async def _publish_completion(
         json.dumps(
             {
                 "type": "autonomous-message",
+                "message_id": message_id,
                 "display_text": display.to_dict(),
             },
             ensure_ascii=False,
@@ -62,6 +64,7 @@ async def _publish_completion(
             content=message,
             name=context.character_config.character_name,
             avatar=context.character_config.avatar,
+            message_id=message_id,
         )
 
 
@@ -76,9 +79,13 @@ async def agenda_loop(
 
     from ..client_registry import get_client_context, get_client_send
     from ..memory import make_llm_complete
+    from .lease import WorkspaceLease, current_lease
+    from .runtime import HEADLESS_CLIENT_UID
 
     context = get_client_context(client_uid)
     send = get_client_send(client_uid)
+    connected_client = client_uid != HEADLESS_CLIENT_UID
+    lease_handle = current_lease()
     llm = getattr(getattr(context, "agent_engine", None), "_llm", None)
     if context is None or send is None or llm is None:
         logger.warning("agenda: configured agent does not expose a stateless LLM")
@@ -94,7 +101,17 @@ async def agenda_loop(
 
     async def run_step(entry, checkpoint) -> str:
         from ..conversations.single_conversation import process_single_conversation
+        from ..conversations.llm_request_queue import (
+            PRIORITY_PASSIVE,
+            PRIORITY_SCHEDULED,
+            get_queue,
+        )
 
+        if lease_handle is not None:
+            WorkspaceLease(lease_handle.workspace_root).assert_current(
+                lease_handle,
+                minimum_remaining_seconds=1,
+            )
         instruction = (
             "Execute exactly this validated agenda step. Do not expand its scope. "
             "Use furniture movement and tools normally, respecting every approval "
@@ -104,21 +121,47 @@ async def agenda_loop(
             f"{json.dumps(checkpoint.arguments, ensure_ascii=False)}\n"
             f"Purpose: {checkpoint.purpose}"
         )
-        result = await process_single_conversation(
-            context=context,
-            websocket_send=send,
-            client_uid=client_uid,
-            user_input=instruction,
-            metadata={
-                "agenda_entry_id": entry.id,
-                "agenda_step_id": checkpoint.step_id,
-                "autonomous": True,
-                "report": False,
-                "skip_history": True,
-                "skip_memory": False,
-            },
+
+        async def execute_step():
+            return await process_single_conversation(
+                context=context,
+                websocket_send=send,
+                client_uid=client_uid,
+                user_input=instruction,
+                metadata={
+                    "agenda_entry_id": entry.id,
+                    "agenda_step_id": checkpoint.step_id,
+                    "autonomous": True,
+                    "report": False,
+                    "skip_history": True,
+                    "skip_memory": False,
+                },
+            )
+
+        priority = PRIORITY_SCHEDULED if entry.kind == "scheduled" else PRIORITY_PASSIVE
+        result = await get_queue(client_uid).enqueue_and_wait(
+            coro_factory=execute_step,
+            priority=priority,
+            label=f"agenda:{entry.id}:{checkpoint.step_id}",
+            dedupe_key=f"agenda:{entry.id}:{checkpoint.step_id}",
+            entry_id=entry.id,
+            work_class="autonomous",
         )
         return _agenda_step_text(result)
+
+    async def run_report(entry, summary: str) -> None:
+        if lease_handle is not None:
+            WorkspaceLease(lease_handle.workspace_root).assert_current(
+                lease_handle,
+                minimum_remaining_seconds=1,
+            )
+        await _publish_completion(
+            send=send,
+            context=context,
+            conf_uid=context.character_config.conf_uid,
+            entry=entry,
+            summary=summary,
+        )
 
     tool_manager = getattr(context.agent_engine, "_tool_manager", None)
     capabilities = set(getattr(tool_manager, "tools", {}).keys())
@@ -133,35 +176,52 @@ async def agenda_loop(
     conf_uid = context.character_config.conf_uid
 
     async def relocate_idle(placement) -> bool:
+        if lease_handle is not None:
+            WorkspaceLease(lease_handle.workspace_root).assert_current(
+                lease_handle,
+                minimum_remaining_seconds=1,
+            )
         return await relocate_for_idle(
             client_uid=client_uid,
             conf_uid=conf_uid,
             placement=placement,
         )
 
-    async def report_completion(entry, summary: str) -> None:
-        # A dedicated text event is not filtered by microphone/audio state and
-        # enters the transcript without forcing proactive speech.
-        await _publish_completion(
-            send=send,
-            context=context,
-            conf_uid=conf_uid,
-            entry=entry,
-            summary=summary,
-        )
+    capability_objects = (
+        {
+            capability: required
+            for capability in capabilities
+            if (required := tool_manager.get_required_object(capability)) is not None
+        }
+        if tool_manager is not None
+        else {}
+    )
+    reporter = None
+    if presence is not None:
+        from .reporting import AgendaReporter
+
+        reporter = AgendaReporter(client_uid, presence, emit, run_report)
 
     executive = AgendaExecutive(
         client_uid=client_uid,
         store=get_agenda_store(),
-        planner=StructuredAgendaPlanner(complete),
+        planner=StructuredAgendaPlanner(
+            complete,
+            default_pursuit_seconds=settings.default_pursuit_seconds,
+        ),
         settings=settings,
         run_step=run_step,
         emit=emit,
         capabilities=capabilities,
         object_names=object_names,
-        room_snapshot=lambda: idle_scene_snapshot(conf_uid),
-        relocate_idle=relocate_idle,
-        report_completion=report_completion,
+        capability_objects=capability_objects,
+        report_result=reporter.deliver if reporter is not None else None,
+        connected_client=connected_client,
+        lease_handle=lease_handle,
+        room_snapshot=(
+            (lambda: idle_scene_snapshot(conf_uid)) if connected_client else None
+        ),
+        relocate_idle=relocate_idle if connected_client else None,
     )
     memory_manager = getattr(context.agent_engine, "_memory_manager", None)
     if memory_manager is not None:
@@ -169,7 +229,8 @@ async def agenda_loop(
     register_executive(client_uid, executive)
     logger.info(
         f"agenda: loop started for {client_uid} "
-        f"(fallback={settings.fallback_reconsideration_seconds}s, "
+        f"(mode={'live' if connected_client else 'headless'}, "
+        f"fallback={settings.fallback_reconsideration_seconds}s, "
         f"proposal_retries={settings.planner_retry_limit})"
     )
     try:
