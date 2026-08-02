@@ -75,9 +75,11 @@ class ToolManager:
         formatted_tools_claude: List[Dict[str, Any]] = None,
         initial_tools_dict: Dict[str, FormattedTool] = None,
         conf_uid: str | None = None,
+        scene_mode: Literal["normal", "vr"] = "normal",
     ) -> None:
         self.tools: Dict[str, FormattedTool] = initial_tools_dict or {}
         self.conf_uid = conf_uid
+        self.scene_mode = scene_mode
         self._formatted_tools_openai: List[Dict[str, Any]] = (
             formatted_tools_openai or []
         )
@@ -110,10 +112,13 @@ class ToolManager:
             )
             return []
         try:
-            from ..stage_state_manager import get_reachable_objects
+            from ..scene_state import get_scene_reachable_objects
 
             # No distance argument: each object's own reach decides.
-            return get_reachable_objects(self.conf_uid)
+            return get_scene_reachable_objects(
+                self.conf_uid,
+                mode=self.scene_mode,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 f"TM: Could not resolve scene proximity; failing closed: {exc}"

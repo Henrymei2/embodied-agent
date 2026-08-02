@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import ssl
+import urllib.parse
 import urllib.error
 import urllib.request
 from typing import Any
@@ -27,6 +29,11 @@ ACTION_TIMEOUT_SECONDS = 15.0
 def get_conf_uid() -> str:
     """Return this MCP subprocess's session-bound character configuration."""
     return os.environ.get("EMBODIED_AGENT_CONF_UID", DEFAULT_CONF_UID)
+
+
+def get_scene_mode() -> str:
+    value = os.environ.get("EMBODIED_AGENT_SCENE_MODE", "normal")
+    return "vr" if value == "vr" else "normal"
 
 
 def post_frontend_action_result_sync(
@@ -59,10 +66,16 @@ def post_frontend_action_result_sync(
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
 
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=ACTION_TIMEOUT_SECONDS + 2.0,
-        ) as response:
+        context = None
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme == "https" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+            # This is the token-authenticated, loopback-only subprocess bridge.
+            # The public Quest connection still requires a trusted certificate.
+            context = ssl._create_unverified_context()
+        open_kwargs = {"timeout": ACTION_TIMEOUT_SECONDS + 2.0}
+        if context is not None:
+            open_kwargs["context"] = context
+        with urllib.request.urlopen(request, **open_kwargs) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         try:

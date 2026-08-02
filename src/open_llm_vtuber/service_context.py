@@ -67,6 +67,7 @@ class ServiceContext:
 
         self.send_text: Callable = None
         self.client_uid: str = None
+        self.scene_mode: str = "normal"
 
     def __str__(self):
         return (
@@ -160,6 +161,7 @@ class ServiceContext:
                     formatted_tools_claude=claude_tools,
                     initial_tools_dict=raw_tools_dict,
                     conf_uid=conf_uid,
+                    scene_mode=self.scene_mode,
                 )
                 logger.info("ToolManager initialized with dynamically fetched tools.")
 
@@ -208,7 +210,8 @@ class ServiceContext:
         host = self.system_config.host or "localhost"
         if host in {"0.0.0.0", "::"}:
             host = "127.0.0.1"
-        backend_url = f"http://{host}:{self.system_config.port}"
+        scheme = "https" if getattr(self.system_config, "ssl_certfile", None) else "http"
+        backend_url = f"{scheme}://{host}:{self.system_config.port}"
         from .workspace import ensure_workspace
 
         workspace_root = ensure_workspace(
@@ -224,6 +227,10 @@ class ServiceContext:
             }
             if self.client_uid:
                 server.env["EMBODIED_AGENT_CLIENT_UID"] = self.client_uid
+            if self.scene_mode == "vr":
+                server.env["EMBODIED_AGENT_SCENE_MODE"] = "vr"
+            else:
+                server.env.pop("EMBODIED_AGENT_SCENE_MODE", None)
             resolved_conf_uid = conf_uid or getattr(
                 self.character_config,
                 "conf_uid",
@@ -264,6 +271,7 @@ class ServiceContext:
         tool_adapter: ToolAdapter | None = None,
         send_text: Callable = None,
         client_uid: str = None,
+        scene_mode: str = "normal",
     ) -> None:
         """
         Load the ServiceContext with the reference of the provided instances.
@@ -290,6 +298,7 @@ class ServiceContext:
         self.tool_adapter = tool_adapter
         self.send_text = send_text
         self.client_uid = client_uid
+        self.scene_mode = scene_mode
 
         # Initialize session-specific MCP components
         await self._init_mcp_components(

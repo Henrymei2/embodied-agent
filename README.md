@@ -6,12 +6,13 @@ scheduling, and consent-aware autonomous behavior.
 
 ## Current capabilities
 
-- **Embodied room:** persistent stage v8 with an animated avatar and fourteen
+- **Embodied room:** persistent stage v9 with an animated avatar and fifteen
   pieces of furniture — window, todo list, calendar, hourglass, design board,
-  mailbox, tool rack, computer, archive shelf, bookshelf, writing desk, reading
-  chair, bed, and sofa — with validated textures and safe placement/removal.
-  Every gated object keeps its own radius and the avatar starts clear of all of
-  them, so using any object's tools always begins with a walk.
+  drawing board, mailbox, tool rack, computer, archive shelf, bookshelf,
+  writing desk, reading chair, bed, and sofa — with validated textures and safe
+  placement/removal. Every gated object keeps its own radius and the avatar
+  starts clear of all of them, so using any object's tools always begins with a
+  walk.
 - **A room, not a picture of one:** position, reach, paths, and arrival live in
   a renderer-agnostic world model rather than in pixels. Each object derives
   its own reach from its size — an arm's length from the edge, so the bed is
@@ -149,6 +150,7 @@ npm run build:web
 - [Project status and architecture](doc/PROJECT_STATUS.md)
 - [Study mode: measuring whether the pillars matter](doc/STUDY_MODE.md)
 - [The world model, and what 3D would still need](doc/WORLD_MODEL.md)
+- [Experimental Meta Quest 3 VR mode MVP](doc/VR_MODE.md)
 - [Furniture tools](doc/FURNITURE_TOOLS.md)
 - [Frontend action protocol](frontend/frontend_api_doc.md)
 - [Presence Contract](doc/PRESENCE_CONTRACT.md)
@@ -175,6 +177,7 @@ npm run build:web
   its own instructions, but only an approval at the tool rack activates one.
   Unattended self-modification of executable code, tool definitions, or the
   avatar's own spritesheet remains outside the trusted runtime.
-- 3D embodiment remains deferred; the production path is the validated 2D
-  stage. The coupling that would have made a renderer swap a rewrite is gone —
-  what is left is renderer work, listed in [the world model](doc/WORLD_MODEL.md).
+- 3D embodiment is experimental; the production path remains the validated 2D
+  stage pending Quest 3 hardware acceptance. The Meta Quest 3 MVP is implemented according to
+  [VR Mode](doc/VR_MODE.md), building on the renderer seam described by
+  [the world model](doc/WORLD_MODEL.md).

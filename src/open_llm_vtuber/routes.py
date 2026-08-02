@@ -694,11 +694,36 @@ def init_client_ws_route(default_context_cache: ServiceContext) -> APIRouter:
             logger.warning("Rejected untrusted /client-ws connection")
             await websocket.close(code=1008, reason="Origin is not allowed")
             return
+        requested_mode = websocket.query_params.get("renderer_mode", "normal")
+        if requested_mode not in {"normal", "vr"}:
+            await websocket.close(code=1008, reason="Unsupported renderer mode")
+            return
         await websocket.accept()
+        conf_uid = getattr(
+            getattr(default_context_cache, "character_config", None),
+            "conf_uid",
+            None,
+        )
         client_uid = str(uuid4())
 
         try:
-            await ws_handler.handle_new_connection(websocket, client_uid)
+            async with ws_handler.connection_lock:
+                allowed, reason = ws_handler.can_connect(requested_mode, conf_uid)
+                if not allowed:
+                    await websocket.send_json(
+                        {
+                            "type": "connection-error",
+                            "code": "scene_client_conflict",
+                            "message": reason,
+                        }
+                    )
+                    await websocket.close(code=1008, reason=reason)
+                    return
+                await ws_handler.handle_new_connection(
+                    websocket,
+                    client_uid,
+                    scene_mode=requested_mode,
+                )
             await ws_handler.handle_websocket_communication(websocket, client_uid)
         except WebSocketDisconnect:
             await ws_handler.handle_disconnect(client_uid)

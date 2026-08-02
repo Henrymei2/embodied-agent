@@ -36,6 +36,45 @@ import {
   useStudyCondition,
 } from "./context/study-condition-context";
 import { AgentActivityProvider } from "./context/agent-activity-context";
+import {
+  RendererModeProvider,
+  useRendererMode,
+} from "./context/renderer-mode-context";
+import { VrStageProvider } from "./context/vr-stage-context";
+import VrStage from "./components/vr/vr-stage";
+
+function RendererEntry(): JSX.Element {
+  const { mode, error, enterVr, useNormal } = useRendererMode();
+
+  if (mode === "vr") return <VrStage />;
+  if (mode === "normal") return <AppContent />;
+
+  return (
+    <Flex
+      position="fixed"
+      inset="0"
+      align="center"
+      justify="center"
+      direction="column"
+      gap="4"
+      bg="#101827"
+      color="white"
+      textAlign="center"
+      padding="6"
+    >
+      <Box fontSize="2xl" fontWeight="semibold">Embodied Agent</Box>
+      {mode === "detecting" && <Box>Checking immersive VR support…</Box>}
+      {mode === "vr-starting" && <Box>Starting VR…</Box>}
+      {mode === "choosing" && (
+        <>
+          <button type="button" onClick={() => void enterVr()}>Enter VR</button>
+          <button type="button" onClick={useNormal}>Use normal mode</button>
+        </>
+      )}
+      {error && <Box color="red.200">{error}</Box>}
+    </Flex>
+  );
+}
 
 function AppContent(): JSX.Element {
   const [showSidebar, setShowSidebar] = useState(
@@ -152,10 +191,12 @@ function AppContent(): JSX.Element {
 function App(): JSX.Element {
   return (
     <ChakraProvider value={defaultSystem}>
-      {/* ModeProvider needs to wrap AppContent to provide mode to getGlobalStyles */}
-      <ModeProvider>
-        <AppWithGlobalStyles />
-      </ModeProvider>
+      <RendererModeProvider>
+        {/* ModeProvider needs to wrap AppContent to provide mode to getGlobalStyles */}
+        <ModeProvider>
+          <AppWithGlobalStyles />
+        </ModeProvider>
+      </RendererModeProvider>
     </ChakraProvider>
   );
 }
@@ -176,16 +217,18 @@ function AppWithGlobalStyles(): JSX.Element {
                         <GroupProvider>
                           <BrowserProvider>
                             <DynamicStageProvider>
-                              <PresenceProvider>
-                                <StudyConditionProvider>
-                                  <AgentActivityProvider>
-                                    <WebSocketHandler>
-                                      <Toaster />
-                                      <AppContent />
-                                    </WebSocketHandler>
-                                  </AgentActivityProvider>
-                                </StudyConditionProvider>
-                              </PresenceProvider>
+                              <VrStageProvider>
+                                <PresenceProvider>
+                                  <StudyConditionProvider>
+                                    <AgentActivityProvider>
+                                      <WebSocketHandler>
+                                        <Toaster />
+                                        <RendererEntry />
+                                      </WebSocketHandler>
+                                    </AgentActivityProvider>
+                                  </StudyConditionProvider>
+                                </PresenceProvider>
+                              </VrStageProvider>
                             </DynamicStageProvider>
                           </BrowserProvider>
                         </GroupProvider>

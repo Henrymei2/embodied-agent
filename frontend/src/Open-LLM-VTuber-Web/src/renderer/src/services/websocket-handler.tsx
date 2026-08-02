@@ -23,6 +23,9 @@ import { useDynamicStage } from '@/context/dynamic-stage-context';
 import { PresenceState, usePresence } from '@/context/presence-context';
 import { useStudyCondition } from '@/context/study-condition-context';
 import { useAgentActivity } from '@/context/agent-activity-context';
+import { useRendererMode } from '@/context/renderer-mode-context';
+import { useVrStage } from '@/context/vr-stage-context';
+import { browserEndpoints, withRendererMode } from '@/utils/vr-helpers';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
@@ -49,6 +52,15 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { updateState: updatePresenceState, receiveReceipt } = usePresence();
   const { setConditionFromServer } = useStudyCondition();
   const { setActivity, clearActivity } = useAgentActivity();
+  const { mode: rendererMode } = useRendererMode();
+  const {
+    handleFrontendAction: handleVrFrontendAction,
+    setStageFromServer: setVrStageFromServer,
+  } = useVrStage();
+  const selectedMode = rendererMode === 'vr' ? 'vr' : 'normal';
+  const browser = useMemo(() => browserEndpoints(window.location), []);
+  const effectiveWsUrl = window.api ? wsUrl : browser.wsUrl;
+  const effectiveBaseUrl = window.api ? baseUrl : browser.baseUrl;
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -134,7 +146,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         }
         break;
       case 'frontend_action_request':
-        handleFrontendAction({
+        (selectedMode === 'vr' ? handleVrFrontendAction : handleFrontendAction)({
           request_id: message.request_id,
           action: message.action,
           args: message.args,
@@ -159,7 +171,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         break;
       case 'stage-state':
         if (message.stage) {
-          const result = setStageFromServer(message.stage);
+          const result = setStageFromServer(message.stage as never);
           if (!result.ok) {
             toaster.create({
               title: result.error || 'Failed to load stage state',
@@ -168,6 +180,25 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             });
           }
         }
+        break;
+      case 'vr-stage-state':
+        if (message.stage) {
+          const result = setVrStageFromServer(message.stage);
+          if (!result.ok) {
+            toaster.create({
+              title: result.error || 'Failed to load VR stage state',
+              type: 'error',
+              duration: 3000,
+            });
+          }
+        }
+        break;
+      case 'connection-error':
+        toaster.create({
+          title: message.message || 'This character is already in a VR session.',
+          type: 'error',
+          duration: 6000,
+        });
         break;
       case 'study-condition':
         setConditionFromServer(message);
@@ -352,11 +383,17 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, baseUrl, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, setStageFromServer, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, handleVrFrontendAction, setStageFromServer, setVrStageFromServer, selectedMode, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
 
   useEffect(() => {
-    wsService.connect(wsUrl);
-  }, [wsUrl]);
+    if (rendererMode === 'normal' || rendererMode === 'vr') {
+      wsService.connect(withRendererMode(effectiveWsUrl, rendererMode, window.location.href));
+    } else {
+      wsService.disconnect();
+      setWsState('CLOSED');
+    }
+    return () => wsService.disconnect();
+  }, [effectiveWsUrl, rendererMode]);
 
   useEffect(() => {
     const stateSubscription = wsService.onStateChange(setWsState);
@@ -365,17 +402,17 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       stateSubscription.unsubscribe();
       messageSubscription.unsubscribe();
     };
-  }, [wsUrl, handleWebSocketMessage]);
+  }, [handleWebSocketMessage]);
 
   const webSocketContextValue = useMemo(() => ({
     sendMessage: wsService.sendMessage.bind(wsService),
     wsState,
-    reconnect: () => wsService.connect(wsUrl),
-    wsUrl,
+    reconnect: () => wsService.connect(withRendererMode(effectiveWsUrl, selectedMode, window.location.href)),
+    wsUrl: effectiveWsUrl,
     setWsUrl,
-    baseUrl,
+    baseUrl: effectiveBaseUrl,
     setBaseUrl,
-  }), [wsState, wsUrl, baseUrl]);
+  }), [wsState, effectiveWsUrl, effectiveBaseUrl, selectedMode, setWsUrl, setBaseUrl]);
 
   return (
     <WebSocketContext.Provider value={webSocketContextValue}>

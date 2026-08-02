@@ -10,6 +10,7 @@ import type {
 } from '@/context/agent-activity-context';
 import { toaster } from '@/components/ui/toaster';
 import type { PresenceReceipt } from '@/context/presence-context';
+import type { VrStageDocument } from '@/context/vr-stage-context';
 
 export interface DisplayText {
   text: string;
@@ -87,7 +88,7 @@ export interface MessageEvent {
   client_uid?: string;
   forwarded?: boolean;
   display_text?: DisplayText;
-  stage?: DynamicStageDocument;
+  stage?: DynamicStageDocument | VrStageDocument;
   state?: DynamicStageDocument;
   result?: Record<string, unknown>;
   enabled?: boolean;

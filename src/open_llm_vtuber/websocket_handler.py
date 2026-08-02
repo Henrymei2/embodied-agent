@@ -79,6 +79,7 @@ class WebSocketHandler:
         self.scheduler_tasks: Dict[str, asyncio.Task] = {}
         # (client, object) -> when it was last clicked, for the cooldown.
         self._object_click_times: Dict[tuple[str, str], float] = {}
+        self.connection_lock = asyncio.Lock()
 
         # Message handlers mapping
         self._message_handlers = self._init_message_handlers()
@@ -112,7 +113,10 @@ class WebSocketHandler:
         }
 
     async def handle_new_connection(
-        self, websocket: WebSocket, client_uid: str
+        self,
+        websocket: WebSocket,
+        client_uid: str,
+        scene_mode: str = "normal",
     ) -> None:
         """
         Handle new WebSocket connection setup
@@ -126,7 +130,9 @@ class WebSocketHandler:
         """
         try:
             session_service_context = await self._init_service_context(
-                websocket.send_text, client_uid
+                websocket.send_text,
+                client_uid,
+                scene_mode=scene_mode,
             )
 
             await self._store_client_data(
@@ -146,6 +152,22 @@ class WebSocketHandler:
             await self._cleanup_failed_connection(client_uid)
             raise
 
+    def can_connect(self, scene_mode: str, conf_uid: str | None) -> tuple[bool, str]:
+        """Enforce exclusive same-character ownership while a VR client exists."""
+        matching = [
+            context
+            for context in self.client_contexts.values()
+            if getattr(getattr(context, "character_config", None), "conf_uid", None)
+            == conf_uid
+        ]
+        if scene_mode == "vr" and matching:
+            return False, "Close the other client before entering VR."
+        if scene_mode == "normal" and any(
+            getattr(context, "scene_mode", "normal") == "vr" for context in matching
+        ):
+            return False, "Close the VR client before opening another client."
+        return True, ""
+
     async def _store_client_data(
         self,
         websocket: WebSocket,
@@ -163,6 +185,7 @@ class WebSocketHandler:
             client_uid,
             websocket.send_text,
             session_service_context.character_config.conf_uid,
+            scene_mode=session_service_context.scene_mode,
         )
         from .client_registry import register_client
 
@@ -239,21 +262,29 @@ class WebSocketHandler:
         if presence is not None:
             await websocket.send_text(json.dumps(presence.snapshot()))
 
-        from .stage_state_manager import load_stage_state
+        from .scene_state import load_scene_state
 
         await websocket.send_text(
             json.dumps(
                 {
-                    "type": "stage-state",
-                    "stage": load_stage_state(
-                        session_service_context.character_config.conf_uid
+                    "type": (
+                        "vr-stage-state"
+                        if session_service_context.scene_mode == "vr"
+                        else "stage-state"
+                    ),
+                    "stage": load_scene_state(
+                        session_service_context.character_config.conf_uid,
+                        session_service_context.scene_mode,
                     ),
                 }
             )
         )
 
     async def _init_service_context(
-        self, send_text: Callable, client_uid: str
+        self,
+        send_text: Callable,
+        client_uid: str,
+        scene_mode: str = "normal",
     ) -> ServiceContext:
         """Initialize service context for a new session by cloning the default context"""
         session_service_context = ServiceContext()
@@ -275,6 +306,7 @@ class WebSocketHandler:
                 tool_adapter=self.default_context_cache.tool_adapter,
                 send_text=send_text,
                 client_uid=client_uid,
+                scene_mode=scene_mode,
             )
         except BaseException:
             try:
@@ -839,30 +871,34 @@ class WebSocketHandler:
             and owns_pending_request(request_id, client_uid)
             and isinstance(result.get("state"), dict)
         ):
-            from .stage_state_manager import save_stage_state
+            from .scene_state import load_scene_state, save_scene_state
 
             context = self.client_contexts.get(client_uid)
             if context is None:
                 ok = False
                 error = "client context is no longer available"
             else:
-                saved, errors = save_stage_state(
+                saved, errors = save_scene_state(
                     context.character_config.conf_uid,
                     result["state"],
+                    mode=getattr(context, "scene_mode", "normal"),
                     updated_by="frontend_action",
                 )
                 if not saved:
                     ok = False
                     error = "stage state was rejected: " + "; ".join(errors)
                     result = {**result, "ok": False, "error": error}
-                    from .stage_state_manager import load_stage_state
-
                     await websocket.send_text(
                         json.dumps(
                             {
-                                "type": "stage-state",
-                                "stage": load_stage_state(
-                                    context.character_config.conf_uid
+                                "type": (
+                                    "vr-stage-state"
+                                    if getattr(context, "scene_mode", "normal") == "vr"
+                                    else "stage-state"
+                                ),
+                                "stage": load_scene_state(
+                                    context.character_config.conf_uid,
+                                    getattr(context, "scene_mode", "normal"),
                                 ),
                             }
                         )

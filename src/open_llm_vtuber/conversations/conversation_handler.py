@@ -71,7 +71,9 @@ async def handle_conversation_trigger(
         # The client sends only which object was clicked; the prompt is built
         # from the stored stage, so this channel cannot inject text.
         interaction = describe_click(
-            context.character_config.conf_uid, str(data.get("object_id", ""))
+            context.character_config.conf_uid,
+            str(data.get("object_id", "")),
+            getattr(context, "scene_mode", "normal"),
         )
         if interaction is None:
             logger.info("Ignoring a click on an object that is not in the room.")

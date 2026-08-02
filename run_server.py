@@ -226,6 +226,8 @@ def run(console_log_level: str, skip_frontend_build: bool = False):
         host=server_config.host,
         port=server_config.port,
         log_level=console_log_level.lower(),
+        ssl_certfile=server_config.ssl_certfile or None,
+        ssl_keyfile=server_config.ssl_keyfile or None,
     )
 
 

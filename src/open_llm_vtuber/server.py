@@ -47,6 +47,8 @@ class CORSStaticFiles(StarletteStaticFiles):
         if path.endswith(".js"):
             response.headers["Content-Type"] = "application/javascript"
 
+        response.headers["Permissions-Policy"] = "xr-spatial-tracking=(self)"
+
         return response
 
 

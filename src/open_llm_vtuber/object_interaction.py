@@ -16,7 +16,7 @@ from typing import Any
 
 from loguru import logger
 
-from .stage_state_manager import get_reachable_objects, load_stage_state
+from .scene_state import get_scene_reachable_objects, load_scene_state
 from .world_model import effective_label
 
 # Long enough that a double-click or an excited tap is one turn, short enough
@@ -25,7 +25,11 @@ CLICK_COOLDOWN_SECONDS = 3.0
 _MAX_LABEL = 80
 
 
-def describe_click(conf_uid: str, object_id: str) -> dict[str, Any] | None:
+def describe_click(
+    conf_uid: str,
+    object_id: str,
+    scene_mode: str = "normal",
+) -> dict[str, Any] | None:
     """Build the prompt for a click, or None when the object is not in the room.
 
     Returns the user-facing text and the prompt handed to the model, which
@@ -36,7 +40,7 @@ def describe_click(conf_uid: str, object_id: str) -> dict[str, Any] | None:
         return None
 
     try:
-        stage = load_stage_state(conf_uid)
+        stage = load_scene_state(conf_uid, scene_mode)
     except Exception as exc:  # noqa: BLE001 - a broken stage is not a crash here
         logger.warning(f"Object interaction: could not load the stage: {exc}")
         return None
@@ -59,7 +63,7 @@ def describe_click(conf_uid: str, object_id: str) -> dict[str, Any] | None:
     is_avatar = node.get("type") == "avatar"
 
     try:
-        reachable = get_reachable_objects(conf_uid)
+        reachable = get_scene_reachable_objects(conf_uid, mode=scene_mode)
     except Exception:  # noqa: BLE001
         reachable = []
     near = label in reachable

@@ -7,6 +7,10 @@ system_config:
   # For LAN access, bind host to 0.0.0.0 and list the server's LAN IP here.
   # Wildcards are intentionally not supported.
   trusted_hosts: []
+  # Optional native HTTPS for WebXR/Quest. Configure both or neither. The
+  # certificate must be trusted by the headset and include the LAN host/IP.
+  ssl_certfile: ''
+  ssl_keyfile: ''
   # IANA timezone (e.g. 'America/Chicago', 'Europe/London') used for all
   # timestamps (scheduling, timers, chat history, memory logs, ...). Leave
   # blank to auto-detect from the system clock, so the agent naturally follows

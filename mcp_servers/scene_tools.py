@@ -35,12 +35,19 @@ if str(_PROJECT_ROOT) not in sys.path:
 from mcp.server.fastmcp import FastMCP
 
 from mcp_servers.bridge_client import get_conf_uid as _get_conf_uid
+from mcp_servers.bridge_client import get_scene_mode as _get_scene_mode
 from mcp_servers.bridge_client import post_frontend_action as _post_frontend_action
 from mcp_servers.bridge_client import (
     post_frontend_action_result as _post_frontend_action_result,
 )
-from src.open_llm_vtuber.stage_state_manager import load_stage_state, validate_stage
-from src.open_llm_vtuber.world_model import World, WorldPoint, world_from_stage
+from src.open_llm_vtuber.scene_state import load_scene_state, load_scene_world, validate_scene
+from src.open_llm_vtuber.stage_state_manager import (
+    load_stage_state,
+    validate_stage,
+    world_from_stage,
+)
+from src.open_llm_vtuber.vr_stage_state_manager import docking_point
+from src.open_llm_vtuber.world_model import World, WorldPoint
 
 _OBJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 # Removing these would strand the tools that are only reachable at them.
@@ -50,13 +57,33 @@ mcp = FastMCP("scene")
 
 
 def _get_nodes(conf_uid: str) -> list[dict[str, Any]]:
-    stage = load_stage_state(conf_uid)
+    stage = _load_state(conf_uid)
     return stage.get("nodes", [])
 
 
 def _get_world(conf_uid: str) -> World:
     """The room as positions and reach, with nothing about how it is drawn."""
-    return world_from_stage(load_stage_state(conf_uid))
+    return (
+        load_scene_world(conf_uid, "vr")
+        if _get_scene_mode() == "vr"
+        else world_from_stage(load_stage_state(conf_uid))
+    )
+
+
+def _load_state(conf_uid: str) -> dict[str, Any]:
+    return (
+        load_scene_state(conf_uid, "vr")
+        if _get_scene_mode() == "vr"
+        else load_stage_state(conf_uid)
+    )
+
+
+def _validate_state(stage: Any) -> tuple[bool, list[str]]:
+    return (
+        validate_scene(stage, "vr")
+        if _get_scene_mode() == "vr"
+        else validate_stage(stage)
+    )
 
 
 def _find_node(nodes: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
@@ -150,12 +177,20 @@ async def move_to(target: str) -> str:
     if destination is None:
         return f"Error: no object found with label '{target}'; cannot move there."
 
-    path = world.path_to(destination.position)
+    final_position = destination.position
+    if _get_scene_mode() == "vr":
+        final_position, docking_error = docking_point(
+            _load_state(conf_uid),
+            target,
+        )
+        if final_position is None:
+            return f"Error: {docking_error}."
+    path = world.path_to(final_position)
     ok, error, _result = await _post_frontend_action_result(
         "move_to",
         {
-            "x": destination.position.x,
-            "y": destination.position.y,
+            "x": final_position.x,
+            "y": final_position.y,
             "waypoints": [{"x": point.x, "y": point.y} for point in path],
         },
     )
@@ -166,14 +201,14 @@ async def move_to(target: str) -> str:
     # that stage, so arrival is checked against the room rather than assumed
     # from a request that was merely accepted.
     arrived = _get_world(conf_uid)
-    if not arrived.has_arrived_at(destination.position):
+    if not arrived.has_arrived_at(final_position):
         position = arrived.agent_position
         where = f"x={position.x:g}, y={position.y:g}" if position else "an unknown spot"
         return f"Error: the walk to {target} did not finish; the agent is at {where}."
 
     return (
         f"OK: arrived at {target} "
-        f"(x={destination.position.x:g}, y={destination.position.y:g})."
+        f"(x={final_position.x:g}, y={final_position.y:g})."
     )
 
 
@@ -210,6 +245,9 @@ async def place_object(
     width: float = 120.0,
     height: float = 90.0,
     image_url: str | None = None,
+    depth: float | None = None,
+    elevation: float | None = None,
+    color: str = "#334155",
 ) -> str:
     """Place a validated furniture panel in the persistent room.
 
@@ -236,35 +274,57 @@ async def place_object(
     if width < 1 or width > 4096 or height < 1 or height > 4096:
         return "Error: width and height must each be between 1 and 4096."
 
-    stage = load_stage_state(_get_conf_uid())
+    mode = _get_scene_mode()
+    stage = _load_state(_get_conf_uid())
     if _find_node(stage.get("nodes", []), name) is not None:
         return f"Error: an object named '{name}' already exists."
-    canvas = stage.get("canvas", {})
-    if not 0 <= x <= canvas.get("width", 0) or not 0 <= y <= canvas.get("height", 0):
+    extent = stage.get("room", {}) if mode == "vr" else stage.get("canvas", {})
+    extent_width = extent.get("width", 0)
+    extent_height = extent.get("depth", 0) if mode == "vr" else extent.get("height", 0)
+    if not 0 <= x <= extent_width or not 0 <= y <= extent_height:
         return "Error: x and y must be inside the stage canvas."
 
-    node: dict[str, Any] = {
-        "id": name,
-        "type": "panel",
-        "label": name,
-        "x": float(x),
-        "y": float(y),
-        "width": float(width),
-        "height": float(height),
-        "zIndex": 2,
-        "text": name.replace("_", " "),
-        "style": {
-            "background": "#334155",
-            "borderColor": "#cbd5e1",
-            "color": "#ffffff",
-            "borderRadius": 12,
-        },
-    }
+    if mode == "vr":
+        box_depth = float(depth if depth is not None else 90.0)
+        box_elevation = float(elevation if elevation is not None else height / 2)
+        node = {
+            "id": name,
+            "type": "furniture",
+            "label": name,
+            "x": float(x),
+            "y": float(y),
+            "width": float(width),
+            "depth": box_depth,
+            "height": float(height),
+            "elevation": box_elevation,
+            "color": color,
+            "interaction": {"on_click": True},
+        }
+    else:
+        if depth is not None or elevation is not None or color != "#334155":
+            return "Error: depth, elevation, and color are only available in VR mode."
+        node = {
+            "id": name,
+            "type": "panel",
+            "label": name,
+            "x": float(x),
+            "y": float(y),
+            "width": float(width),
+            "height": float(height),
+            "zIndex": 2,
+            "text": name.replace("_", " "),
+            "style": {
+                "background": "#334155",
+                "borderColor": "#cbd5e1",
+                "color": "#ffffff",
+                "borderRadius": 12,
+            },
+        }
     if image_url is not None:
         node["texture"] = {"src": image_url, "fit": "contain", "alt": name}
 
     candidate = {**stage, "nodes": [*stage.get("nodes", []), node]}
-    valid, errors = validate_stage(candidate)
+    valid, errors = _validate_state(candidate)
     if not valid:
         return "Error: object was rejected: " + "; ".join(errors)
 
@@ -295,15 +355,18 @@ async def move_object(name: str, x: float, y: float) -> str:
     ):
         return "Error: x and y must be numeric."
 
-    stage = load_stage_state(_get_conf_uid())
+    mode = _get_scene_mode()
+    stage = _load_state(_get_conf_uid())
     node = _find_node(stage.get("nodes", []), name)
     if node is None:
         return f"Error: no object found with label '{name}'."
     if node.get("id") == "avatar":
         return "Error: use move_to to move the avatar."
 
-    canvas = stage.get("canvas", {})
-    if not 0 <= x <= canvas.get("width", 0) or not 0 <= y <= canvas.get("height", 0):
+    extent = stage.get("room", {}) if mode == "vr" else stage.get("canvas", {})
+    extent_width = extent.get("width", 0)
+    extent_height = extent.get("depth", 0) if mode == "vr" else extent.get("height", 0)
+    if not 0 <= x <= extent_width or not 0 <= y <= extent_height:
         return "Error: x and y must be inside the stage canvas."
 
     moved = {**node, "x": float(x), "y": float(y)}
@@ -314,7 +377,7 @@ async def move_object(name: str, x: float, y: float) -> str:
             for item in stage.get("nodes", [])
         ],
     }
-    valid, errors = validate_stage(candidate)
+    valid, errors = _validate_state(candidate)
     if not valid:
         return "Error: the move was rejected: " + "; ".join(errors)
 

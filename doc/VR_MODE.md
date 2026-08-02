@@ -1,0 +1,607 @@
+# VR Mode MVP Implementation Design
+
+## 1. Status and objective
+
+This document is the implementation contract for the experimental VR MVP. The
+software implementation is present, while Meta Quest 3 hardware acceptance in
+section 9 remains pending; the validated 2D stage v9 remains the production
+renderer until those checks pass.
+
+The MVP turns the browser frontend into an immersive 3D room for Meta Quest 3
+and Touch Plus controllers. It preserves the companion's voice, persistent
+spatial embodiment, furniture-bound tools, object interactions, and avatar
+animation while replacing the 2D presentation with a deliberately simple
+WebXR renderer.
+
+The implementation is complete when a Quest 3 user can enter the room over a
+trusted HTTPS connection, move and turn with the controllers, talk to the
+agent, inspect furniture, and watch the agent move between independently
+persisted VR furniture positions. No implementation decision should require a
+new asset or a physics engine.
+
+## 2. Product contract
+
+### 2.1 Entry and session lifecycle
+
+On a WebXR-capable browser, startup must not immediately open the existing
+WebSocket. The frontend first calls:
+
+```ts
+await navigator.xr?.isSessionSupported("immersive-vr");
+```
+
+When the result is `true`, it shows an **Enter VR** button and a secondary
+**Use normal mode** action. Pressing Enter VR is the user gesture that requests
+an `immersive-vr` session with a `local-floor` reference space. The frontend
+then connects `/client-ws?renderer_mode=vr`. Selecting normal mode connects the
+unchanged client without that query parameter.
+
+If WebXR is absent or `immersive-vr` is unsupported, the application connects
+in normal mode as it does today. Ending the XR session closes the VR WebSocket,
+disposes the Three.js renderer and textures, and returns to the entry screen;
+it does not silently reuse that connection as a 2D client.
+
+WebXR session creation must remain inside the Enter VR click handler. Immersive
+WebXR requires a secure context, explicit user intent, and the
+`xr-spatial-tracking` permission policy; see the
+[WebXR security requirements](https://developer.mozilla.org/en-US/docs/Web/API/WebXR_Device_API/Permissions_and_security).
+
+### 2.2 In-headset surfaces
+
+VR mode keeps:
+
+- microphone/VAD voice input and interruption;
+- streamed TTS playback and the existing audio queue;
+- the current subtitle, connection state, and agent-activity summary;
+- the animated agent and every normal-mode furniture object;
+- object pointing and the existing furniture data/decision surfaces.
+
+Subtitle, connection, activity, microphone, and transient error messages are
+small camera-relative planes placed below the center of view. They remain
+legible but do not follow head movement with zero latency: interpolate their
+transform so they feel anchored rather than painted onto the eyes. Only the
+latest subtitle and current activity are visible; VR mode has no full chat
+history.
+
+VR mode excludes the normal sidebar and footer, text entry, direct furniture
+grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.
+
+### 2.3 Quest Touch Plus controls
+
+Read controllers from `XRSession.inputSources`, select by `handedness`, and
+ignore input sources without a gamepad. The WebXR `xr-standard` mapping assigns
+the primary thumbstick to axes 2 and 3; see the
+[WebXR Gamepads mapping](https://immersive-web.github.io/webxr-gamepads-module/).
+Cache button state between frames because the browser updates the same Gamepad
+object in place.
+
+| Input | MVP behavior |
+| --- | --- |
+| Left thumbstick axes 2/3 | Head-relative continuous locomotion |
+| Right thumbstick axis 2 | 30-degree snap turn |
+| Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
+| Right primary trigger / `select` | Select furniture or an in-world panel control |
+
+Quest 3 is the only supported controller profile. A left controller without
+`buttons[4]`, or either controller without axes 2/3, must produce a visible
+unsupported-controller diagnostic instead of guessing another mapping.
+
+Locomotion rules:
+
+- Apply a radial `0.2` thumbstick dead zone and rescale the remaining magnitude
+  from `[0.2, 1]` to `[0, 1]`.
+- Project the headset's forward vector onto the floor plane and normalize it.
+  Derive right from that vector. Do not use controller orientation.
+- Move the camera rig by `(right * axisX - forward * axisY) * 1.5 m/s * dt`.
+- Clamp the rig origin to 25 cm inside the room's four walls. Furniture does
+  not block the user in the MVP.
+
+Snap-turn rules:
+
+- When right axis 2 first reaches `>= 0.7`, rotate the rig by `-30` degrees.
+- When it first reaches `<= -0.7`, rotate the rig by `+30` degrees.
+- Disarm turning after a snap and rearm only after `abs(axis) <= 0.3`.
+- Rotate around the headset's current floor position, not the room origin, so
+  snapping never translates the user.
+
+Left X toggles the same `startMic`/`stopMic` functions used by the ordinary UI.
+It uses a rising-edge check, follows the persisted `micOn` preference on entry,
+and displays **Microphone on** or **Microphone off** for 1.5 seconds. It must
+not overwrite the preference merely because an XR session ends.
+
+### 2.4 Pointing and furniture panels
+
+Render a simple ray from the right controller's target-ray space. Do not fetch
+remote controller models. On `select`, raycast in this order:
+
+1. visible panel controls;
+2. the panel background;
+3. furniture meshes.
+
+Selecting furniture toggles its panel and sends the existing
+`{"type":"object-interaction","object_id":"..."}` message, subject to the
+existing three-second duplicate-click cooldown. A panel is positioned above
+or beside its furniture, faces the headset around the vertical axis, and
+closes when the furniture or its Close control is selected again. Only one
+panel may be open.
+
+Panel content is rendered to local canvas textures and raycast as Three.js
+planes; DOM Overlay is not required. Reuse the existing read routes for todo,
+timers, Gmail, books, reading, plans, skills, and the drawing board. The room
+layout panel reads the active `VrStageDocument`. Approve/Decline controls reuse
+the existing plan and skill decision routes and retain their pending-only
+semantics. Google connection state may be shown, but authorization must say
+**Exit VR to connect Google** rather than opening an OAuth flow in-headset.
+
+## 3. Rendering architecture
+
+### 3.1 Technology choice
+
+Add `three` and `@types/webxr` to the web frontend. Use Three.js directly from
+a React-owned component; do not add React Three Fiber. The component owns one
+`WebGLRenderer`, enables `renderer.xr`, requests `local-floor`, and uses
+`renderer.setAnimationLoop`. This follows the
+[Three.js WebXR integration](https://threejs.org/manual/en/how-to-create-vr-content.html).
+
+Add a renderer-mode context separate from the existing Electron `window`/`pet`
+mode. Its states are `choosing`, `normal`, `vr-starting`, and `vr`. Keep the
+normal `DynamicStageProvider` intact and introduce a separate
+`VrStageProvider`; neither provider accepts the other document type.
+
+The VR renderer uses:
+
+- one ambient light and one directional light;
+- unlit or Lambert furniture materials;
+- no dynamic shadows, post-processing, physics, or remote model loading;
+- the native XR framebuffer scale and maximum supported Three.js foveation;
+- `renderer.outputColorSpace = THREE.SRGBColorSpace` for PNG textures.
+
+All document geometry is in centimetres. The renderer multiplies positions
+and dimensions by `0.01` before passing them to Three.js. Document `(x, y)` maps
+to Three.js `(x - room.width/2, elevation, room.depth/2 - y)`. This keeps the
+backend's horizontal coordinates and distance semantics intact while using a
+right-handed 3D scene.
+
+### 3.2 Room and furniture
+
+Build a solid floor and four solid-color walls from the room block. The origin
+of document coordinates is the back-left floor corner: `x` increases to the
+right and `y` increases toward the front. Nodes are axis-aligned; VR furniture
+rotation is not represented in v1.
+
+Each furniture node becomes a box with dimensions `width`, `height`, and
+`depth`. Its existing PNG is applied to the face looking toward increasing
+document `y`; the other five faces use `color`. Preserve alpha on the textured
+face. An object without a texture, such as `drawing_board`, is a solid box.
+State textures such as the unread mailbox replace only the textured face.
+
+Texture load failure falls back to the solid material and records one visible
+warning; it does not remove the object from the world. Sanitize asset sources
+with the same relative/data-image/HTTP(S) allowlist as normal mode.
+
+### 3.3 Agent billboard and animation
+
+The avatar is a transparent vertical plane whose feet are anchored at its
+floor position. Rotate it only around the Three.js Y axis to face the headset;
+do not pitch it toward the user's eyes. Use the current `avatar.png` sheet and
+animation declarations without producing a new asset.
+
+The frontend selects `idle_*`, `walk_*`, or `sit_down` exactly as the 2D
+renderer does. Determine walking direction from each waypoint delta. Advance
+spritesheet frames at the declared FPS, and end the walk cycle when that leg's
+distance-derived duration finishes. A movement update clears `pose` before the
+first walking frame, preserving the current seated-state invariant.
+
+## 4. VR stage document
+
+### 4.1 Type and storage
+
+The VR document is a separate schema, not stage v10:
+
+```ts
+type VrNodeType = "furniture" | "avatar";
+
+interface VrStageDocument {
+  version: 1;
+  mode: "vr";
+  room: {
+    width: number;
+    depth: number;
+    height: number;
+    floor_color: string;
+    wall_color: string;
+  };
+  world: {
+    units_per_meter: number;
+    reach_ceiling: number;
+    move_speed: number;
+  };
+  nodes: VrStageNode[];
+  metadata: {
+    conf_uid?: string;
+    created_at?: string;
+    updated_at?: string;
+    updated_by?: string;
+    theme_revision?: string;
+  };
+}
+
+interface VrStageNode {
+  id: string;
+  type: VrNodeType;
+  label?: string;
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+  height: number;
+  elevation: number;
+  color: string;
+  texture?: StageTexture;
+  stateTextures?: Partial<Record<"unread", StageTexture>>;
+  spritesheet?: StageSpritesheet;
+  uiWindow?: FurnitureWindowConfig;
+  pose?: "standing" | "sitting";
+  interaction?: { on_click?: boolean };
+  reach?: number;
+}
+```
+
+`elevation` is the height of the node's center above the floor. Floor furniture
+normally uses `height / 2`; wall furniture uses an explicit mounting height.
+Elevation affects rendering and endpoint volume checks, but MVP reach and path
+distance use floor-plane `x/y` only.
+
+Store the document at `stage_state/<sanitized-conf_uid>/vr_stage.json`, beside
+the current `stage.json`. Use the existing path sanitization, atomic write, and
+metadata conventions. A missing file creates the fixed default below. A
+malformed or unsupported-version file logs the validation errors and loads the
+default without overwriting the bad file. There is no normal-to-VR migration,
+live synchronization, or shared position field.
+
+### 4.2 Validation
+
+Backend and frontend validators enforce the same rules:
+
+- `version === 1`, `mode === "vr"`, and no more than 80 nodes;
+- finite positive room dimensions, `units_per_meter`, reach ceiling, and move
+  speed, with the existing upper bounds where applicable;
+- unique safe IDs and unique effective labels under whitespace normalization
+  and case-folding;
+- finite position and dimensions; positive width/depth/height; the complete
+  AABB must lie within the room and between floor and ceiling;
+- avatar ID is exactly `avatar`, appears once, and uses type `avatar`;
+- furniture cannot use the avatar spritesheet field; avatar cannot use a
+  furniture window;
+- `reach` is positive and no greater than `world.reach_ceiling`;
+- colors, textures, state textures, interactions, windows, poses, labels, and
+  spritesheets use the current allowlists and length limits;
+- no node rotation, scripts, arbitrary HTML, extra window providers, or
+  unknown material fields.
+
+Furniture is allowed to overlap because the existing room editor does not
+promise collision-free layouts. Movement docking handles overlaps by rejecting
+blocked candidates. Validation nevertheless rejects an avatar whose saved
+floor point starts inside a furniture footprint.
+
+### 4.3 Fixed default
+
+The default room is `960 x 540 x 280` cm, uses `100` units per metre, the
+current `150` reach ceiling, and the current `400` units/second agent speed.
+The user rig spawns at `(480, 315)`, faces the back wall, and is session-local;
+it is not part of the document.
+
+The VR default is authored independently even where a coordinate resembles the
+canonical 2D room. It contains the current stage v9 furniture IDs and avatar:
+
+| ID | x | y | width | depth | height | elevation | Presentation |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `window` | 120 | 8 | 185 | 16 | 155 | 165 | back wall, `window.png` |
+| `todo_list` | 300 | 8 | 105 | 12 | 125 | 165 | back wall, `todo-list.png` |
+| `calendar` | 480 | 8 | 110 | 12 | 130 | 165 | back wall, `calendar.png` |
+| `design_board` | 660 | 8 | 120 | 12 | 110 | 160 | back wall, `design-board.png` |
+| `mailbox` | 840 | 12 | 96 | 24 | 88 | 140 | back wall, mailbox state texture |
+| `hourglass` | 120 | 200 | 65 | 20 | 90 | 45 | shallow floor unit, `hourglass.png` |
+| `drawing_board` | 300 | 200 | 115 | 12 | 125 | 100 | shallow floor unit, solid color |
+| `tool_rack` | 480 | 200 | 120 | 35 | 100 | 50 | shallow floor unit, `tool-rack.png` |
+| `archive_shelf` | 660 | 200 | 125 | 55 | 170 | 85 | floor unit, `archive-shelf.png` |
+| `bookshelf` | 840 | 200 | 120 | 45 | 190 | 95 | floor unit, `bookshelf.png` |
+| `computer` | 120 | 430 | 230 | 110 | 140 | 70 | floor unit, `computer.png` |
+| `reading_chair` | 300 | 430 | 120 | 105 | 100 | 50 | floor unit, `reading-chair.png` |
+| `bed` | 480 | 430 | 210 | 150 | 65 | 32.5 | floor unit, `bed.png` |
+| `sofa` | 690 | 430 | 190 | 105 | 85 | 42.5 | floor unit, `sofa.png` |
+| `writing_desk` | 870 | 430 | 150 | 70 | 85 | 42.5 | floor unit, `writing-desk.png` |
+| `avatar` | 35 | 280 | 70 | 20 | 92 | 46 | billboard, `avatar.png` |
+
+Copy labels, interactions, state textures, furniture windows, spritesheet
+animations, and protected-object semantics from the canonical v9 definitions
+when authoring these constants, but do not generate them by reading a saved 2D
+stage. Assign an explicit opaque fallback color to every row. This layout keeps
+every pair of tool-gated furniture centers more than the 150 cm reach ceiling
+apart, keeps the boxes non-overlapping, and starts the avatar outside every
+object's derived reach. Pin all three properties in backend tests.
+
+## 5. Mode-aware backend
+
+### 5.1 Authoritative scene mode
+
+Introduce a `SceneMode` value with `normal` and `vr`. Normal is the default for
+all existing call sites. Record the selected mode on the frontend-client
+registration and the per-client service context. Propagate it to the scene MCP
+subprocess as `EMBODIED_AGENT_SCENE_MODE` and into `ToolManager`.
+
+All of these operations must load the selected document rather than choosing
+from `conf_uid` alone:
+
+- schema-time and execution-time proximity checks;
+- scene MCP reads and writes;
+- object-click lookup and effective-label resolution;
+- autonomous idle relocation and sitting pose patches;
+- frontend-action result validation and persistence;
+- post-movement arrival verification.
+
+Provide mode-aware `load_scene`, `save_scene`, `reset_scene`, `validate_scene`,
+and `load_world` entry points. Keep the current stage-manager functions as
+normal-mode wrappers so existing imports and tests do not change merely to
+support VR.
+
+The common `World` remains horizontal in the MVP. Its VR loader maps node
+`width/depth` to the footprint and ignores elevation for distance and reach.
+Normal mode continues to map node `width/height` as it does today. Effective
+labels, ambiguous-label fail-closed behavior, reach derivation, and arrival
+tolerance are shared.
+
+### 5.2 Scene tools and furniture editing
+
+Keep `get_object_position`, `list_objects`, `get_scene_status`, `move_to`,
+`describe_room`, `place_object`, `move_object`, and `remove_object`. Their
+process reads `EMBODIED_AGENT_SCENE_MODE`; the model cannot select a different
+mode in a tool argument.
+
+In VR, `place_object` exposes these additional optional arguments:
+
+```text
+depth=90, height=90, elevation=height/2,
+color="#334155", image_url=null
+```
+
+Here `x/y/width/depth` describe the floor footprint and `height/elevation`
+describe the vertical box. Normal mode preserves the existing parameter
+meaning and rejects VR-only arguments. `move_object` changes only `x/y` in
+both modes. Resizing and rotation are not MVP operations.
+
+Room mutation remains available only at the design board. `avatar`, `computer`,
+and `design_board` preserve their current removal protections. Every successful
+VR mutation returns and persists the complete VR document and cannot touch
+`stage.json`.
+
+### 5.3 Docking and endpoint validation
+
+Normal mode retains its current center-target behavior. VR `move_to(target)`
+never selects the target's center. Let the target footprint have half-width
+`hw`, half-depth `hd`, the avatar radius be `max(avatar.width,
+avatar.depth) / 2`, and the clearance be 10 cm. Generate candidates in this
+fixed tie-break order:
+
+```text
+north: (target.x, target.y - hd - avatar_radius - 10)
+east:  (target.x + hw + avatar_radius + 10, target.y)
+south: (target.x, target.y + hd + avatar_radius + 10)
+west:  (target.x - hw - avatar_radius - 10, target.y)
+```
+
+A candidate is valid only when the avatar's full circular floor footprint is
+inside the room and its center is outside every non-avatar node's inclusive
+floor AABB. Sort valid candidates by Euclidean distance from the current avatar
+position, retaining the generation order for equal distances. If none remain,
+return `Error: no clear stopping point is available near <target>` without
+sending a frontend action.
+
+`World.path_to` may still return a straight line, so the displayed path may
+cross a box. Validate every requested waypoint before applying it and validate
+the final saved avatar position again on the backend. A point on an AABB edge
+counts as inside; reject it. Endpoint rejection returns the authoritative
+unchanged VR state. Arrival is successful only when the saved position is
+within the existing two-unit tolerance of the selected docking point.
+
+## 6. WebSocket and frontend-action protocol
+
+### 6.1 Connection ownership
+
+Parse `renderer_mode` before registering a client. Missing means `normal`; any
+value other than `normal` or `vr` closes with WebSocket policy code `1008`.
+Because this server uses one selected character configuration, ownership is
+checked against that character before initial messages are sent.
+
+- If a normal client for the character exists, reject a new VR connection.
+- If a VR client exists, reject every additional connection for the character.
+- Multiple normal clients retain their existing behavior when no VR client is
+  present.
+
+Send a machine-readable error message before closing where the protocol
+permits it, and display: **Close the other client before entering VR.** Never
+disconnect an existing client to make room for a new one.
+
+### 6.2 State messages
+
+Normal mode continues to receive:
+
+```json
+{"type": "stage-state", "stage": {}}
+```
+
+VR mode receives:
+
+```json
+{"type": "vr-stage-state", "stage": {"version": 1, "mode": "vr"}}
+```
+
+The VR provider alone handles `vr-stage-state`. When backend validation rejects
+a VR action result, send the last authoritative `vr-stage-state`, just as
+normal mode currently sends `stage-state`.
+
+Frontend action names and request/result envelopes remain unchanged. VR
+`get_object_position`, `move_to`, `list_objects`, and `get_scene_status` use
+floor-plane `{x, y}`. Mode-specific `stage_get_state`, `stage_set_state`,
+`stage_patch_state`, `stage_reset_state`, and `stage_list_capabilities` operate
+on `VrStageDocument` for the owning VR client. Capabilities must report
+`mode: "vr"` and schema version 1.
+
+The backend resolves a pending request to its registered owner, looks up that
+owner's stored mode, validates the returned state with that mode's validator,
+and persists to that mode's path. A `mode` field in the result is ignored; a VR
+document returned by a normal owner, or the reverse, fails validation.
+
+## 7. HTTPS and LAN deployment
+
+Add optional fields under `system_config`:
+
+```yaml
+host: "0.0.0.0"
+port: 12393
+trusted_hosts:
+  - "192.168.1.10"
+ssl_certfile: "/absolute/path/to/server-cert.pem"
+ssl_keyfile: "/absolute/path/to/server-key.pem"
+```
+
+Both TLS paths must be absent/blank or both present. Expand user paths, require
+readable regular files during configuration validation, and pass them to
+Uvicorn as `ssl_certfile` and `ssl_keyfile`. Do not store certificates, private
+keys, or generated CAs in the repository. HTTP remains the default when both
+fields are blank, preserving local Electron behavior.
+
+Add `Permissions-Policy: xr-spatial-tracking=(self)` to frontend responses.
+Existing Host and Origin checks remain authoritative: operators must bind to
+`0.0.0.0` and list the exact hostname or LAN IP used in the Quest URL under
+`trusted_hosts`.
+
+For browser builds, derive defaults from `window.location`:
+
+```text
+base URL = window.location.origin
+WebSocket scheme = wss when location.protocol is https, otherwise ws
+WebSocket host = window.location.host
+```
+
+Electron keeps its explicit `http://127.0.0.1:12393` and
+`ws://127.0.0.1:12393/client-ws` defaults. Do not let an old locally persisted
+HTTP endpoint downgrade a same-origin HTTPS Quest session; VR always uses the
+current secure origin.
+
+The operator guide must include these steps:
+
+1. Generate a LAN certificate whose subject alternative names include the
+   exact hostname/IP used by Quest.
+2. Install and trust the issuing local CA on the Quest device.
+3. Configure TLS paths, `host`, and `trusted_hosts`.
+4. Open `https://<trusted-host>:12393/` in Quest Browser and accept microphone
+   permission.
+5. Confirm there is no certificate warning before testing `navigator.xr`.
+
+A certificate exception page is not an acceptable MVP deployment because
+WebXR and microphone APIs require a trustworthy secure context.
+
+## 8. Implementation sequence
+
+1. **Contracts and storage:** add the VR types, fixed defaults, dual validators,
+   independent persistence, mode-aware world loader, and TLS configuration.
+2. **Connection routing:** add renderer selection, deferred connection, mode
+   registration, exclusive VR ownership, mode-aware MCP/tool context, and
+   authoritative VR result persistence.
+3. **Renderer:** add the Three.js lifecycle, room, cuboid furniture, textures,
+   agent billboard, spritesheet animation, and camera-relative status surfaces.
+4. **Input and interaction:** add Quest locomotion, snap turn, right-ray
+   selection, X-button microphone toggle, provider panels, decision buttons,
+   and voice-directed VR furniture mutations.
+5. **Movement and hardening:** add docking, waypoint/endpoint validation,
+   mode-aware idle/object behavior, performance measurement, deployment docs,
+   and Quest hardware acceptance.
+
+Each step must leave normal mode usable. Keep VR marked experimental until all
+acceptance checks below pass on Quest 3.
+
+## 9. Test plan
+
+### 9.1 Backend automated tests
+
+Add pytest coverage for:
+
+- the exact default node set, dimensions, metadata, and one avatar;
+- VR validation success plus malformed types, bounds, unsafe assets, excessive
+  reach, duplicate labels, missing avatar, and an avatar inside furniture;
+- independent normal/VR save, load, reset, and corrupt-file fallback;
+- VR world footprints, reachability, duplicate-label fail-closed behavior, and
+  mode-aware tool authorization;
+- scene reads/writes targeting only the registered mode and preserving
+  protected furniture;
+- four docking candidates, deterministic ties, room-edge rejection, candidates
+  blocked by other boxes, no-candidate failure, and persisted arrival checks;
+- frontend-result spoofing, wrong-schema results, and authoritative VR state
+  recovery;
+- normal/VR client exclusion and close code 1008 while retaining normal-only
+  multi-client behavior;
+- TLS pair validation, unreadable paths, and Uvicorn option propagation;
+- mode-aware object clicks and autonomous idle relocation.
+
+Run the existing full Python suite to catch regressions in stage v9, proximity
+gating, frontend routing, study ablation, and autonomy.
+
+### 9.2 Frontend automated tests
+
+Extract pure helpers and cover them with the frontend test runner:
+
+- VR document validation and patch merging;
+- centimetre-to-Three.js coordinate conversion;
+- AABB containment and docking selection;
+- radial dead-zone rescaling and head-relative movement vectors;
+- room-boundary clamping;
+- snap-turn threshold, direction, and rearming;
+- left X rising-edge toggling without repeat while held;
+- right-ray hit priority and object-click cooldown;
+- normal versus VR endpoint derivation and secure `wss` URL construction.
+
+Frontend lint, node/web TypeScript checks, and the production web build must
+pass. The ordinary web and Electron renderers must still load a stage v9 room.
+
+### 9.3 Quest 3 acceptance
+
+On a physical Meta Quest 3 over trusted HTTPS:
+
+1. Enter and exit immersive VR without a permission-policy, certificate,
+   microphone, or WebSocket error.
+2. Maintain at least 72 rendered frames per second for five minutes in the
+   default room while the agent animates and audio plays.
+3. Verify head-relative left-stick movement, room clamping, 30-degree
+   right-stick turns, and turn rearming.
+4. Verify left X toggles the microphone exactly once per press, preserves the
+   preference, and shows the correct status.
+5. Complete a voice conversation with streamed audio, subtitle updates, and
+   interruption.
+6. Select every furniture class with the right ray, open dynamic panels, and
+   exercise one plan or skill decision.
+7. Ask the agent to move furniture at the design board; reconnect and restart
+   the server, then confirm only the VR layout changed.
+8. Confirm an agent path may visibly cross a box but no waypoint or final
+   position can remain inside one.
+9. Confirm a simultaneous desktop/Quest connection is refused with the stated
+   message and that reconnect succeeds after the other client closes.
+
+## 10. Non-goals and future work
+
+The MVP targets only Meta Quest 3, Touch Plus controllers, and the current
+Quest Browser. It intentionally does not include:
+
+- new 3D models, skeletal animation, inverse kinematics, or spatial audio;
+- a physics engine, navmesh, obstacle-avoiding paths, or furniture collision
+  for the user;
+- hand tracking, teleportation, passthrough, AR, multiplayer, or remote avatars;
+- direct grab/reposition controls, furniture rotation, or resizing;
+- in-headset OAuth, the complete desktop UI, full chat history, or text entry;
+- migration from normal stage state or ongoing layout synchronization;
+- support guarantees for other WebXR headsets or controller profiles.
+
+Likely follow-up work is real 3D assets, collision-aware locomotion, navmesh
+pathfinding, controller-profile abstraction, direct furniture manipulation,
+and richer spatial UI. None of those may change the MVP's independent
+persistence, authoritative mode routing, or dual proximity authorization.

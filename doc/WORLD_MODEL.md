@@ -123,7 +123,7 @@ with a camera and the windows keep following their objects.
 The decoupling above is what had to happen first. What remains is renderer
 work rather than surgery on the rest of the system:
 
-- **A renderer and assets.** Models or billboards for fourteen objects, a room,
+- **A renderer and assets.** Models or billboards for fifteen objects, a room,
   and an avatar with the animation states the spritesheet currently covers.
 - **A loader.** Build `World` from whatever the 3D scene stores. Everything
   above the seam — the gate, the tools, the click channel, the layout
@@ -137,6 +137,13 @@ work rather than surgery on the rest of the system:
 None of that is required by the research question the 2D room already
 demonstrates, which is why 3D remains deferred — see
 [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
+The experimental Meta Quest 3 MVP deliberately narrows this checklist. It keeps
+world reasoning on the horizontal `x/y` floor plane, adds elevation only to a
+separate VR presentation document, uses straight paths with collision-free
+endpoints rather than a navmesh, and renders existing assets on cuboids and an
+avatar billboard. Its implementation contract and pending hardware checks are in
+[VR_MODE.md](VR_MODE.md).
 
 ## 7. Where to look
 

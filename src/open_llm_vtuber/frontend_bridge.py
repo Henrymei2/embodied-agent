@@ -31,6 +31,7 @@ from loguru import logger
 class _ConnectedClient:
     send_text: Callable[[str], Awaitable[None]]
     conf_uid: str | None
+    scene_mode: str = "normal"
 
 
 @dataclass(frozen=True)
@@ -53,9 +54,14 @@ def register_client_sender(
     client_uid: str,
     send_text: Callable[[str], Awaitable[None]],
     conf_uid: str | None = None,
+    scene_mode: str = "normal",
 ) -> None:
     """Called by websocket_handler.py when a client connects."""
-    _clients[client_uid] = _ConnectedClient(send_text=send_text, conf_uid=conf_uid)
+    _clients[client_uid] = _ConnectedClient(
+        send_text=send_text,
+        conf_uid=conf_uid,
+        scene_mode=scene_mode,
+    )
     logger.debug(f"frontend_bridge: registered sender for client {client_uid}")
 
 
@@ -68,7 +74,13 @@ def update_client_configuration(client_uid: str, conf_uid: str) -> None:
     _clients[client_uid] = _ConnectedClient(
         send_text=client.send_text,
         conf_uid=conf_uid,
+        scene_mode=client.scene_mode,
     )
+
+
+def get_client_scene_mode(client_uid: str) -> str | None:
+    client = _clients.get(client_uid)
+    return client.scene_mode if client else None
 
 
 def unregister_client_sender(client_uid: str) -> None:

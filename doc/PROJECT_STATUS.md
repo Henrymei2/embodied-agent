@@ -43,9 +43,10 @@ including what that evidence cannot settle on its own.
 
 ### Embodiment
 
-- Persistent 960x540 stage v8 laid out in wall, back, and front bands: window,
-  todo list, calendar, hourglass, design board, mailbox, tool rack, computer,
-  archive shelf, bookshelf, writing desk, reading chair, bed, and sofa.
+- Persistent 960x540 stage v9 laid out in wall, back, and front bands: window,
+  todo list, calendar, hourglass, design board, drawing board, mailbox, tool
+  rack, computer, archive shelf, bookshelf, writing desk, reading chair, bed,
+  and sofa.
 - A renderer-agnostic world model holds position, reach, paths, and arrival, so
   tools and the spatial gate no longer read presentation data. Distances are
   world units at a declared scale, and each object derives its own reach from
@@ -159,7 +160,7 @@ Persistent stage <---- validated result ---+
 | Books, plans, idling, room editing | Complete | bookshelf, reading chair, writing desk, sofa, and design board, each with its own tools and window |
 | Self-evolution | Complete | agent-authored skills that change its own prompt, gated on user approval and enforced by a read-only skills mount; unattended executable self-rewrite is excluded |
 | Evidence for the research question | Instrumented | per-pillar ablations, an append-only content-free session log, and a per-condition report; self-report from participants is still required, see [STUDY_MODE.md](STUDY_MODE.md) |
-| 3D embodiment | Deferred, unblocked | the renderer coupling that made it a rewrite is gone; see [WORLD_MODEL.md](WORLD_MODEL.md) |
+| 3D embodiment | Experimental; Quest 3 acceptance pending | the Meta Quest 3 WebXR MVP, independent VR layout, controls, and mode-aware backend are implemented; see [VR_MODE.md](VR_MODE.md) |
 
 ## 5. External integration boundaries
 
@@ -176,14 +177,13 @@ repository:
   actually be read; other books can be shelved but not opened.
 - Raw screen/application awareness would materially expand privacy scope. The
   current protocol deliberately accepts only coarse presence signals.
-- 3D/Unity remains a separate renderer and asset pipeline. What it is no longer
-  is a rewrite of everything above the renderer: spatial reasoning now lives in
-  a world model that a 3D scene can supply, walking is a waypoint contract
-  rather than a CSS tween, and furniture windows are anchored to a projected
-  room position rather than to a DOM box. What is left is renderer work —
-  assets, a loader for `World`, an elevation axis, pathfinding, and a camera
-  projection — none of which the research question needs, which is why it stays
-  deferred. [WORLD_MODEL.md](WORLD_MODEL.md) has the checklist.
+- 3D remains outside the production path while hardware acceptance is pending.
+  The experimental WebXR MVP
+  targets Meta Quest 3 with cuboid furniture, the existing textures, a grounded
+  world loader, and an animated avatar billboard; it does not require Unity,
+  new 3D assets, or pathfinding. [VR_MODE.md](VR_MODE.md) is the implementation
+  contract, and [WORLD_MODEL.md](WORLD_MODEL.md) describes the renderer seam it
+  builds on.
 
 ## 6. Acceptance gates
 

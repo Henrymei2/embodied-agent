@@ -174,6 +174,7 @@ async def agenda_loop(
         SERVER_PROXIMITY_REQUIREMENTS.values()
     )
     conf_uid = context.character_config.conf_uid
+    scene_mode = getattr(context, "scene_mode", "normal")
 
     async def relocate_idle(placement) -> bool:
         if lease_handle is not None:
@@ -185,6 +186,7 @@ async def agenda_loop(
             client_uid=client_uid,
             conf_uid=conf_uid,
             placement=placement,
+            scene_mode=scene_mode,
         )
 
     capability_objects = (
@@ -219,7 +221,9 @@ async def agenda_loop(
         connected_client=connected_client,
         lease_handle=lease_handle,
         room_snapshot=(
-            (lambda: idle_scene_snapshot(conf_uid)) if connected_client else None
+            (lambda: idle_scene_snapshot(conf_uid, scene_mode))
+            if connected_client
+            else None
         ),
         relocate_idle=relocate_idle if connected_client else None,
     )

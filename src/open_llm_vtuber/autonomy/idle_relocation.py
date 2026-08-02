@@ -9,12 +9,22 @@ from typing import Literal
 from loguru import logger
 
 from ..frontend_bridge import request_frontend_action
+from ..scene_state import load_scene_state, load_scene_world
 from ..stage_state_manager import load_stage_state, load_world
+from ..vr_stage_state_manager import docking_point
 
 IdlePosture = Literal["standing", "sitting"]
 _SEATED_OBJECT_IDS = frozenset({"sofa", "reading_chair"})
 IDLE_RELOCATION_TIMEOUT_SECONDS = 15.0
 MAX_IDLE_SCENE_OBJECTS = 128
+
+
+def _load_world(conf_uid: str, scene_mode: str):
+    return load_scene_world(conf_uid, "vr") if scene_mode == "vr" else load_world(conf_uid)
+
+
+def _load_stage(conf_uid: str, scene_mode: str):
+    return load_scene_state(conf_uid, "vr") if scene_mode == "vr" else load_stage_state(conf_uid)
 
 
 @dataclass(frozen=True)
@@ -45,9 +55,9 @@ class IdlePlacement:
     reason: str
 
 
-def idle_scene_snapshot(conf_uid: str) -> IdleScene:
+def idle_scene_snapshot(conf_uid: str, scene_mode: str = "normal") -> IdleScene:
     """Read a bounded nearest-first room view and the persisted avatar position."""
-    world = load_world(conf_uid)
+    world = _load_world(conf_uid, scene_mode)
     origin = world.agent_position
     ordered_objects = sorted(
         world.objects,
@@ -95,12 +105,13 @@ async def _relocate_for_idle(
     client_uid: str,
     conf_uid: str,
     placement: IdlePlacement,
+    scene_mode: str = "normal",
 ) -> bool:
     """Move through the live frontend, verify arrival, and apply a known seat pose."""
     if placement.object_id is None:
         return False
 
-    world = load_world(conf_uid)
+    world = _load_world(conf_uid, scene_mode)
     destination = next(
         (obj for obj in world.objects if obj.id == placement.object_id),
         None,
@@ -113,12 +124,21 @@ async def _relocate_for_idle(
         )
         return False
 
-    path = world.path_to(destination.position)
+    final_position = destination.position
+    if scene_mode == "vr":
+        final_position, docking_error = docking_point(
+            _load_stage(conf_uid, "vr"),
+            destination.id,
+        )
+        if final_position is None:
+            logger.warning(f"agenda: idle relocation has no VR docking point: {docking_error}")
+            return False
+    path = world.path_to(final_position)
     ok, _result, error = await request_frontend_action(
         "move_to",
         {
-            "x": destination.position.x,
-            "y": destination.position.y,
+            "x": final_position.x,
+            "y": final_position.y,
             "waypoints": [{"x": point.x, "y": point.y} for point in path],
         },
         client_uid=client_uid,
@@ -128,8 +148,8 @@ async def _relocate_for_idle(
         logger.warning(f"agenda: idle relocation to {destination.id!r} failed: {error}")
         return False
 
-    arrived = load_world(conf_uid)
-    if not arrived.has_arrived_at(destination.position):
+    arrived = _load_world(conf_uid, scene_mode)
+    if not arrived.has_arrived_at(final_position):
         logger.warning(
             f"agenda: idle relocation to {destination.id!r} was not persisted as arrived"
         )
@@ -155,7 +175,7 @@ async def _relocate_for_idle(
                 f"agenda: idle posture at {destination.id!r} failed: {error}"
             )
             return False
-        stage = load_stage_state(conf_uid)
+        stage = _load_stage(conf_uid, scene_mode)
         avatar = next(
             (node for node in stage.get("nodes", []) if node.get("id") == "avatar"),
             None,
@@ -175,6 +195,7 @@ async def relocate_for_idle(
     client_uid: str,
     conf_uid: str,
     placement: IdlePlacement,
+    scene_mode: str = "normal",
 ) -> bool:
     """Bound the complete move-and-pose transition to one bridge timeout."""
     try:
@@ -183,6 +204,7 @@ async def relocate_for_idle(
                 client_uid=client_uid,
                 conf_uid=conf_uid,
                 placement=placement,
+                scene_mode=scene_mode,
             ),
             timeout=IDLE_RELOCATION_TIMEOUT_SECONDS,
         )
