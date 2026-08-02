@@ -60,7 +60,7 @@ describe("Quest controller helpers", () => {
   });
 
   it("moves relative to horizontal headset facing", () => {
-    expect(headRelativeDelta({ x: 0, y: -1 }, { x: 0, z: -1 }, 1.5, 2)).toEqual({ x: 0, z: -3 });
+    expect(headRelativeDelta({ x: 0, y: 1 }, { x: 0, z: -1 }, 1.5, 2)).toEqual({ x: 0, z: -3 });
   });
 
   it("requires rearming between 30 degree snap turns", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { useVrStage, VrStageNode } from "@/context/vr-stage-context";
 import { useRendererMode } from "@/context/renderer-mode-context";
@@ -106,15 +106,28 @@ export default function VrStage() {
   const { subtitleText } = useSubtitle();
   const { activity } = useAgentActivity();
   const { sendMessage, baseUrl, wsState } = useWebSocket();
-  const statusUntilRef = useRef(0);
+  const sendMessageRef = useRef(sendMessage);
+  const baseUrlRef = useRef(baseUrl);
+  const startMicRef = useRef(startMic);
+  const stopMicRef = useRef(stopMic);
+  const micStatusTimerRef = useRef<number | null>(null);
+  const [micStatus, setMicStatus] = useState<string | null>(null);
   const initialMicOnRef = useRef(micOn);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { micRef.current = micOn; }, [micOn]);
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+  useEffect(() => { baseUrlRef.current = baseUrl; }, [baseUrl]);
+  useEffect(() => { startMicRef.current = startMic; }, [startMic]);
+  useEffect(() => { stopMicRef.current = stopMic; }, [stopMic]);
 
   useEffect(() => {
-    if (xrSession && initialMicOnRef.current) void startMic();
-  }, [xrSession, startMic]);
+    if (xrSession && initialMicOnRef.current) void startMicRef.current();
+  }, [xrSession]);
+
+  useEffect(() => () => {
+    if (micStatusTimerRef.current !== null) window.clearTimeout(micStatusTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current || !xrSession) return undefined;
@@ -172,7 +185,7 @@ export default function VrStage() {
       const now = performance.now();
       if (now - (runtime.clickTimes.get(node.id) || 0) >= CLICK_COOLDOWN_MS) {
         runtime.clickTimes.set(node.id, now);
-        sendMessage({ type: "object-interaction", object_id: node.id });
+        sendMessageRef.current({ type: "object-interaction", object_id: node.id });
       }
       const closingCurrent = runtime.panel?.userData.nodeId === node.id;
       if (runtime.panel) {
@@ -195,7 +208,7 @@ export default function VrStage() {
       let liveData: Record<string, unknown> | null = null;
       if (route) {
         try {
-          const response = await fetch(`${baseUrl}${route}`, { headers: { Accept: "application/json" } });
+          const response = await fetch(`${baseUrlRef.current}${route}`, { headers: { Accept: "application/json" } });
           if (response.ok) {
             liveData = await response.json() as Record<string, unknown>;
             lines.splice(2, 0, ...summaryLines(liveData));
@@ -244,15 +257,14 @@ export default function VrStage() {
 
     const activatePanelAction = async (action: PanelAction) => {
       try {
-        const response = await fetch(`${baseUrl}/api/furniture/${action.collection}/${encodeURIComponent(action.id)}/decision`, {
+        const response = await fetch(`${baseUrlRef.current}/api/furniture/${action.collection}/${encodeURIComponent(action.id)}/decision`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ decision: action.decision }),
         });
-        statusUntilRef.current = performance.now() + 1500;
         if (!response.ok) throw new Error("Decision was rejected");
       } catch (_error) {
-        statusUntilRef.current = performance.now() + 2500;
+        // The furniture panel remains open so the user can retry.
       }
     };
 
@@ -316,13 +328,17 @@ export default function VrStage() {
         runtime.turnArmed = turn.armed;
       }
       if (left) {
-        if (left.buttons.length <= 4) {
-          statusUntilRef.current = time + 1000;
-        } else {
+        if (left.buttons.length > 4) {
           const pressed = left.buttons[4].pressed;
           if (pressedEdge(pressed, runtime.xPressed)) {
-            if (micRef.current) stopMic(); else void startMic();
-            statusUntilRef.current = time + 1500;
+            const nextMicOn = !micRef.current;
+            if (micRef.current) stopMicRef.current(); else void startMicRef.current();
+            setMicStatus(`Microphone ${nextMicOn ? "on" : "off"}`);
+            if (micStatusTimerRef.current !== null) window.clearTimeout(micStatusTimerRef.current);
+            micStatusTimerRef.current = window.setTimeout(() => {
+              setMicStatus(null);
+              micStatusTimerRef.current = null;
+            }, 1500);
           }
           runtime.xPressed = pressed;
         }
@@ -370,7 +386,7 @@ export default function VrStage() {
       host.removeChild(renderer.domElement);
       runtimeRef.current = null;
     };
-  }, [xrSession, sendMessage, baseUrl, startMic, stopMic]);
+  }, [xrSession]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -474,16 +490,16 @@ export default function VrStage() {
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
-    const status = performance.now() < statusUntilRef.current ? ` · Microphone ${micOn ? "on" : "off"}` : "";
     const activityText = activity.phase === "idle" ? "" : ` · ${activity.phase}`;
+    const status = micStatus ? ` · ${micStatus}` : "";
     const next = canvasTexture([
       subtitleText || "Embodied Agent",
-      `${micOn ? "Mic on" : "Mic off"} · ${wsState}${activityText}${status}`,
+      `${wsState}${activityText}${status}`,
     ]);
     (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
     runtime.hudTexture.dispose();
     runtime.hudTexture = next;
-  }, [subtitleText, activity, micOn, wsState]);
+  }, [subtitleText, activity, micStatus, wsState]);
 
   return <div ref={hostRef} style={{ position: "fixed", inset: 0, background: "#101827" }} />;
 }

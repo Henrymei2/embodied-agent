@@ -102,8 +102,8 @@ export function headRelativeDelta(
   const rightX = -forwardZ;
   const rightZ = forwardX;
   return {
-    x: (rightX * stick.x - forwardX * stick.y) * speed * elapsedSeconds,
-    z: (rightZ * stick.x - forwardZ * stick.y) * speed * elapsedSeconds,
+    x: (rightX * stick.x + forwardX * stick.y) * speed * elapsedSeconds,
+    z: (rightZ * stick.x + forwardZ * stick.y) * speed * elapsedSeconds,
   };
 }
 

@@ -170,6 +170,8 @@ class WebSocketService {
 
   private isTestingInjectedMessage = false;
 
+  private currentHistoryUid: string | null = null;
+
   static getInstance() {
     if (!WebSocketService.instance) {
       WebSocketService.instance = new WebSocketService();
@@ -184,9 +186,9 @@ class WebSocketService {
     this.sendMessage({
       type: 'fetch-history-list',
     });
-    this.sendMessage({
-      type: 'create-new-history',
-    });
+    this.sendMessage(this.currentHistoryUid
+      ? { type: 'fetch-and-set-history', history_uid: this.currentHistoryUid }
+      : { type: 'create-new-history' });
   }
 
   connect(url: string) {
@@ -196,19 +198,25 @@ class WebSocketService {
     }
 
     try {
-      this.ws = new WebSocket(url);
+      const socket = new WebSocket(url);
+      this.ws = socket;
       this.currentState = 'CONNECTING';
       this.stateSubject.next('CONNECTING');
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.currentState = 'OPEN';
         this.stateSubject.next('OPEN');
         this.initializeConnection();
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const message = JSON.parse(event.data);
+          if (message.type === 'new-history-created' && typeof message.history_uid === 'string') {
+            this.currentHistoryUid = message.history_uid;
+          }
           this.messageSubject.next(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
@@ -220,12 +228,16 @@ class WebSocketService {
         }
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = (event) => {
+        if (this.ws !== socket) return;
+        this.ws = null;
+        console.warn(`WebSocket closed (${event.code}): ${event.reason || 'no reason'}`);
         this.currentState = 'CLOSED';
         this.stateSubject.next('CLOSED');
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
+        if (this.ws !== socket) return;
         this.currentState = 'CLOSED';
         this.stateSubject.next('CLOSED');
       };
@@ -237,6 +249,12 @@ class WebSocketService {
   }
 
   sendMessage(message: object) {
+    if (
+      'type' in message && message.type === 'fetch-and-set-history' &&
+      'history_uid' in message && typeof message.history_uid === 'string'
+    ) {
+      this.currentHistoryUid = message.history_uid;
+    }
     const suppressClosedWarning = this.isTestingInjectedMessage;
     this.sentMessages.push(message);
     this.outboundSubject.next(message);
@@ -306,8 +324,11 @@ class WebSocketService {
   }
 
   disconnect() {
-    this.ws?.close();
+    const socket = this.ws;
     this.ws = null;
+    socket?.close();
+    this.currentState = 'CLOSED';
+    this.stateSubject.next('CLOSED');
   }
 
   getCurrentState() {

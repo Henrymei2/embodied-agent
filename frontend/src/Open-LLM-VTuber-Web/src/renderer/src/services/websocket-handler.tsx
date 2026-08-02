@@ -61,6 +61,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const browser = useMemo(() => browserEndpoints(window.location), []);
   const effectiveWsUrl = window.api ? wsUrl : browser.wsUrl;
   const effectiveBaseUrl = window.api ? baseUrl : browser.baseUrl;
+  const sendMessage = useCallback((message: object) => {
+    wsService.sendMessage(message);
+  }, []);
 
   useEffect(() => {
     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
@@ -405,14 +408,14 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   }, [handleWebSocketMessage]);
 
   const webSocketContextValue = useMemo(() => ({
-    sendMessage: wsService.sendMessage.bind(wsService),
+    sendMessage,
     wsState,
     reconnect: () => wsService.connect(withRendererMode(effectiveWsUrl, selectedMode, window.location.href)),
     wsUrl: effectiveWsUrl,
     setWsUrl,
     baseUrl: effectiveBaseUrl,
     setBaseUrl,
-  }), [wsState, effectiveWsUrl, effectiveBaseUrl, selectedMode, setWsUrl, setBaseUrl]);
+  }), [wsState, effectiveWsUrl, effectiveBaseUrl, selectedMode, setWsUrl, setBaseUrl, sendMessage]);
 
   return (
     <WebSocketContext.Provider value={webSocketContextValue}>
