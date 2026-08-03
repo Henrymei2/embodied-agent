@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from loguru import logger
 
@@ -60,6 +60,24 @@ class EmbeddingCache:
     def put(self, key: str, vector: Sequence[float]) -> None:
         self._entries[key] = [float(value) for value in vector]
         self._dirty = True
+
+    def purge(self, keys: Iterable[str]) -> int:
+        """Drop vectors for content that has been deleted, and persist at once.
+
+        A vector is a lossy copy of the text it came from — near enough that a
+        similarity search can still surface a deleted memory. So deletion has
+        to reach in here, and it has to be written to disk immediately rather
+        than at the end of a turn that might never come.
+        """
+
+        removed = 0
+        for key in keys:
+            if self._entries.pop(key, None) is not None:
+                removed += 1
+        if removed:
+            self._dirty = True
+            self.save()
+        return removed
 
     def save(self) -> None:
         if not self._dirty:

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "manifest": {
+    "schema_version": 1,
+    "status": "completed",
+    "run_id": "part2-development-baseline",
+    "code_revision": "f40ef9240e6e2aedcd389cde1a701f780177529b",
+    "worktree_dirty": true,
+    "contract_revision": "2026-08-03.2",
+    "condition_id": "full",
+    "scenario_set_revision": "2026-08-03.1",
+    "scenario_split": "development",
+    "fixture_digest": "0ff85adc39cd9906f298ab1b0bcd51bf26fe23bbae26875a2aedb76c8853eaf4",
+    "configuration_digest": "2a8372218c0c4b9da40a437935f3b476c642f619c45a4d02b29f538c094539b1",
+    "model_identifiers": [
+      "fixture-llm-v1"
+    ],
+    "engine_identifiers": [
+      "deterministic-clock-v1",
+      "fixture-adapters-v1",
+      "failure-plan-v1"
+    ],
+    "platform": {
+      "system": "Windows",
+      "release": "10",
+      "machine": "AMD64",
+      "python": "3.10.20"
+    },
+    "seed": 0,
+    "started_at": "2026-08-03T12:00:00+00:00",
+    "finished_at": "2026-08-03T12:00:00.055+00:00"
+  },
+  "replay": {
+    "runs": 3,
+    "terminal_state_digest": "4aa9ba8c8dc6048a74d0add95f8e7e6827eca4195d0c20504f1d64280ccb93a6",
+    "action_outcomes_digest": "5f6c11fcd67768debd75558fff11096cdf99507643b1ce552bb04c05d2db916a",
+    "event_chain_digest": "d99d5258b2fd2d99c23bfff3ee8bfce15c76dfd0ff91363922d61001ffaec865"
+  },
+  "report": {
+    "schema_version": 1,
+    "report_id": "part2-development-baseline",
+    "generated_at": "2026-08-03T12:00:00.055+00:00",
+    "contract_revision": "2026-08-03.2",
+    "run_id": "part2-development-baseline",
+    "condition_id": "full",
+    "manifest_digest": "a373ae02d605dd9e282042f231380f84f1333de97eb4d3cdcc2c117519aa2dac",
+    "results": [
+      {
+        "metric_id": "long_horizon_task_success_rate",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": ">=",
+          "threshold": 0.85
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "spatial_grounding_accuracy",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": ">=",
+          "threshold": 0.9
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "memory_consistency_rate",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": ">=",
+          "threshold": 0.95
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "proactive_help_acceptance_rate",
+        "state": "unavailable",
+        "value": null,
+        "target": null,
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "unwanted_intervention_rate",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "<=",
+          "threshold": 0.15
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "median_reply_wait_seconds",
+        "state": "unavailable",
+        "value": null,
+        "target": null,
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "presence_scale_score",
+        "state": "unavailable",
+        "value": null,
+        "target": null,
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "recovery_rate",
+        "state": "pass",
+        "value": 1.0,
+        "target": {
+          "operator": ">=",
+          "threshold": 0.9
+        },
+        "evidence_digest": "d99d5258b2fd2d99c23bfff3ee8bfce15c76dfd0ff91363922d61001ffaec865",
+        "reason_code": "failure_injection"
+      },
+      {
+        "metric_id": "unauthorized_side_effect_count",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "==",
+          "threshold": 0
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "duplicate_side_effect_count",
+        "state": "pass",
+        "value": 0,
+        "target": {
+          "operator": "==",
+          "threshold": 0
+        },
+        "evidence_digest": "d99d5258b2fd2d99c23bfff3ee8bfce15c76dfd0ff91363922d61001ffaec865",
+        "reason_code": "idempotency_replay"
+      },
+      {
+        "metric_id": "action_terminal_coverage",
+        "state": "pass",
+        "value": 1.0,
+        "target": {
+          "operator": ">=",
+          "threshold": 1.0
+        },
+        "evidence_digest": "d99d5258b2fd2d99c23bfff3ee8bfce15c76dfd0ff91363922d61001ffaec865",
+        "reason_code": "deterministic_replay"
+      },
+      {
+        "metric_id": "trace_privacy_violation_count",
+        "state": "pass",
+        "value": 0,
+        "target": {
+          "operator": "==",
+          "threshold": 0
+        },
+        "evidence_digest": "d99d5258b2fd2d99c23bfff3ee8bfce15c76dfd0ff91363922d61001ffaec865",
+        "reason_code": "schema_validated"
+      },
+      {
+        "metric_id": "median_speech_to_first_audio_ms",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "<=",
+          "threshold": 800
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "p95_speech_to_first_audio_ms",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "<=",
+          "threshold": 1400
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "p95_interruption_stop_ms",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "<=",
+          "threshold": 250
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "headset_sustained_fps",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": ">=",
+          "threshold": 72
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      },
+      {
+        "metric_id": "soak_unrecovered_failure_count",
+        "state": "unavailable",
+        "value": null,
+        "target": {
+          "operator": "==",
+          "threshold": 0
+        },
+        "evidence_digest": null,
+        "reason_code": "not_measured"
+      }
+    ],
+    "summary": {
+      "fail": 0,
+      "not_applicable": 0,
+      "pass": 4,
+      "unavailable": 13,
+      "total": 17
+    },
+    "report_digest": "c089a9c4599e8663a4dca2a3e4c5f51097d4d6a758b77b0c7ea3e2e29cd97c01"
+  }
+}

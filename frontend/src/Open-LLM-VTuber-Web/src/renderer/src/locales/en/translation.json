@@ -101,6 +101,21 @@
     "subtitle": "Your shared room is live",
     "subtitleWithoutRoom": "Your companion is ready"
   },
+  "spatial": {
+    "control": "Spatial",
+    "enter": "Enter spatial presentation",
+    "exit": "Exit spatial presentation",
+    "checking": "Checking headset support",
+    "webxrReady": "WebXR headset ready",
+    "previewReady": "Headset-safe preview",
+    "headsetDetected": "VR headset ready",
+    "starting": "Starting immersive space…",
+    "launchTitle": "Step into your companion space",
+    "launchDescription": "A calm, room-scale experience designed for natural conversation, focused captions, and direct object interaction.",
+    "enterVr": "Enter immersive VR",
+    "continueScreen": "Continue on screen",
+    "controlsHint": "Left stick to move · Right stick to turn · X to toggle microphone"
+  },
   "group": {
     "management": "Group Management",
     "yourUuid": "Your UUID",

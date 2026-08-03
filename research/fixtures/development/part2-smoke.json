@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "scenario_id": "part2-smoke",
+  "revision": "2026-08-03.1",
+  "started_at": "2026-08-03T12:00:00+00:00",
+  "initial_state": {
+    "revision": 0,
+    "agent_location": "spawn",
+    "plan_status": "pending",
+    "network_status": "unknown",
+    "audio_state": "idle",
+    "object_state": "closed"
+  },
+  "adapters": {
+    "llm": {
+      "plan-request": {
+        "operation": "set",
+        "key": "plan_status",
+        "value": "ready",
+        "idempotency_key": "effect-plan",
+        "outcome": "planned"
+      }
+    },
+    "tool": {
+      "move-request": {
+        "operation": "set",
+        "key": "agent_location",
+        "value": "bookshelf",
+        "idempotency_key": "effect-move",
+        "outcome": "verified"
+      }
+    },
+    "network": {
+      "network-request": {
+        "operation": "set",
+        "key": "network_status",
+        "value": "available",
+        "idempotency_key": "effect-network",
+        "outcome": "connected"
+      }
+    },
+    "audio": {
+      "audio-request": {
+        "operation": "set",
+        "key": "audio_state",
+        "value": "ready",
+        "idempotency_key": "effect-audio",
+        "outcome": "audible"
+      }
+    },
+    "frontend": {
+      "frontend-request": {
+        "operation": "set",
+        "key": "object_state",
+        "value": "open",
+        "idempotency_key": "effect-frontend",
+        "outcome": "rendered"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "step-plan",
+      "adapter": "llm",
+      "request_id": "plan-request",
+      "max_attempts": 1,
+      "advance_ms": 5
+    },
+    {
+      "id": "step-network",
+      "adapter": "network",
+      "request_id": "network-request",
+      "max_attempts": 2,
+      "advance_ms": 10
+    },
+    {
+      "id": "step-move",
+      "adapter": "tool",
+      "request_id": "move-request",
+      "max_attempts": 1,
+      "advance_ms": 20
+    },
+    {
+      "id": "step-audio",
+      "adapter": "audio",
+      "request_id": "audio-request",
+      "max_attempts": 2,
+      "advance_ms": 15
+    },
+    {
+      "id": "step-frontend",
+      "adapter": "frontend",
+      "request_id": "frontend-request",
+      "max_attempts": 1,
+      "advance_ms": 5
+    }
+  ],
+  "failures": [
+    {
+      "adapter": "network",
+      "request_id": "network-request",
+      "attempt": 1,
+      "kind": "timeout"
+    },
+    {
+      "adapter": "audio",
+      "request_id": "audio-request",
+      "attempt": 1,
+      "kind": "malformed_response"
+    },
+    {
+      "adapter": "frontend",
+      "request_id": "frontend-request",
+      "attempt": 1,
+      "kind": "duplicate_event"
+    }
+  ],
+  "expected": {
+    "status": "completed",
+    "terminal_state_digest": "4aa9ba8c8dc6048a74d0add95f8e7e6827eca4195d0c20504f1d64280ccb93a6",
+    "action_outcomes_digest": "5f6c11fcd67768debd75558fff11096cdf99507643b1ce552bb04c05d2db916a"
+  }
+}

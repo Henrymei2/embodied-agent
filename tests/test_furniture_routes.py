@@ -8,6 +8,11 @@ from fastapi.testclient import TestClient
 
 from mcp_servers import plan_tools
 from src.open_llm_vtuber import furniture_state
+from src.open_llm_vtuber.authorization import (
+    ActionTransactionJournal,
+    build_action_descriptor,
+    profile_for,
+)
 from src.open_llm_vtuber.request_security import build_trusted_hosts
 from src.open_llm_vtuber.routes import init_furniture_routes
 
@@ -89,6 +94,52 @@ def test_the_window_is_the_only_way_to_approve_a_plan(client):
     stored = json.loads(plan_tools.get_plan(plan["plan_id"]))["plan"]
     assert stored["status"] == "approved"
     assert stored["decided_by"] == "user"
+
+
+def test_writing_desk_approves_exact_content_minimal_action(client, tmp_path):
+    arguments = {"path": "private.txt", "content": "never persist this secret"}
+    descriptor = build_action_descriptor(
+        action_id="action:test-delete",
+        actor="agent",
+        capability="delete_path",
+        target_ref="target:sha256:" + "a" * 64,
+        arguments=arguments,
+        side_effect_class="local_state",
+        reversibility="irreversible",
+        confidence=0.99,
+        evidence_refs=("session:test",),
+        required_user_authority="explicit_confirmation",
+        spatial_requirement="computer",
+        idempotency_key="idempotency:test-delete",
+        privacy_class="private",
+    )
+    journal = ActionTransactionJournal(tmp_path)
+    transaction = journal.ensure_proposal(
+        descriptor=descriptor,
+        profile=profile_for("delete_path"),
+        server_name="bash",
+        proposal_fingerprint="f" * 64,
+        delivery_key="delivery:" + "d" * 64,
+    )
+
+    listed = client.get("/api/furniture/plans")
+    assert listed.status_code == 200
+    body = listed.json()
+    action = next(
+        item for item in body["pending"] if item["plan_id"].startswith("authz-")
+    )
+    assert action["title"] == "Authorize delete path"
+    assert "never persist this secret" not in listed.text
+
+    response = client.post(
+        f"/api/furniture/plans/{action['plan_id']}/decision",
+        json={"decision": "approved"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    stored = journal.get(transaction["transaction_id"])
+    assert stored is not None
+    assert stored["confirmation"]["descriptor_digest"] == descriptor.digest
 
 
 def test_a_decision_route_rejects_unknown_verdicts_and_ids(client):

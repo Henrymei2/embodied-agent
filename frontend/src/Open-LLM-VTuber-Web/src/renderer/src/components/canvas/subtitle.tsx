@@ -7,11 +7,12 @@ import { useSubtitle } from '@/context/subtitle-context';
 // Type definitions
 interface SubtitleTextProps {
   text: string
+  variant: "default" | "spatial"
 }
 
 // Reusable components
-const SubtitleText = memo(({ text }: SubtitleTextProps) => (
-  <Text {...canvasStyles.subtitle.text}>
+const SubtitleText = memo(({ text, variant }: SubtitleTextProps) => (
+  <Text {...(variant === "spatial" ? canvasStyles.subtitle.spatialText : canvasStyles.subtitle.text)}>
     {text}
   </Text>
 ));
@@ -19,15 +20,24 @@ const SubtitleText = memo(({ text }: SubtitleTextProps) => (
 SubtitleText.displayName = 'SubtitleText';
 
 // Main component
-const Subtitle = memo((): JSX.Element | null => {
+interface SubtitleProps {
+  variant?: "default" | "spatial"
+}
+
+const Subtitle = memo(({ variant = "default" }: SubtitleProps): JSX.Element | null => {
   const { subtitleText, isLoaded } = useSubtitleDisplay();
   const { showSubtitle } = useSubtitle();
 
   if (!isLoaded || !subtitleText || !showSubtitle) return null;
 
   return (
-    <Box {...canvasStyles.subtitle.container}>
-      <SubtitleText text={subtitleText} />
+    <Box
+      {...(variant === "spatial" ? canvasStyles.subtitle.spatialContainer : canvasStyles.subtitle.container)}
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <SubtitleText text={subtitleText} variant={variant} />
     </Box>
   );
 });

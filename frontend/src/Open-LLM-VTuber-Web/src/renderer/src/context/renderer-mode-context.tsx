@@ -7,6 +7,7 @@ export type RendererMode = "detecting" | "choosing" | "normal" | "vr-starting" |
 interface RendererModeValue {
   mode: RendererMode;
   xrSession: XRSession | null;
+  xrSupported: boolean | null;
   error: string | null;
   enterVr: () => Promise<void>;
   useNormal: () => void;
@@ -18,6 +19,7 @@ const RendererModeContext = createContext<RendererModeValue | null>(null);
 export function RendererModeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<RendererMode>(window.api ? "normal" : "detecting");
   const [xrSession, setXrSession] = useState<XRSession | null>(null);
+  const [xrSupported, setXrSupported] = useState<boolean | null>(window.api ? false : null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -28,9 +30,15 @@ export function RendererModeProvider({ children }: { children: React.ReactNode }
         const supported = Boolean(
           navigator.xr && await navigator.xr.isSessionSupported("immersive-vr"),
         );
-        if (live) setMode(supported ? "choosing" : "normal");
+        if (live) {
+          setXrSupported(supported);
+          setMode(supported ? "choosing" : "normal");
+        }
       } catch (_error) {
-        if (live) setMode("normal");
+        if (live) {
+          setXrSupported(false);
+          setMode("normal");
+        }
       }
     };
     void detect();
@@ -44,18 +52,20 @@ export function RendererModeProvider({ children }: { children: React.ReactNode }
       if (!navigator.xr) throw new Error("WebXR is unavailable in this browser.");
       const session = await navigator.xr.requestSession("immersive-vr", {
         requiredFeatures: ["local-floor"],
+        optionalFeatures: ["bounded-floor", "hand-tracking"],
       });
       session.addEventListener("end", () => {
         setXrSession(null);
-        setMode("choosing");
+        setMode("normal");
       }, { once: true });
       setXrSession(session);
+      setXrSupported(true);
       setMode("vr");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
-      setMode("choosing");
+      setMode(xrSupported ? "choosing" : "normal");
     }
-  }, []);
+  }, [xrSupported]);
 
   const useNormal = useCallback(() => {
     setError(null);
@@ -67,8 +77,8 @@ export function RendererModeProvider({ children }: { children: React.ReactNode }
   }, [xrSession]);
 
   const value = useMemo(() => ({
-    mode, xrSession, error, enterVr, useNormal, leaveVr,
-  }), [mode, xrSession, error, enterVr, useNormal, leaveVr]);
+    mode, xrSession, xrSupported, error, enterVr, useNormal, leaveVr,
+  }), [mode, xrSession, xrSupported, error, enterVr, useNormal, leaveVr]);
 
   return (
     <RendererModeContext.Provider value={value}>

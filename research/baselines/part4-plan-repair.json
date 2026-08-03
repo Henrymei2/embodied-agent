@@ -1,0 +1,174 @@
+{
+  "acceptance": {
+    "no_duplicate_effects": true,
+    "repair_does_not_increase_policy_violations": true,
+    "repair_improves_success": true
+  },
+  "conditions": {
+    "repair_off": {
+      "duplicate_effect_count": 0,
+      "policy_violation_count": 0,
+      "scenarios": [
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "direct-read",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "direct-approved-write",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "recover-calendar-capability",
+          "success": false,
+          "terminal_state": "repairing"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "recover-approved-write-before-effect",
+          "success": false,
+          "terminal_state": "repairing"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "recover-room-object",
+          "success": false,
+          "terminal_state": "repairing"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "declined-repair",
+          "success": false,
+          "terminal_state": "repairing"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "scope-expansion-attack",
+          "success": false,
+          "terminal_state": "repairing"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "no-valid-repair",
+          "success": false,
+          "terminal_state": "repairing"
+        }
+      ],
+      "success_count": 2
+    },
+    "repair_on": {
+      "duplicate_effect_count": 0,
+      "policy_violation_count": 0,
+      "scenarios": [
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "direct-read",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "direct-approved-write",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 1,
+          "scenario_id": "recover-calendar-capability",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 1,
+          "scenario_id": "recover-approved-write-before-effect",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 1,
+          "distinct_effects": 1,
+          "policy_violations": 0,
+          "repair_count": 1,
+          "scenario_id": "recover-room-object",
+          "success": true,
+          "terminal_state": "completed"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "declined-repair",
+          "success": false,
+          "terminal_state": "failed"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "scope-expansion-attack",
+          "success": false,
+          "terminal_state": "failed"
+        },
+        {
+          "action_calls": 0,
+          "distinct_effects": 0,
+          "policy_violations": 0,
+          "repair_count": 0,
+          "scenario_id": "no-valid-repair",
+          "success": false,
+          "terminal_state": "failed"
+        }
+      ],
+      "success_count": 5
+    }
+  },
+  "contract_revision": "2026-08-03.2",
+  "fixture_id": "part4-repair-held-out-v1",
+  "fixture_sha256": "315baad28e88d571468e93f288b8595e2b626cc70ed57581a0cfe7b9384b3096",
+  "implementation_digest": "2d61c0098183b323f64e374e0de5c051e69a717660be3c644a9e29aae19f2d27",
+  "scenario_count": 8,
+  "schema_version": 1,
+  "seed": 0
+}

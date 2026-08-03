@@ -1,17 +1,18 @@
-# VR Mode MVP Implementation Design
+# VR presentation mode
 
 ## 1. Status and objective
 
-This document is the implementation contract for the experimental VR MVP. The
-software implementation is present, while Meta Quest 3 hardware acceptance in
-section 9 remains pending; the validated 2D stage v9 remains the production
-renderer until those checks pass.
+This document is the implementation and acceptance contract for the VR
+presentation experience. The software foundation and automated checks are in
+place, while Meta Quest 3 hardware acceptance in section 9 remains pending.
+The validated 2D stage remains the default renderer outside an immersive
+session.
 
 The MVP turns the browser frontend into an immersive 3D room for Meta Quest 3
 and Touch Plus controllers. It preserves the companion's voice, persistent
-spatial embodiment, furniture-bound tools, object interactions, and avatar
-animation while replacing the 2D presentation with a deliberately simple
-WebXR renderer.
+spatial embodiment, furniture-bound tools, and object interactions while
+replacing the former pixel billboard with a softly animated 3D companion and
+a presentation-quality WebXR room.
 
 The implementation is complete when a Quest 3 user can enter the room over a
 trusted HTTPS connection, move and turn with the controllers, talk to the
@@ -30,16 +31,17 @@ WebSocket. The frontend first calls:
 await navigator.xr?.isSessionSupported("immersive-vr");
 ```
 
-When the result is `true`, it shows an **Enter VR** button and a secondary
-**Use normal mode** action. Pressing Enter VR is the user gesture that requests
+When the result is `true`, it shows an **Enter immersive VR** button and a
+secondary **Continue on screen** action. Pressing Enter immersive VR is the
+user gesture that requests
 an `immersive-vr` session with a `local-floor` reference space. The frontend
 then connects `/client-ws?renderer_mode=vr`. Selecting normal mode connects the
 unchanged client without that query parameter.
 
 If WebXR is absent or `immersive-vr` is unsupported, the application connects
 in normal mode as it does today. Ending the XR session closes the VR WebSocket,
-disposes the Three.js renderer and textures, and returns to the entry screen;
-it does not silently reuse that connection as a 2D client.
+disposes the Three.js renderer and textures, and returns to the full desktop
+workspace; it does not silently reuse that connection as a 2D client.
 
 WebXR session creation must remain inside the Enter VR click handler. Immersive
 WebXR requires a secure context, explicit user intent, and the
@@ -56,12 +58,11 @@ VR mode keeps:
 - the animated agent and every normal-mode furniture object;
 - object pointing and the existing furniture data/decision surfaces.
 
-Subtitle, connection, activity, microphone, and transient error messages are
-small camera-relative planes placed below the center of view. They remain
-legible but do not follow head movement with zero latency: interpolate their
-transform so they feel anchored rather than painted onto the eyes. Only the
-latest subtitle and current activity are visible; VR mode has no full chat
-history.
+Subtitle, connection, activity, microphone, and transient error messages use a
+compact, high-resolution camera-relative ribbon below the center of view. It
+is limited to three lines, truncates safely, and disappears while idle so it
+cannot obscure the companion. Only the latest subtitle and current activity
+are visible; VR mode has no full chat history.
 
 VR mode excludes the normal sidebar and footer, text entry, direct furniture
 grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.
@@ -93,8 +94,9 @@ Locomotion rules:
 - Project the headset's forward vector onto the floor plane and normalize it.
   Derive right from that vector. Do not use controller orientation.
 - Move the camera rig by `(right * axisX - forward * axisY) * 1.5 m/s * dt`.
-- Clamp the rig origin to 25 cm inside the room's four walls. Furniture does
-  not block the user in the MVP.
+- Keep the rig at least 25 cm inside the room and outside the 25 cm clearance
+  zone around furniture and the companion. If a diagonal move is blocked, try
+  each axis independently so the user slides along an edge instead of sticking.
 
 Snap-turn rules:
 
@@ -150,10 +152,11 @@ normal `DynamicStageProvider` intact and introduce a separate
 
 The VR renderer uses:
 
-- one ambient light and one directional light;
-- unlit or Lambert furniture materials;
-- no dynamic shadows, post-processing, physics, or remote model loading;
-- the native XR framebuffer scale and maximum supported Three.js foveation;
+- a hemisphere key, warm shadow-casting directional light, and restrained
+  cool room/presence lights;
+- physically based furniture, wall, floor, and companion materials;
+- soft dynamic shadows, subtle object edges, floor depth cues, and base trim;
+- the native XR framebuffer scale with moderate foveation for legible detail;
 - `renderer.outputColorSpace = THREE.SRGBColorSpace` for PNG textures.
 
 All document geometry is in centimetres. The renderer multiplies positions
@@ -179,18 +182,18 @@ Texture load failure falls back to the solid material and records one visible
 warning; it does not remove the object from the world. Sanitize asset sources
 with the same relative/data-image/HTTP(S) allowlist as normal mode.
 
-### 3.3 Agent billboard and animation
+### 3.3 Spatial companion and animation
 
-The avatar is a transparent vertical plane whose feet are anchored at its
-floor position. Rotate it only around the Three.js Y axis to face the headset;
-do not pitch it toward the user's eyes. Use the current `avatar.png` sheet and
-animation declarations without producing a new asset.
+VR renders a code-native 3D companion from lightweight Three.js geometry. Its
+feet remain anchored at the authoritative avatar floor position, and the body
+turns only around the vertical axis to face the headset. A glass face, emissive
+eyes, and chest presence light maintain legibility without requiring a remote
+model download.
 
-The frontend selects `idle_*`, `walk_*`, or `sit_down` exactly as the 2D
-renderer does. Determine walking direction from each waypoint delta. Advance
-spritesheet frames at the declared FPS, and end the walk cycle when that leg's
-distance-derived duration finishes. A movement update clears `pose` before the
-first walking frame, preserving the current seated-state invariant.
+Idle breathing, head float, presence pulse, walking arm swing, and seated body
+height are driven inside the XR animation loop. Authoritative movement still
+uses the existing distance-derived duration, so rendering cannot change scene
+state or arrival semantics.
 
 ## 4. VR stage document
 
@@ -288,8 +291,9 @@ floor point starts inside a furniture footprint.
 
 The default room is `960 x 540 x 280` cm, uses `100` units per metre, the
 current `150` reach ceiling, and the current `400` units/second agent speed.
-The user rig spawns at `(480, 315)`, faces the back wall, and is session-local;
-it is not part of the document.
+The user rig chooses a collision-safe point 175 cm from the companion, prefers
+the room interior, and faces the companion. It is session-local and is not part
+of the document.
 
 The VR default is authored independently even where a coordinate resembles the
 canonical 2D room. It contains the current stage v9 furniture IDs and avatar:
@@ -509,8 +513,8 @@ WebXR and microphone APIs require a trustworthy secure context.
 2. **Connection routing:** add renderer selection, deferred connection, mode
    registration, exclusive VR ownership, mode-aware MCP/tool context, and
    authoritative VR result persistence.
-3. **Renderer:** add the Three.js lifecycle, room, cuboid furniture, textures,
-   agent billboard, spritesheet animation, and camera-relative status surfaces.
+3. **Renderer:** add the Three.js lifecycle, lit room, cuboid furniture,
+   textures, animated spatial companion, compact captions, and status surfaces.
 4. **Input and interaction:** add Quest locomotion, snap turn, right-ray
    selection, X-button microphone toggle, provider panels, decision buttons,
    and voice-directed VR furniture mutations.
@@ -573,11 +577,12 @@ On a physical Meta Quest 3 over trusted HTTPS:
 2. Maintain at least 72 rendered frames per second for five minutes in the
    default room while the agent animates and audio plays.
 3. Verify head-relative left-stick movement, room clamping, 30-degree
-   right-stick turns, and turn rearming.
+   right-stick turns, turn rearming, furniture collision, and edge sliding.
 4. Verify left X toggles the microphone exactly once per press, preserves the
    preference, and shows the correct status.
 5. Complete a voice conversation with streamed audio, subtitle updates, and
-   interruption.
+   interruption. Confirm the caption never covers the companion and disappears
+   while idle.
 6. Select every furniture class with the right ray, open dynamic panels, and
    exercise one plan or skill decision.
 7. Ask the agent to move furniture at the design board; reconnect and restart
@@ -589,19 +594,18 @@ On a physical Meta Quest 3 over trusted HTTPS:
 
 ## 10. Non-goals and future work
 
-The MVP targets only Meta Quest 3, Touch Plus controllers, and the current
-Quest Browser. It intentionally does not include:
+The first hardware acceptance target is Meta Quest 3, Touch Plus controllers,
+and the current Quest Browser. It intentionally does not include:
 
-- new 3D models, skeletal animation, inverse kinematics, or spatial audio;
-- a physics engine, navmesh, obstacle-avoiding paths, or furniture collision
-  for the user;
+- downloaded 3D models, skeletal animation, inverse kinematics, or spatial audio;
+- a physics engine, navmesh, or obstacle-avoiding agent paths;
 - hand tracking, teleportation, passthrough, AR, multiplayer, or remote avatars;
 - direct grab/reposition controls, furniture rotation, or resizing;
 - in-headset OAuth, the complete desktop UI, full chat history, or text entry;
 - migration from normal stage state or ongoing layout synchronization;
 - support guarantees for other WebXR headsets or controller profiles.
 
-Likely follow-up work is real 3D assets, collision-aware locomotion, navmesh
-pathfinding, controller-profile abstraction, direct furniture manipulation,
-and richer spatial UI. None of those may change the MVP's independent
+Likely follow-up work is art-directed 3D assets, navmesh pathfinding, delayed
+world-anchored caption easing, controller-profile abstraction, direct
+furniture manipulation, and richer spatial UI. None of those may change the MVP's independent
 persistence, authoritative mode routing, or dual proximity authorization.

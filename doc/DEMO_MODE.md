@@ -20,6 +20,36 @@ $env:EMBODIED_AGENT_FIXTURES = "replay"
 uv run run_server.py
 ```
 
+## VR headset presentation
+
+WebXR on a standalone headset requires a trusted HTTPS origin. An IP-address
+certificate warning is not sufficient: install the issuing local CA on the
+headset and confirm the page opens without a browser warning before the demo.
+Use the TLS, host, and `trusted_hosts` configuration described in
+[VR_MODE.md](VR_MODE.md#7-https-and-lan-deployment).
+
+Run this pass before guests arrive:
+
+1. Put the computer and headset on the same stable 5 GHz or wired-access-point
+   network and prevent both devices from sleeping.
+2. Start the server, then open `https://<trusted-host>:12393/` in Quest Browser.
+3. Allow microphone access. The polished headset-ready screen should offer
+   **Enter immersive VR** and **Continue on screen**.
+4. Enter VR and confirm the companion starts at a comfortable conversation
+   distance, centered in view, with no caption panel while idle.
+5. Speak one short prompt, interrupt one response, toggle the microphone with
+   left X, walk with the left stick, snap-turn with the right stick, and point
+   at one furniture object with the right trigger.
+6. Confirm locomotion slides along furniture rather than entering it, captions
+   stay below the companion, and **Exit VR** returns to the desktop workspace.
+7. Re-enter VR once. This catches session cleanup, microphone, texture, and
+   WebSocket ownership problems before the live presentation.
+
+Keep a laptop tab open in normal screen mode as the fallback presentation. On
+a browser without immersive WebXR, the **Spatial** control opens the same
+headset-safe 16:9 composition in fullscreen, so the conversation and room demo
+can continue even if the headset is unavailable.
+
 ## Voice
 
 `tts_config.tts_fallback_model` (default `pyttsx3_tts`) names a local engine

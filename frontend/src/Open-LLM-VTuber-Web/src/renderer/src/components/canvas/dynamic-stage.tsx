@@ -1373,6 +1373,7 @@ function StageBoxContent({
 }) {
   const style = node.style || {};
   const showTexture = Boolean(node.texture?.src && !hasError);
+  const isDrawingBoard = node.uiWindow?.provider === "drawing_board_image";
 
   return (
     <>
@@ -1391,7 +1392,55 @@ function StageBoxContent({
           zIndex={1}
         />
       )}
-      {node.type === "panel" && !showTexture && (
+      {isDrawingBoard && !showTexture && (
+        <Box
+          position="absolute"
+          inset="3%"
+          overflow="hidden"
+          borderRadius="4px"
+          bg="#f4ead5"
+          border="clamp(2px, 0.35vw, 5px) solid #7b4b2a"
+          boxShadow="inset 0 0 0 2px rgba(255,255,255,0.42), 0 8px 16px rgba(78,45,24,0.24)"
+          zIndex={1}
+        >
+          <Box
+            position="absolute"
+            inset="9% 8% 12%"
+            bg="repeating-linear-gradient(0deg, rgba(96,75,52,0.1) 0 1px, transparent 1px 15%)"
+          />
+          <Box
+            position="absolute"
+            left="13%"
+            top="17%"
+            width="25%"
+            height="32%"
+            bg="#e7a96f"
+            transform="rotate(-3deg)"
+            boxShadow="0 2px 4px rgba(71,43,25,0.22)"
+          />
+          <Box
+            position="absolute"
+            right="13%"
+            top="14%"
+            width="35%"
+            height="24%"
+            bg="#9dc7bd"
+            transform="rotate(2deg)"
+            boxShadow="0 2px 4px rgba(71,43,25,0.2)"
+          />
+          <Box
+            position="absolute"
+            left="20%"
+            right="18%"
+            bottom="20%"
+            height="8%"
+            borderRadius="full"
+            bg="#b66b4c"
+            transform="rotate(-5deg)"
+          />
+        </Box>
+      )}
+      {node.type === "panel" && !showTexture && !isDrawingBoard && (
         <Box
           position="absolute"
           inset="8px"
@@ -1414,12 +1463,44 @@ function StageBoxContent({
           letterSpacing="0"
           zIndex={2}
           overflowWrap="anywhere"
-          opacity={showTexture ? 0 : 1}
+          opacity={showTexture || isDrawingBoard ? 0 : 1}
         >
           {node.text || node.label}
         </Text>
       )}
     </>
+  );
+}
+
+const DUST_MOTES = [
+  ["12%", "18%", "-1.2s", "3px"],
+  ["26%", "31%", "-4.8s", "2px"],
+  ["43%", "14%", "-2.7s", "3px"],
+  ["61%", "27%", "-6.1s", "2px"],
+  ["77%", "19%", "-3.5s", "3px"],
+  ["88%", "36%", "-7.4s", "2px"],
+] as const;
+
+function StageAtmosphere() {
+  return (
+    <Box className="stage-atmosphere" aria-hidden="true" position="absolute" inset="0" pointerEvents="none" zIndex={1}>
+      <Box className="stage-ambient-glow" position="absolute" inset="0" />
+      <Box className="stage-sunbeam" position="absolute" />
+      <Box className="stage-floor-depth" position="absolute" left="0" right="0" top="63%" bottom="0" />
+      {DUST_MOTES.map(([left, top, delay, size]) => (
+        <Box
+          key={`${left}-${top}`}
+          className="stage-dust-mote"
+          position="absolute"
+          left={left}
+          top={top}
+          width={size}
+          height={size}
+          animationDelay={delay}
+        />
+      ))}
+      <Box className="stage-vignette" position="absolute" inset="0" />
+    </Box>
   );
 }
 
@@ -1442,13 +1523,17 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
   }, [displayNode.texture?.src]);
   const pointAtObject = useObjectInteraction(node);
   const clickable = Boolean(node.interaction?.on_click);
+  const interactive = Boolean(node.uiWindow || clickable);
+  const grounded = node.type === "avatar" || (
+    node.y > canvasHeight * 0.55 && node.type !== "text" && node.type !== "shape"
+  );
   const handleClick = useCallback(() => {
     // Hovering already opens the window, so a click is free to mean the more
     // interesting thing: telling the agent you pointed at this.
     if (clickable) pointAtObject();
     else furniture.toggle();
   }, [clickable, furniture, pointAtObject]);
-  const interactionProps = node.uiWindow || clickable ? {
+  const interactionProps = interactive ? {
     ref: furniture.anchorRef,
     tabIndex: 0,
     onMouseEnter: () => furniture.enter(false),
@@ -1484,6 +1569,10 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
     transform: node.type === "avatar" ? "translate(-50%, -78%)" : "translate(-50%, -50%)",
     zIndex: node.zIndex || 1,
     opacity: style.opacity ?? 1,
+    className: "stage-node",
+    "data-interactive": interactive ? "true" : "false",
+    "data-grounded": grounded ? "true" : "false",
+    "data-stage-id": node.id,
   };
 
   if (node.type === "image") {
@@ -1491,6 +1580,7 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
       <Box
         {...commonProps}
         {...interactionProps}
+        data-caption={(node.label || node.id).replace(/[_-]+/g, " ")}
         aria-label={node.label || node.id}
         borderRadius={`${style.borderRadius ?? 8}px`}
         border={style.borderColor ? "2px solid" : undefined}
@@ -1519,10 +1609,9 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
       <Box
         {...commonProps}
         {...interactionProps}
+        className="stage-node stage-node--avatar"
         aria-label={node.label || node.id}
-        minWidth="46px"
-        minHeight="68px"
-        transition={`left ${moveDurationMs}ms ease-in-out, top ${moveDurationMs}ms ease-in-out`}
+        transition={`left ${moveDurationMs}ms ease-in-out, top ${moveDurationMs}ms ease-in-out, scale var(--duration-normal) var(--ease-spring), translate var(--duration-normal) var(--ease-spring), filter var(--duration-normal) var(--ease-out)`}
         display="flex"
         flexDirection="column"
         alignItems="center"
@@ -1539,9 +1628,8 @@ function StageNodeView({ node, canvasWidth, canvasHeight, moveDurationMs }: {
     <Box
       {...commonProps}
       {...interactionProps}
+      data-caption={hasTexture ? (node.label || node.id).replace(/[_-]+/g, " ") : undefined}
       aria-label={node.label || node.id}
-      minWidth={node.type === "text" ? undefined : "32px"}
-      minHeight={node.type === "text" ? undefined : "24px"}
       border={node.type === "text" || hasTexture ? undefined : "2px solid"}
       borderColor={hasTexture ? undefined : (style.borderColor || "rgba(255, 255, 255, 0.7)")}
       borderRadius={hasTexture ? undefined : `${style.borderRadius ?? (node.type === "shape" ? 999 : 8)}px`}
@@ -1586,6 +1674,9 @@ export default function DynamicStage(): JSX.Element {
   return (
     <Box
       ref={surfaceRef}
+      as="section"
+      aria-label="Interactive companion room"
+      data-testid="dynamic-stage"
       width="100%"
       height="100%"
       position="relative"
@@ -1594,7 +1685,7 @@ export default function DynamicStage(): JSX.Element {
     >
       <Box
         role="img"
-        aria-label="dynamic stage"
+        aria-label={stage.canvas.texture?.alt || "Interactive room background"}
         position="absolute"
         inset="0"
         bg={stage.canvas.background}
@@ -1604,9 +1695,10 @@ export default function DynamicStage(): JSX.Element {
             width="100%"
             height="100%"
             src={stage.canvas.texture.src}
-            alt={stage.canvas.texture.alt || "cozy pixel-art bedroom"}
+            alt=""
+            aria-hidden="true"
             objectFit={stage.canvas.texture.fit || "cover"}
-            imageRendering="pixelated"
+            imageRendering="auto"
           />
         ) : (
           <>
@@ -1629,6 +1721,8 @@ export default function DynamicStage(): JSX.Element {
           </>
         )}
       </Box>
+
+      <StageAtmosphere />
 
       <StageViewportContext.Provider value={viewport}>
         {stage.nodes

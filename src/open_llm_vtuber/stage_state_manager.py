@@ -26,11 +26,10 @@ LABEL_LIMIT = 80
 
 STAGE_VERSION = 9
 STAGE_BASE_DIR = "stage_state"
-# Bumping this rebuilds every stored room from the defaults. v2 re-lays the room
-# into wall/back/front bands so each object keeps its own 150-unit radius: a
-# layout saved under the old arrangement could not satisfy that with the
-# furniture added since.
-STAGE_THEME_REVISION = "cozy-bedroom-v2"
+# Bumping this rebuilds every stored room from the defaults. v4 ships the
+# full-HD room shell while retaining v3's collision-safe furniture layout.
+# The renderer adds depth without changing these world coordinates.
+STAGE_THEME_REVISION = "cozy-bedroom-v4"
 
 # Live data sources a furniture hover window may render. Most are backed by a
 # read-only backend route the frontend polls while the window is open;
@@ -117,9 +116,9 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
             "height": 540,
             "background": "#e8c98f",
             "texture": {
-                "src": "./stage-assets/bedroom-background.png",
+                "src": "./stage-assets/bedroom-background-hd.png",
                 "fit": "cover",
-                "alt": "cozy pixel-art bedroom",
+                "alt": "high-definition cozy illustrated companion studio",
             },
         },
         # What the drawing above actually means, for anything that is not
@@ -549,10 +548,13 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "id": "drawing_board",
                 "type": "panel",
                 "label": "drawing_board",
-                "x": 480,
-                "y": 477,
-                "width": 115,
-                "height": 125,
+                # Wall-mounted between the design board and the back-row
+                # furniture. It stays more than the 150-unit safety ceiling
+                # from every other tool-gated object.
+                "x": 720,
+                "y": 265,
+                "width": 140,
+                "height": 100,
                 "zIndex": 2,
                 "interaction": {"on_click": True},
                 "text": "drawing board",
@@ -562,12 +564,12 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                     "provider": "drawing_board_image",
                 },
                 "style": {
-                    "background": "rgba(99, 102, 241, 0.88)",
-                    "borderColor": "rgba(199, 210, 254, 0.9)",
-                    "color": "#ffffff",
-                    "borderRadius": 8,
-                    "fontSize": 13,
-                    "fontWeight": "700",
+                    "background": "rgba(244, 234, 213, 0.96)",
+                    "borderColor": "#8a5a32",
+                    "color": "#4b3423",
+                    "borderRadius": 3,
+                    "fontSize": 11,
+                    "fontWeight": "800",
                 },
             },
             {

@@ -23,6 +23,7 @@ from .routes import (
     init_google_integration_routes,
     init_scheduler_routes,
     init_agenda_routes,
+    init_operator_routes,
     init_webtool_routes,
     init_proxy_route,
 )
@@ -148,6 +149,7 @@ class WebSocketServer:
         self.app.include_router(init_furniture_routes())
         self.app.include_router(init_scheduler_routes())
         self.app.include_router(init_agenda_routes())
+        self.app.include_router(init_operator_routes())
         self.google_integration = GoogleIntegrationService.from_config(
             config.system_config.google_integration
         )

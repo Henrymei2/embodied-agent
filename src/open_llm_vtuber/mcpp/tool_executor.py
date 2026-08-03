@@ -8,6 +8,7 @@ from typing import (
     Literal,
     Union,
     AsyncIterator,
+    TYPE_CHECKING,
 )
 from ..conversations.agent_activity import tool_batch_activity
 
@@ -15,15 +16,20 @@ from .types import ToolCallObject
 from .mcp_client import MCPClient
 from .tool_manager import ToolManager
 
+if TYPE_CHECKING:
+    from ..authorization.transaction import ActionTransactionCoordinator
+
 
 class ToolExecutor:
     def __init__(
         self,
         mcp_client: MCPClient,
         tool_manager: ToolManager,
+        action_transactions: "ActionTransactionCoordinator | None" = None,
     ):
         self._mcp_client = mcp_client
         self._tool_manager = tool_manager
+        self._action_transactions = action_transactions
 
     def parse_tool_call(self, call: Union[Dict[str, Any], ToolCallObject]) -> tuple:
         """Parse tool call from different formats.
@@ -340,18 +346,37 @@ class ToolExecutor:
             content_items = [{"type": "error", "text": text_content}]
             is_error = True
         else:
-            allowed, denial_reason = self._tool_manager.authorize_tool(tool_name)
-            if not allowed:
-                logger.warning(f"Blocked tool execution: {denial_reason}")
-                text_content = f"Error: {denial_reason}"
-                content_items = [{"type": "error", "text": text_content}]
-                return True, text_content, metadata, content_items
+            if self._action_transactions is None:
+                allowed, denial_reason = self._tool_manager.authorize_tool(tool_name)
+                if not allowed:
+                    logger.warning(f"Blocked tool execution: {denial_reason}")
+                    text_content = f"Error: {denial_reason}"
+                    content_items = [{"type": "error", "text": text_content}]
+                    return True, text_content, metadata, content_items
             try:
-                result_dict = await self._mcp_client.call_tool(
-                    server_name=tool_info.related_server,
-                    tool_name=tool_name,
-                    tool_args=tool_input,
-                )
+                async def invoke_tool() -> Dict[str, Any]:
+                    return await self._mcp_client.call_tool(
+                        server_name=tool_info.related_server,
+                        tool_name=tool_name,
+                        tool_args=tool_input,
+                    )
+
+                if self._action_transactions is not None:
+                    transaction_result = await self._action_transactions.execute(
+                        server_name=tool_info.related_server,
+                        capability=tool_name,
+                        tool_id=tool_id,
+                        arguments=tool_input,
+                        invoke=invoke_tool,
+                    )
+                    return (
+                        transaction_result.is_error,
+                        transaction_result.text,
+                        transaction_result.metadata,
+                        transaction_result.content_items,
+                    )
+
+                result_dict = await invoke_tool()
 
                 metadata = result_dict.get("metadata", {})
                 content_items = result_dict.get("content_items", [])

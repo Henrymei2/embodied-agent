@@ -51,9 +51,19 @@ async def process_single_conversation(
     tts_manager = TTSTaskManager()
     activity = AgentActivityTracker()
     activity_visible = False
+    # Timing runs beside the turn, never in front of it: every call is
+    # swallowing, so a measurement failure costs a sample and not a reply.
+    from ..latency import TurnLatency
+
+    latency = TurnLatency(f"{client_uid}:{session_emoji}")
+    first_output_seen = False
+    tts_requested = False
     full_response = ""  # Initialize full_response here
     report = not metadata or bool(metadata.get("report", True))
     turn_error: Optional[str] = None
+    provenance_task: Optional[asyncio.Task] = None
+    provenance_bridge = None
+    provenance_finished = False
 
     try:
         # A silent turn still executes the model and tools, but never enters the
@@ -66,6 +76,30 @@ async def process_single_conversation(
         input_text = await process_user_input(
             user_input, context.asr_engine, websocket_send
         )
+        latency.complete("asr")
+
+        # Provenance I/O runs beside, not in front of, the latency-sensitive
+        # dialogue loop. Raw text goes only to the governed private store; the
+        # inspectable ledger receives opaque references and digests.
+        skip_memory = bool(metadata and metadata.get("skip_memory", False))
+        if not skip_memory:
+            from ..study import conditions
+
+            if conditions().memory:
+                from ..provenance import get_conversation_provenance_bridge
+                from ..workspace import ensure_workspace
+
+                provenance_bridge = get_conversation_provenance_bridge(
+                    ensure_workspace().root
+                )
+                provenance_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        provenance_bridge.begin_turn,
+                        input_text,
+                        source_id=client_uid,
+                    ),
+                    name=f"turn-provenance:{client_uid}",
+                )
 
         # Create batch input
         batch_input = create_batch_input(
@@ -102,6 +136,7 @@ async def process_single_conversation(
                 await websocket_send(json.dumps(activity.thinking()))
                 activity_visible = True
             agent_output_stream = context.agent_engine.chat(batch_input)
+            latency.complete("plan")
 
             async for output_item in agent_output_stream:
                 if (
@@ -129,6 +164,12 @@ async def process_single_conversation(
                         )
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
+                    if not first_output_seen:
+                        # The first speakable output, which is the boundary the
+                        # product budget is stated against. Tool calls and
+                        # activity frames before it belong to planning.
+                        latency.complete("first_token")
+                        first_output_seen = True
                     if report and activity_visible:
                         await websocket_send(json.dumps(activity.idle()))
                         activity_visible = False
@@ -141,6 +182,9 @@ async def process_single_conversation(
                             tts_manager=tts_manager,
                             translate_engine=context.translate_engine,
                         )
+                        if not tts_requested:
+                            latency.complete("tts_request")
+                            tts_requested = True
                     else:
                         response_part = await collect_agent_output(output_item)
                     # Ensure response_part is treated as a string before concatenation
@@ -173,6 +217,16 @@ async def process_single_conversation(
 
         # Wait for any pending TTS tasks
         if report and tts_manager.task_list:
+            # First audio is when the *first* synthesis lands, not the last:
+            # the companion starts speaking then, which is what the product
+            # budget is about. Gathering the whole list afterwards preserves
+            # the original exception behaviour exactly.
+            _, unfinished = await asyncio.wait(
+                set(tts_manager.task_list), return_when=asyncio.FIRST_COMPLETED
+            )
+            latency.complete("first_audio")
+            if unfinished:
+                await asyncio.gather(*unfinished)
             await asyncio.gather(*tts_manager.task_list)
             await websocket_send(json.dumps({"type": "backend-synth-complete"}))
 
@@ -197,12 +251,29 @@ async def process_single_conversation(
             )
             logger.info(f"AI response: {full_response}")
 
-        return AgentTurnResult(
+        result = AgentTurnResult(
             success=turn_error is None,
             response=full_response,
             error=turn_error,
             reported=report,
         )
+        if provenance_task is not None and provenance_bridge is not None:
+            try:
+                evidence = await provenance_task
+                await asyncio.to_thread(
+                    provenance_bridge.finish_turn,
+                    evidence,
+                    success=result.success,
+                )
+                provenance_finished = True
+            except Exception as exc:
+                # Memory evidence must not make a live conversation unavailable.
+                # The error is visible to operators without logging private text.
+                logger.warning(
+                    "Conversation provenance could not be persisted: "
+                    f"{type(exc).__name__}"
+                )
+        return result
 
     except asyncio.CancelledError:
         logger.info(f"🤡👍 Conversation {session_emoji} canceled because interrupted.")
@@ -217,6 +288,23 @@ async def process_single_conversation(
             )
         raise
     finally:
+        if (
+            provenance_task is not None
+            and provenance_bridge is not None
+            and not provenance_finished
+        ):
+            try:
+                evidence = await provenance_task
+                await asyncio.to_thread(
+                    provenance_bridge.finish_turn,
+                    evidence,
+                    success=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Interrupted conversation provenance could not be persisted: "
+                    f"{type(exc).__name__}"
+                )
         if report:
             try:
                 await websocket_send(json.dumps(activity.idle()))
@@ -228,6 +316,9 @@ async def process_single_conversation(
 
         # Closes the turn whether it completed, errored, or was interrupted, so
         # the reply-latency measure is never left waiting on a turn that ended
-        # badly.
+        # badly. A turn that never reached audio contributes its stage timings
+        # and no end-to-end figure, which is the point: an interrupted turn is
+        # not a fast turn.
+        latency.finish()
         log_turn_finished(len(full_response))
         cleanup_conversation(tts_manager, session_emoji)

@@ -34,6 +34,11 @@ from .furniture_state import (
     record_plan_decision,
     timer_snapshot,
     todo_snapshot,
+    workspace_root,
+)
+from .authorization import (
+    AuthorizationJournalError,
+    get_action_transaction_journal,
 )
 from .service_context import ServiceContext
 from .skill_state import record_skill_decision, skill_snapshot
@@ -260,8 +265,33 @@ def init_furniture_routes() -> APIRouter:
 
     @router.get("/plans")
     async def plan_window():
+        plans = await run_in_threadpool(plan_snapshot)
+        try:
+            actions = await run_in_threadpool(
+                get_action_transaction_journal(workspace_root()).pending_snapshot
+            )
+        except (AuthorizationJournalError, OSError):
+            logger.exception("Could not read the action authorization journal")
+            actions = {"pending": [], "pending_count": 0, "recent": None}
+        pending = [*actions["pending"], *plans.get("pending", [])]
+        recent_candidates = [
+            item
+            for item in (plans.get("recent"), actions.get("recent"))
+            if isinstance(item, dict)
+        ]
+        recent = (
+            max(recent_candidates, key=lambda item: str(item.get("created_at", "")))
+            if recent_candidates
+            else None
+        )
         return JSONResponse(
-            await run_in_threadpool(plan_snapshot),
+            {
+                **plans,
+                "pending": pending,
+                "pending_count": int(plans.get("pending_count", 0))
+                + int(actions.get("pending_count", 0)),
+                "recent": recent,
+            },
             headers={"Cache-Control": "no-store"},
         )
 
@@ -309,6 +339,31 @@ def init_furniture_routes() -> APIRouter:
             )
         if not plan_id or len(plan_id) > 80:
             return JSONResponse({"error": "invalid plan id"}, status_code=400)
+        if plan_id.startswith("authz-"):
+            try:
+                transaction = await run_in_threadpool(
+                    get_action_transaction_journal(workspace_root()).decide,
+                    plan_id,
+                    decision=decision,
+                )
+            except (AuthorizationJournalError, OSError):
+                logger.exception("Could not update the action authorization journal")
+                return JSONResponse(
+                    {"error": "the action authorization could not be updated"},
+                    status_code=503,
+                )
+            if transaction is None:
+                return JSONResponse(
+                    {"error": "no action is awaiting a decision under that id"},
+                    status_code=404,
+                )
+            return JSONResponse(
+                {
+                    "plan_id": plan_id,
+                    "status": transaction["status"],
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         try:
             plan = await run_in_threadpool(record_plan_decision, plan_id, decision)
         except ValueError as exc:
@@ -434,6 +489,78 @@ def init_scheduler_routes() -> APIRouter:
     return router
 
 
+def init_operator_routes() -> APIRouter:
+    """Private operator console: measured health, never asserted health.
+
+    Part 7 states latency budgets that nothing could evaluate. This exposes the
+    measurements behind the same trusted-request dependency as the agenda, so
+    an operator can see where a slow turn went without opening a profiler, and
+    so a demo can be checked before it is given rather than during.
+
+    Everything here is content-free: stage names, counts, and milliseconds.
+    """
+    from .latency import (
+        BUDGET_INTERRUPTION_MS,
+        BUDGET_SPEECH_TO_FIRST_AUDIO_MEDIAN_MS,
+        BUDGET_SPEECH_TO_FIRST_AUDIO_P95_MS,
+        recorder,
+        reset_recorder,
+    )
+
+    router = APIRouter(
+        prefix="/api/operator",
+        dependencies=[Depends(require_trusted_http_request)],
+    )
+
+    @router.get("/health")
+    async def operator_health():
+        report = recorder().report()
+        slowest = report.slowest_stage()
+        return JSONResponse(
+            {
+                "latency": {
+                    "turns": report.turns,
+                    "complete_turns": report.complete_turns,
+                    "speech_to_first_audio": {
+                        # `None` is serialized as null and read as "not
+                        # measured". It is never coerced to 0, which would make
+                        # a session with no completed turn look instantaneous.
+                        "median_ms": report.speech_to_first_audio_median_ms,
+                        "p95_ms": report.speech_to_first_audio_p95_ms,
+                        "median_verdict": report.median_verdict,
+                        "p95_verdict": report.p95_verdict,
+                    },
+                    "stages": [
+                        {
+                            "stage": stage.stage,
+                            "count": stage.count,
+                            "median_ms": stage.median_ms,
+                            "p95_ms": stage.p95_ms,
+                            "worst_ms": stage.worst_ms,
+                        }
+                        for stage in report.stages
+                    ],
+                    "slowest_stage": slowest.stage if slowest else None,
+                },
+                "budgets": {
+                    "speech_to_first_audio_median_ms": (
+                        BUDGET_SPEECH_TO_FIRST_AUDIO_MEDIAN_MS
+                    ),
+                    "speech_to_first_audio_p95_ms": BUDGET_SPEECH_TO_FIRST_AUDIO_P95_MS,
+                    "interruption_ms": BUDGET_INTERRUPTION_MS,
+                },
+            }
+        )
+
+    @router.post("/latency/reset")
+    async def operator_latency_reset():
+        """Clear collected latency, so a demo run is not diluted by warm-up."""
+        reset_recorder()
+        return JSONResponse({"status": "reset"})
+
+    return router
+
+
 def init_agenda_routes() -> APIRouter:
     """Inspect and control the authoritative global agenda."""
     from .autonomy.agenda import get_agenda_store
@@ -452,7 +579,7 @@ def init_agenda_routes() -> APIRouter:
             payload = await run_in_threadpool(
                 get_agenda_store().snapshot, offset=offset, limit=limit
             )
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=503)
         from .autonomy.runtime import get_workspace_runtime
 
@@ -472,6 +599,17 @@ def init_agenda_routes() -> APIRouter:
                 "last_error": None,
             }
         )
+        from .autonomy.plan_state import ResumablePlanStore
+
+        try:
+            payload["resumable_plans"] = await run_in_threadpool(
+                ResumablePlanStore(get_agenda_store().root).snapshot
+            )
+        except (OSError, ValueError) as exc:
+            return JSONResponse(
+                {"error": f"resumable plan store is unavailable: {exc}"},
+                status_code=503,
+            )
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @router.post("/pause")
@@ -620,16 +758,17 @@ def init_agenda_routes() -> APIRouter:
             executive = get_connected_executive()
             if executive:
                 await executive.abandon(entry_id)
+                state = await run_in_threadpool(get_agenda_store().load)
+                entry = next(item for item in state.entries if item.id == entry_id)
             else:
-                await run_in_threadpool(
-                    get_agenda_store().transition,
-                    entry_id,
-                    "abandoned",
-                    progress_summary="Stopped by user.",
+                from .autonomy.agenda_plan_bridge import abandon_entry_safely
+
+                entry = await run_in_threadpool(
+                    abandon_entry_safely, get_agenda_store(), entry_id
                 )
-        except (KeyError, ValueError):
+        except (KeyError, OSError, RuntimeError, StopIteration, ValueError):
             return JSONResponse({"error": "entry cannot be abandoned"}, status_code=409)
-        return JSONResponse({"id": entry_id, "status": "abandoned"})
+        return JSONResponse({"id": entry_id, "status": entry.status})
 
     @router.post("/entries/{entry_id}/resume")
     async def resume_agenda_entry(entry_id: str):

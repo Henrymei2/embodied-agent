@@ -23,6 +23,7 @@ class AutonomyConfig(I18nMixin):
     planner_circuit_failure_threshold: int = Field(3, ge=1, le=20)
     planner_circuit_max_seconds: int = Field(1800, ge=10, le=14400)
     step_timeout_seconds: int = Field(120, ge=5, le=3600)
+    human_preemption_timeout_seconds: float = Field(0.25, ge=0.05, le=5.0)
     fallback_reconsideration_seconds: int = Field(300, ge=10, le=7200)
     store_poll_seconds: float = Field(1.0, ge=0.1, le=10.0)
     restart_recovery_grace_seconds: int = Field(10, ge=0, le=600)
@@ -102,6 +103,9 @@ class AutonomyConfig(I18nMixin):
             en="Maximum planner circuit cooldown"
         ),
         "step_timeout_seconds": Description(en="Default activity step timeout"),
+        "human_preemption_timeout_seconds": Description(
+            en="Maximum delay before foreground user work proceeds"
+        ),
         "fallback_reconsideration_seconds": Description(
             en="Agenda fallback wake cadence"
         ),

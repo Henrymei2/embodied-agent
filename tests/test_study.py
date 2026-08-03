@@ -135,19 +135,27 @@ def test_logging_can_be_forced_off_even_when_ablated(monkeypatch, tmp_path):
     assert not (tmp_path / "study").exists()
 
 
-def test_the_log_cannot_carry_what_the_user_said(monkeypatch, tmp_path):
-    """The guard that makes these logs shareable: length, never content."""
+def test_the_log_cannot_carry_known_or_unknown_private_fields(monkeypatch, tmp_path):
+    """An allowlist, not string length, makes the study artifact shareable."""
     monkeypatch.setenv("EMBODIED_AGENT_STUDY_LOG", "1")
     study.reset_for_tests()
-    secret = "my therapist's name is " + "x" * 200
+    long_secret = "my therapist's name is " + "x" * 200
+    short_secret = "private"
 
-    study.log_event("turn_started", source="text", oops=secret)
+    study.log_event(
+        "turn_started",
+        source="text",
+        transcript=short_secret,
+        oops=long_secret,
+    )
 
     written = sorted((tmp_path / "study").glob("*.jsonl"))[0].read_text(
         encoding="utf-8"
     )
     assert "therapist" not in written
-    assert _events(tmp_path)[-1]["oops"] == {"chars": len(secret)}
+    assert "private" not in written
+    assert "transcript" not in _events(tmp_path)[-1]
+    assert "oops" not in _events(tmp_path)[-1]
 
 
 def test_a_participant_is_recorded_and_names_the_file(monkeypatch, tmp_path):

@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import math
+from pathlib import Path
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_default_stage_is_current_with_google_furniture():
 
     assert stage["version"] == STAGE_VERSION
     assert stage["metadata"]["theme_revision"] == STAGE_THEME_REVISION
-    assert stage["canvas"]["texture"]["src"].endswith("bedroom-background.png")
+    assert stage["canvas"]["texture"]["src"].endswith("bedroom-background-hd.png")
     nodes = {node["id"]: node for node in stage["nodes"]}
     assert nodes["avatar"]["spritesheet"]["src"] == "./stage-assets/avatar.png"
     assert nodes["bed"]["texture"]["src"] == "./stage-assets/bed.png"
@@ -40,6 +41,25 @@ def test_default_stage_is_current_with_google_furniture():
         "mailbox-unread.png"
     )
     assert validate_stage(stage) == (True, [])
+
+
+def test_room_background_asset_is_full_hd():
+    asset = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "src"
+        / "Open-LLM-VTuber-Web"
+        / "src"
+        / "renderer"
+        / "public"
+        / "stage-assets"
+        / "bedroom-background-hd.png"
+    )
+    header = asset.read_bytes()[:24]
+
+    assert header[:8] == b"\x89PNG\r\n\x1a\n"
+    assert int.from_bytes(header[16:20], "big") == 1920
+    assert int.from_bytes(header[20:24], "big") == 1080
 
 
 def test_default_stage_carries_tool_furniture():
@@ -59,6 +79,19 @@ def test_default_stage_carries_tool_furniture():
     assert "provider" not in nodes["sofa"]["uiWindow"]
     assert nodes["sofa"]["texture"]["src"].endswith("sofa.png")
     assert nodes["avatar"]["spritesheet"]["animations"]["sit_down"]["row"] == 8
+
+
+def test_drawing_board_is_wall_mounted_and_clear_of_the_bed():
+    nodes = {node["id"]: node for node in get_default_stage("conf-a")["nodes"]}
+    drawing_board = nodes["drawing_board"]
+    bed = nodes["bed"]
+
+    assert drawing_board["label"] == "drawing_board"
+    assert drawing_board["y"] < 300
+    assert (
+        drawing_board["y"] + drawing_board["height"] / 2 < bed["y"] - bed["height"] / 2
+    )
+    assert drawing_board["style"]["background"] == "rgba(244, 234, 213, 0.96)"
 
 
 def test_every_gated_object_exists_in_the_default_room():

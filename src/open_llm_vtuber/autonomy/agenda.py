@@ -683,6 +683,106 @@ class AgendaStore:
 
         return self.mutate(operation)
 
+    def absorb_resumable_plan(
+        self,
+        entry_id: str,
+        *,
+        plan_id: str,
+        status: str,
+        progress_summary: str,
+        report_summary: Optional[str] = None,
+    ) -> AgendaEntry:
+        """Atomically make a terminal sidecar result durable in the agenda.
+
+        The plan journal and agenda are separate files, so the agenda must
+        commit its status, handoff marker, and optional report in one mutation
+        before the plan report can be acknowledged. Replaying the same handoff
+        is idempotent; a different plan cannot overwrite an unacknowledged one.
+        """
+
+        if status not in ENTRY_STATUSES:
+            raise ValueError(f"invalid agenda status: {status}")
+        if not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 200:
+            raise ValueError("resumable plan id is invalid")
+        cleaned_progress = " ".join(str(progress_summary).split())[:1000]
+        cleaned_report = (
+            " ".join(str(report_summary).split())[:2000]
+            if report_summary is not None
+            else None
+        )
+        if report_summary is not None and not cleaned_report:
+            cleaned_report = "Agenda intention completed."
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            absorbed = entry.metadata.get("resumable_plan_absorbed")
+            if absorbed not in {None, plan_id}:
+                raise ValueError("another resumable plan handoff is still pending")
+            if absorbed == plan_id:
+                if entry.status != status:
+                    raise ValueError(
+                        "resumable plan handoff already has a different status"
+                    )
+                return entry
+            if entry.status in TERMINAL_STATUSES and absorbed != plan_id:
+                raise ValueError("terminal agenda entries cannot absorb a new plan")
+
+            entry.metadata["resumable_plan_absorbed"] = plan_id
+            entry.metadata["resumable_plan_id"] = None
+            if status == "active":
+                self._suspend_active(state, except_id=entry_id)
+                entry.started_at = entry.started_at or _iso()
+            # The checkpoint belongs to the absorbed one-step sidecar. Keeping
+            # it on a queued entry can cause restart reconciliation to relink
+            # the already-consumed plan instead of asking for the next step.
+            entry.checkpoint = None
+            if status in TERMINAL_STATUSES:
+                entry.ended_at = entry.ended_at or _iso()
+            entry.status = status
+            entry.progress_summary = cleaned_progress
+            self._event(
+                state,
+                entry_id,
+                "resumable_plan_absorbed",
+                {"plan_id": plan_id, "status": status},
+            )
+
+            if cleaned_report is not None:
+                existing = next(
+                    (report for report in state.reports if report.entry_id == entry_id),
+                    None,
+                )
+                if existing is None:
+                    report = ReportOutboxItem(
+                        id=f"report_{uuid.uuid4().hex}",
+                        entry_id=entry_id,
+                        summary=cleaned_report,
+                    )
+                    state.reports.append(report)
+                    entry.metadata["report_status"] = "pending"
+                    self._event(
+                        state,
+                        entry_id,
+                        "report_queued",
+                        {"report_id": report.id},
+                    )
+            return entry
+
+        return self.mutate(operation)
+
+    def clear_absorbed_resumable_plan(
+        self, entry_id: str, *, plan_id: str
+    ) -> AgendaEntry:
+        """Clear exactly the acknowledged handoff without clobbering a newer one."""
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            if entry.metadata.get("resumable_plan_absorbed") == plan_id:
+                entry.metadata["resumable_plan_absorbed"] = None
+            return entry
+
+        return self.mutate(operation)
+
     def enqueue_report(self, entry_id: str, summary: str) -> ReportOutboxItem:
         """Persist one idempotent completion report for an agenda entry."""
         cleaned = " ".join(str(summary).split())[:2000]

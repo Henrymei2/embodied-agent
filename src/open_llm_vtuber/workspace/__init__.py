@@ -9,7 +9,10 @@ from .workspace_manager import (
     resolve_workspace_path,
     write_workspace_file,
 )
-from .workspace_prompt_builder import build_workspace_prompt_context
+from .workspace_prompt_builder import (
+    build_evidence_context,
+    build_workspace_prompt_context,
+)
 from .workspace_retriever import (
     RetrievedWorkspaceDocument,
     retrieve_workspace_documents,
@@ -21,6 +24,7 @@ __all__ = [
     "WorkspaceAccessError",
     "RetrievedWorkspaceDocument",
     "append_workspace_file",
+    "build_evidence_context",
     "build_workspace_prompt_context",
     "ensure_workspace",
     "load_workspace_context",

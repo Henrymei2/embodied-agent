@@ -58,6 +58,7 @@ system_config:
     planner_circuit_failure_threshold: 3
     planner_circuit_max_seconds: 1800
     step_timeout_seconds: 120
+    human_preemption_timeout_seconds: 0.25
     fallback_reconsideration_seconds: 300
     store_poll_seconds: 1
     restart_recovery_grace_seconds: 10

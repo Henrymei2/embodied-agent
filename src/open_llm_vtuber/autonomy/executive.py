@@ -21,6 +21,9 @@ from .agenda import (
 from .agenda_context import build_agenda_context
 from .agenda_planner import StructuredAgendaPlanner
 from .agenda_policy import AgendaPolicy
+from .agenda_plan_bridge import AgendaPlanBridge
+from .dual_loop import FairPlanScheduler
+from .plan_state import PlanConflictError
 from .idle_relocation import (
     IdlePlacement,
     IdleScene,
@@ -89,6 +92,14 @@ class AgendaExecutive:
             emit,
             tracer=self.tracer,
         )
+        self.plan_bridge = AgendaPlanBridge(
+            store,
+            self.activity,
+            lease_seconds=settings.lease_ttl_seconds,
+        )
+        self.fair_scheduler = FairPlanScheduler(
+            starvation_seconds=max(60.0, settings.fallback_reconsideration_seconds)
+        )
         self._wake = asyncio.Event()
         self._activity_task: Optional[asyncio.Task] = None
         self._entry_task: Optional[asyncio.Task] = None
@@ -105,10 +116,28 @@ class AgendaExecutive:
         subscription = subscribe_agenda_changes(self.store.root, self.wake)
         try:
             recovered = self.store.recover_interrupted()
+            recovered_plans = self.plan_bridge.store.recover_expired()
+            reconciliation_fence = (
+                self.lease_handle.fencing_token
+                if self.lease_handle is not None
+                else self.store.load().fencing_token
+            )
+            reconciled_plans = self.plan_bridge.reconcile_startup(
+                fencing_token=reconciliation_fence
+            )
             if recovered:
                 logger.info(f"agenda: recovered {len(recovered)} interrupted entries")
                 if self.settings.restart_recovery_grace_seconds:
                     await asyncio.sleep(self.settings.restart_recovery_grace_seconds)
+            if recovered_plans:
+                logger.info(
+                    f"agenda: recovered {len(recovered_plans)} expired plan leases"
+                )
+            if any(reconciled_plans.values()):
+                logger.info(
+                    "agenda: reconciled resumable plan handoffs "
+                    f"{reconciled_plans}"
+                )
             await self.broadcast_snapshot()
             while True:
                 try:
@@ -261,7 +290,27 @@ class AgendaExecutive:
         )
 
     async def preempt_for_user(self, title: str) -> AgendaEntry:
-        await self._cancel_entry_work()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        cancellation = asyncio.create_task(
+            self._cancel_entry_work(), name="agenda-human-preemption"
+        )
+        done, _pending = await asyncio.wait(
+            {cancellation}, timeout=self.settings.human_preemption_timeout_seconds
+        )
+        within_budget = cancellation in done
+        if not within_budget:
+            cancellation.cancel()
+            cancellation.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+            logger.error(
+                "agenda: background cancellation exceeded the human preemption "
+                f"budget of {self.settings.human_preemption_timeout_seconds:.3f}s"
+            )
+        else:
+            cancellation.result()
+        preemption_latency_ms = (loop.time() - started) * 1000.0
         self._settled_hold_key = None
         state = self.store.load()
         for active in state.entries:
@@ -281,6 +330,13 @@ class AgendaExecutive:
             time_budget_seconds=self.settings.maximum_pursuit_seconds,
             status="active",
             report_policy="on_completion",
+            metadata={
+                "preemption_latency_ms": round(preemption_latency_ms, 3),
+                "preemption_budget_ms": round(
+                    self.settings.human_preemption_timeout_seconds * 1000.0, 3
+                ),
+                "preemption_within_budget": within_budget,
+            },
         )
         self.store.add(user)
         await self.broadcast_snapshot()
@@ -309,9 +365,36 @@ class AgendaExecutive:
         entry = next(item for item in state.entries if item.id == entry_id)
         if entry.status == "active":
             await self._cancel_entry_work()
-        self.store.transition(
-            entry_id, "abandoned", progress_summary="Stopped by user."
-        )
+        plan_id = entry.metadata.get("resumable_plan_id")
+        cancelled_plan = None
+        if isinstance(plan_id, str) and self.plan_bridge.store.get(plan_id) is not None:
+            cancelled_plan = self.plan_bridge.store.cancel(
+                plan_id, reason="user abandoned agenda entry"
+            )
+            if cancelled_plan.terminal:
+                self.store.absorb_resumable_plan(
+                    entry.id,
+                    plan_id=plan_id,
+                    status="abandoned",
+                    progress_summary="Stopped by user.",
+                )
+        if cancelled_plan is None:
+            self.store.transition(
+                entry_id, "abandoned", progress_summary="Stopped by user."
+            )
+        elif not cancelled_plan.terminal:
+            self.store.transition(
+                entry_id,
+                "suspended",
+                progress_summary=(
+                    "Stop requested; the side-effect outcome requires reconciliation."
+                ),
+            )
+        if cancelled_plan is not None and cancelled_plan.terminal:
+            if self.plan_bridge.acknowledge_absorbed(cancelled_plan.plan_id):
+                self.store.clear_absorbed_resumable_plan(
+                    entry_id, plan_id=cancelled_plan.plan_id
+                )
         self.wake()
         await self.broadcast_snapshot()
 
@@ -394,7 +477,9 @@ class AgendaExecutive:
         )
         if queued:
             self._settled_hold_key = None
-            self.store.transition(queued[0].id, "active")
+            decision = self.fair_scheduler.choose_agenda_entries(queued, now=utc_now())
+            selected_id = decision.plan_id if decision is not None else queued[0].id
+            self.store.transition(selected_id, "active")
             await self.broadcast_snapshot()
             return True
         held = [
@@ -628,9 +713,7 @@ class AgendaExecutive:
                 # durable external event before optional placement planning.
                 await asyncio.sleep(0)
                 placement = await self._choose_idle_placement(context, scene)
-                relocation = asyncio.create_task(
-                    self._relocate_idle_safely(placement)
-                )
+                relocation = asyncio.create_task(self._relocate_idle_safely(placement))
                 await asyncio.gather(generation, relocation)
             except BaseException:
                 for task in (generation, relocation):
@@ -726,12 +809,17 @@ class AgendaExecutive:
         if self._settling_task is settling:
             self._settling_task = None
         task = self._entry_task
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        if self._entry_task is task:
-            self._entry_task = None
-            self._entry_task_entry_id = None
+        entry_id = self._entry_task_entry_id
+        try:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            if entry_id is not None:
+                self._release_interrupted_plan(entry_id)
+            if self._entry_task is task:
+                self._entry_task = None
+                self._entry_task_entry_id = None
         activity = self._activity_task
         if activity is not None and not activity.done():
             activity.cancel()
@@ -739,6 +827,28 @@ class AgendaExecutive:
         self._release_event_claims(
             "Agenda work was interrupted before successor planning completed."
         )
+
+    def _release_interrupted_plan(self, entry_id: str) -> None:
+        try:
+            state = self.store.load()
+            entry = next((item for item in state.entries if item.id == entry_id), None)
+            if entry is None:
+                return
+            plan_id = entry.metadata.get("resumable_plan_id")
+            if not isinstance(plan_id, str):
+                return
+            fencing_token = (
+                self.lease_handle.fencing_token
+                if self.lease_handle is not None
+                else state.fencing_token
+            )
+            self.plan_bridge.store.release_for_preemption(
+                plan_id,
+                fencing_token=fencing_token,
+                reason_code="agenda_preempted",
+            )
+        except (KeyError, OSError, PlanConflictError, ValueError) as exc:
+            logger.warning(f"agenda: could not release interrupted plan: {exc}")
 
     def _release_event_claims(self, reason: str) -> int:
         if self.lease_handle is None:
@@ -986,6 +1096,25 @@ class AgendaExecutive:
 
     async def _advance_entry(self, entry: AgendaEntry) -> bool:
         self._assert_lease()
+        absorbed_plan_id = entry.metadata.get("resumable_plan_absorbed")
+        if isinstance(absorbed_plan_id, str):
+            if self.plan_bridge.acknowledge_absorbed(absorbed_plan_id):
+                self.store.clear_absorbed_resumable_plan(
+                    entry.id, plan_id=absorbed_plan_id
+                )
+                entry = next(
+                    item for item in self.store.load().entries if item.id == entry.id
+                )
+            else:
+                self.store.transition(
+                    entry.id,
+                    "suspended",
+                    progress_summary=(
+                        "Resumable plan handoff requires operator reconciliation."
+                    ),
+                )
+                await self.broadcast_snapshot()
+                return True
         deadline = entry.budget.deadline_at
         if entry.kind == "idle":
             if deadline is None:
@@ -1031,70 +1160,84 @@ class AgendaExecutive:
             object_names=self.object_names,
             execution_mode="live" if self.connected_client else "headless",
         )
-        try:
-            self._consume_planner_quota()
-        except PlannerQuotaExceeded as exc:
-            self._defer_entry_for_quota(
-                entry,
-                reset_at=exc.reset_at,
-                reason="activity planner quota exhausted",
-            )
-            await self.broadcast_snapshot()
-            return True
-        with self.tracer.span(
-            "agenda.planner.next_step",
-            trace_id=entry.metadata.get("trace_id"),
-            attributes={"agenda.entry_id": entry.id},
-        ):
-            checkpoint = await self.planner.next_step(asdict(entry), context)
-        verdict = self.step_policy.validate(entry, checkpoint)
-        if not verdict.accepted:
-            if verdict.retryable:
-                self.store.update_metadata(entry.id, waiting_for_client=True)
+        existing_plan = self.plan_bridge.restore_plan_reference(entry)
+        resuming = existing_plan is not None
+        if resuming:
+            checkpoint = entry.checkpoint
+            if checkpoint is None:
                 self.store.transition(
                     entry.id,
                     "suspended",
-                    progress_summary=verdict.reason,
+                    progress_summary="Resumable plan is missing its agenda checkpoint.",
                 )
                 await self.broadcast_snapshot()
                 return True
-            rejection_count = int(entry.metadata.get("step_rejections", 0)) + 1
-            self.store.update_metadata(entry.id, step_rejections=rejection_count)
-            terminal = rejection_count >= self.settings.planner_retry_limit
-            self.store.transition(
-                entry.id,
-                "failed" if terminal else "queued",
-                progress_summary=f"Rejected activity step: {verdict.reason}",
-            )
-            if terminal:
-                self.store.add_dead_letter(
-                    category="activity_policy",
-                    reference_id=entry.id,
-                    reason=verdict.reason,
-                    attempts=rejection_count,
-                    data={"step_kind": checkpoint.kind},
-                )
-            await self.broadcast_snapshot()
-            return True
-        if entry.metadata.get("step_rejections"):
-            self.store.update_metadata(entry.id, step_rejections=0)
-        if checkpoint.required_capability:
-            capability_quota = self.store.consume_quota(
-                category="capability",
-                key=checkpoint.required_capability,
-                limit=self.settings.capability_calls_per_window,
-                window_seconds=self.settings.quota_window_seconds,
-            )
-            if not capability_quota.allowed:
+        else:
+            try:
+                self._consume_planner_quota()
+            except PlannerQuotaExceeded as exc:
                 self._defer_entry_for_quota(
                     entry,
-                    reset_at=capability_quota.reset_at,
-                    reason=(
-                        f"capability quota exhausted: {checkpoint.required_capability}"
-                    ),
+                    reset_at=exc.reset_at,
+                    reason="activity planner quota exhausted",
                 )
                 await self.broadcast_snapshot()
                 return True
+            with self.tracer.span(
+                "agenda.planner.next_step",
+                trace_id=entry.metadata.get("trace_id"),
+                attributes={"agenda.entry_id": entry.id},
+            ):
+                checkpoint = await self.planner.next_step(asdict(entry), context)
+            verdict = self.step_policy.validate(entry, checkpoint)
+            if not verdict.accepted:
+                if verdict.retryable:
+                    self.store.update_metadata(entry.id, waiting_for_client=True)
+                    self.store.transition(
+                        entry.id,
+                        "suspended",
+                        progress_summary=verdict.reason,
+                    )
+                    await self.broadcast_snapshot()
+                    return True
+                rejection_count = int(entry.metadata.get("step_rejections", 0)) + 1
+                self.store.update_metadata(entry.id, step_rejections=rejection_count)
+                terminal = rejection_count >= self.settings.planner_retry_limit
+                self.store.transition(
+                    entry.id,
+                    "failed" if terminal else "queued",
+                    progress_summary=f"Rejected activity step: {verdict.reason}",
+                )
+                if terminal:
+                    self.store.add_dead_letter(
+                        category="activity_policy",
+                        reference_id=entry.id,
+                        reason=verdict.reason,
+                        attempts=rejection_count,
+                        data={"step_kind": checkpoint.kind},
+                    )
+                await self.broadcast_snapshot()
+                return True
+            if entry.metadata.get("step_rejections"):
+                self.store.update_metadata(entry.id, step_rejections=0)
+            if checkpoint.required_capability:
+                capability_quota = self.store.consume_quota(
+                    category="capability",
+                    key=checkpoint.required_capability,
+                    limit=self.settings.capability_calls_per_window,
+                    window_seconds=self.settings.quota_window_seconds,
+                )
+                if not capability_quota.allowed:
+                    self._defer_entry_for_quota(
+                        entry,
+                        reset_at=capability_quota.reset_at,
+                        reason=(
+                            "capability quota exhausted: "
+                            f"{checkpoint.required_capability}"
+                        ),
+                    )
+                    await self.broadcast_snapshot()
+                    return True
         # The configured timeout is the operational minimum for an LLM/tool
         # round trip. Models may request more time for a step, but may not
         # accidentally cancel a healthy provider request after only a few
@@ -1115,10 +1258,56 @@ class AgendaExecutive:
                 checkpoint.plausible_duration_seconds,
                 float(remaining_budget),
             )
-        self._activity_task = asyncio.create_task(
-            self.activity.execute(entry, checkpoint)
+        owner_id = (
+            self.lease_handle.owner_id if self.lease_handle else "agenda-executive"
         )
-        result = await self._activity_task
+        fencing_token = (
+            self.lease_handle.fencing_token
+            if self.lease_handle
+            else self.store.load().fencing_token
+        )
+        plan_result = await self.plan_bridge.execute(
+            entry,
+            checkpoint,
+            owner_id=owner_id,
+            fencing_token=fencing_token,
+            capabilities=self.capabilities,
+            object_names=self.object_names,
+            retry_budget=self.settings.execution_failure_limit,
+        )
+        if plan_result.plan.state != "completed":
+            terminal = plan_result.plan.state in {"failed", "cancelled"}
+            target = "failed" if terminal else "suspended"
+            if terminal:
+                failure_summary = (
+                    plan_result.plan.blocked_reason
+                    or "The resumable plan could not complete."
+                )
+                self.store.absorb_resumable_plan(
+                    entry.id,
+                    plan_id=plan_result.plan.plan_id,
+                    status=target,
+                    progress_summary=failure_summary,
+                    report_summary=failure_summary,
+                )
+            else:
+                self.store.transition(
+                    entry.id,
+                    target,
+                    progress_summary=(
+                        plan_result.plan.blocked_reason
+                        or f"Resumable plan is {plan_result.plan.state}."
+                    ),
+                )
+            if terminal and self.plan_bridge.acknowledge_absorbed(
+                plan_result.plan.plan_id
+            ):
+                self.store.clear_absorbed_resumable_plan(
+                    entry.id, plan_id=plan_result.plan.plan_id
+                )
+            await self.broadcast_snapshot()
+            return True
+        result = plan_result.summary
         if entry.metadata.get("execution_failures"):
             self.store.update_metadata(entry.id, execution_failures=0)
         try:
@@ -1139,13 +1328,18 @@ class AgendaExecutive:
             complete, summary = await self.planner.evaluate_completion(
                 asdict(entry), [result]
             )
-        self.store.transition(
+        target = "completed" if complete else "queued"
+        self.store.absorb_resumable_plan(
             entry.id,
-            "completed" if complete else "queued",
+            plan_id=plan_result.plan.plan_id,
+            status=target,
             progress_summary=summary,
+            report_summary=summary if complete else None,
         )
-        if complete:
-            self.store.enqueue_report(entry.id, summary)
+        if self.plan_bridge.acknowledge_absorbed(plan_result.plan.plan_id):
+            self.store.clear_absorbed_resumable_plan(
+                entry.id, plan_id=plan_result.plan.plan_id
+            )
         await self.broadcast_snapshot()
         if complete:
             self.wake()
@@ -1197,6 +1391,9 @@ class AgendaExecutive:
             attributes={"agenda.entry_id": entry.id},
         ):
             decision = await self.planner.reconsider(asdict(entry), context)
+        if decision == "abandon":
+            await self.abandon(entry.id)
+            return
         target = {"resume": "queued", "queue": "queued", "abandon": "abandoned"}[
             decision
         ]

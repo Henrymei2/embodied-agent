@@ -209,7 +209,7 @@ const MAX_MOVE_DURATION_MS = 1800;
 const DEFAULT_MOVE_DURATION_MS = 900;
 // Keep in sync with STAGE_THEME_REVISION in stage_state_manager.py: the backend
 // rebuilds any stored room whose revision differs from its own.
-const STAGE_THEME_REVISION = "cozy-bedroom-v2";
+const STAGE_THEME_REVISION = "cozy-bedroom-v4";
 
 const nowIso = () => new Date().toISOString();
 
@@ -220,9 +220,9 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
     height: ROOM_HEIGHT,
     background: "#e8c98f",
     texture: {
-      src: "./stage-assets/bedroom-background.png",
+      src: "./stage-assets/bedroom-background-hd.png",
       fit: "cover",
-      alt: "cozy pixel-art bedroom",
+      alt: "high-definition cozy illustrated companion studio",
     },
   },
   world: {
@@ -645,8 +645,8 @@ export const createDefaultStage = (confUid?: string): DynamicStageDocument => ({
     {
       id: "drawing_board",
       type: "panel",
-      label: "drawing board",
-      x: 770,
+      label: "drawing_board",
+      x: 720,
       y: 265,
       width: 140,
       height: 100,

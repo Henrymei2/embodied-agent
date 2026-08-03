@@ -11,6 +11,49 @@ export interface Point2 {
   y: number;
 }
 
+/**
+ * Break spoken captions into a small number of headset-safe lines. The final
+ * line is truncated rather than allowing a panel to grow into the companion's
+ * sight line.
+ */
+export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3) {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (!words.length || maxCharacters < 2 || maxLines < 1) return [];
+
+  const lines: string[] = [];
+  let current = "";
+  let consumed = 0;
+  for (const word of words) {
+    const fragments = word.length > maxCharacters
+      ? word.match(new RegExp(`.{1,${maxCharacters}}`, "g")) || [word]
+      : [word];
+    for (const fragment of fragments) {
+      const candidate = current ? `${current} ${fragment}` : fragment;
+      if (candidate.length <= maxCharacters) {
+        current = candidate;
+        consumed += 1;
+        continue;
+      }
+      if (current) lines.push(current);
+      if (lines.length === maxLines) break;
+      current = fragment;
+      consumed += 1;
+    }
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines && current) lines.push(current);
+
+  const fragmentCount = words.reduce(
+    (total, word) => total + Math.max(1, Math.ceil(word.length / maxCharacters)),
+    0,
+  );
+  if (consumed < fragmentCount && lines.length) {
+    const last = lines.length - 1;
+    lines[last] = `${lines[last].slice(0, Math.max(1, maxCharacters - 1)).trimEnd()}…`;
+  }
+  return lines;
+}
+
 export function browserEndpoints(location: Pick<Location, "protocol" | "host">) {
   const secure = location.protocol === "https:";
   return {
@@ -126,6 +169,44 @@ export const pressedEdge = (pressed: boolean, wasPressed: boolean) => pressed &&
 export function pointInsideAabb(point: Point2, node: FloorAabbNode) {
   return point.x >= node.x - node.width / 2 && point.x <= node.x + node.width / 2 &&
     point.y >= node.y - node.depth / 2 && point.y <= node.y + node.depth / 2;
+}
+
+export function isViewerPositionClear(
+  point: Point2,
+  furniture: FloorAabbNode[],
+  room: { width: number; depth: number },
+  viewerRadius = 25,
+) {
+  return point.x >= viewerRadius && point.x <= room.width - viewerRadius &&
+    point.y >= viewerRadius && point.y <= room.depth - viewerRadius &&
+    !furniture.some((node) => (
+      point.x >= node.x - node.width / 2 - viewerRadius &&
+      point.x <= node.x + node.width / 2 + viewerRadius &&
+      point.y >= node.y - node.depth / 2 - viewerRadius &&
+      point.y <= node.y + node.depth / 2 + viewerRadius
+    ));
+}
+
+export function selectViewerSpawn(
+  avatar: FloorAabbNode,
+  furniture: FloorAabbNode[],
+  room: { width: number; depth: number },
+  distance = 175,
+  viewerRadius = 25,
+) {
+  const candidates = [
+    { x: avatar.x + distance, y: avatar.y },
+    { x: avatar.x - distance, y: avatar.y },
+    { x: avatar.x, y: avatar.y + distance },
+    { x: avatar.x, y: avatar.y - distance },
+  ];
+  const clear = candidates.find((point) => (
+    isViewerPositionClear(point, furniture, room, viewerRadius)
+  ));
+  return clear || {
+    x: Math.min(room.width - viewerRadius, Math.max(viewerRadius, avatar.x + distance)),
+    y: Math.min(room.depth - viewerRadius, Math.max(viewerRadius, avatar.y)),
+  };
 }
 
 export function selectDockingPoint(

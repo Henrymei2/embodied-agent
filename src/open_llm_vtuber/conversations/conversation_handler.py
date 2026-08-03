@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from typing import Dict, Optional, Callable
 
 import numpy as np
@@ -8,6 +9,7 @@ from loguru import logger
 
 from ..chat_group import ChatGroupManager
 from ..chat_history_manager import store_message
+from ..latency import record_interruption_ms
 from ..object_interaction import describe_click
 from ..service_context import ServiceContext
 from .group_conversation import process_group_conversation
@@ -22,6 +24,11 @@ from .llm_request_queue import (
     PRIORITY_PROACTIVE,
 )
 from prompts import prompt_loader
+
+# How long to wait for a cancelled turn to reach a terminal state before
+# recording the interruption anyway. Well above the 250 ms gate, so a healthy
+# barge-in is always measured exactly and a stuck one is still reported.
+INTERRUPTION_MEASURE_TIMEOUT_S = 5.0
 
 
 async def handle_conversation_trigger(
@@ -161,14 +168,14 @@ async def handle_conversation_trigger(
                 await executive.finish_user(agenda_entry.id, failed=failed)
 
         conversation = process_single_conversation(
-                context=context,
-                websocket_send=websocket.send_text,
-                client_uid=client_uid,
-                user_input=user_input,
-                images=images,
-                session_emoji=session_emoji,
-                metadata=metadata,
-            )
+            context=context,
+            websocket_send=websocket.send_text,
+            client_uid=client_uid,
+            user_input=user_input,
+            images=images,
+            session_emoji=session_emoji,
+            metadata=metadata,
+        )
         if agenda_entry is None:
             await queue.enqueue(
                 coro=conversation,
@@ -186,6 +193,24 @@ async def handle_conversation_trigger(
             )
 
 
+async def _measure_interruption(
+    task: asyncio.Task, requested_at: float, client_uid: str
+) -> None:
+    """Record how long a cancelled turn took to actually stop.
+
+    Bounded, because a task that never terminates must not leave this waiting
+    for the life of the process; an unbounded wait here would be exactly the
+    hidden infinite work the program forbids. A timeout still records, so a
+    turn that refused to stop shows up as a very slow interruption rather than
+    as no measurement at all.
+    """
+    try:
+        await asyncio.wait({task}, timeout=INTERRUPTION_MEASURE_TIMEOUT_S)
+    except Exception:
+        pass
+    record_interruption_ms(client_uid, (time.perf_counter() - requested_at) * 1000.0)
+
+
 async def handle_individual_interrupt(
     client_uid: str,
     current_conversation_tasks: Dict[str, Optional[asyncio.Task]],
@@ -193,6 +218,7 @@ async def handle_individual_interrupt(
     heard_response: str,
 ):
     # Interrupt via queue (cancels current in-flight request)
+    requested_at = time.perf_counter()
     interrupt_queue(client_uid)
 
     if client_uid in current_conversation_tasks:
@@ -200,6 +226,14 @@ async def handle_individual_interrupt(
         if task and not task.done():
             task.cancel()
             logger.info("🛑 Conversation task was successfully interrupted")
+            # `cancel()` is a request, not a stop. The 250 ms gate is about
+            # stale speech actually ceasing, so time the task reaching a
+            # terminal state — in the background, so measuring the barge-in
+            # never delays it.
+            asyncio.create_task(
+                _measure_interruption(task, requested_at, client_uid),
+                name=f"interrupt-latency:{client_uid}",
+            )
 
     try:
         context.agent_engine.handle_interrupt(heard_response)

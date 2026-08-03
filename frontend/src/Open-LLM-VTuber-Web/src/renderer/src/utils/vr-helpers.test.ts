@@ -1,18 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampCaptionText,
   floorToScene,
   browserEndpoints,
   headRelativeDelta,
+  isViewerPositionClear,
   pointInsideAabb,
   pressedEdge,
   rescaleThumbstick,
   selectDockingPoint,
+  selectViewerSpawn,
   snapTurnStep,
   validateVrStageShape,
   withRendererMode,
 } from "./vr-helpers";
 
 describe("VR spatial helpers", () => {
+  it("keeps captions within a compact headset-safe line budget", () => {
+    expect(clampCaptionText("A concise spatial caption that stays below the companion", 20, 2)).toEqual([
+      "A concise spatial",
+      "caption that stays…",
+    ]);
+    expect(clampCaptionText("   ")).toEqual([]);
+  });
+
   it("derives secure browser endpoints and registers renderer mode", () => {
     const endpoints = browserEndpoints({ protocol: "https:", host: "agent.lan:12393" });
     expect(endpoints).toEqual({
@@ -50,6 +61,20 @@ describe("VR spatial helpers", () => {
     const target = { id: "desk", x: 200, y: 200, width: 100, depth: 60 };
     const avatar = { id: "avatar", x: 200, y: 50, width: 70, depth: 20 };
     expect(selectDockingPoint(target, avatar, [target], { width: 500, depth: 500 })).toEqual({ x: 200, y: 125 });
+  });
+
+  it("places the viewer at conversation distance without spawning in furniture", () => {
+    const avatar = { id: "avatar", x: 35, y: 280, width: 70, depth: 20 };
+    expect(selectViewerSpawn(avatar, [], { width: 960, depth: 540 })).toEqual({ x: 210, y: 280 });
+    const blocker = { id: "chair", x: 210, y: 280, width: 80, depth: 80 };
+    expect(selectViewerSpawn(avatar, [blocker], { width: 960, depth: 540 })).toEqual({ x: 35, y: 455 });
+  });
+
+  it("keeps headset locomotion outside furniture clearance zones", () => {
+    const desk = { id: "desk", x: 200, y: 200, width: 100, depth: 60 };
+    expect(isViewerPositionClear({ x: 300, y: 200 }, [desk], { width: 500, depth: 500 })).toBe(true);
+    expect(isViewerPositionClear({ x: 270, y: 200 }, [desk], { width: 500, depth: 500 })).toBe(false);
+    expect(isViewerPositionClear({ x: 10, y: 200 }, [], { width: 500, depth: 500 })).toBe(false);
   });
 });
 

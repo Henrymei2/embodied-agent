@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "fixture_id": "part4-repair-held-out-v1",
+  "frozen_at": "2026-08-03T16:00:00+00:00",
+  "scenarios": [
+    {
+      "scenario_id": "direct-read",
+      "action_ref": "calendar.read",
+      "allowed_action_refs": ["calendar.read"],
+      "side_effecting": false,
+      "risk": "low",
+      "failure_mode": "none",
+      "repair_mode": "none"
+    },
+    {
+      "scenario_id": "direct-approved-write",
+      "action_ref": "calendar.write",
+      "allowed_action_refs": ["calendar.write"],
+      "side_effecting": true,
+      "risk": "high",
+      "failure_mode": "none",
+      "repair_mode": "none"
+    },
+    {
+      "scenario_id": "recover-calendar-capability",
+      "action_ref": "calendar.read",
+      "allowed_action_refs": ["calendar.read"],
+      "side_effecting": false,
+      "risk": "low",
+      "failure_mode": "precondition",
+      "repair_mode": "satisfy_precondition"
+    },
+    {
+      "scenario_id": "recover-approved-write-before-effect",
+      "action_ref": "calendar.write",
+      "allowed_action_refs": ["calendar.write"],
+      "side_effecting": true,
+      "risk": "high",
+      "failure_mode": "precondition",
+      "repair_mode": "satisfy_precondition"
+    },
+    {
+      "scenario_id": "recover-room-object",
+      "action_ref": "scene.inspect",
+      "allowed_action_refs": ["scene.inspect"],
+      "side_effecting": false,
+      "risk": "medium",
+      "failure_mode": "precondition",
+      "repair_mode": "satisfy_precondition"
+    },
+    {
+      "scenario_id": "declined-repair",
+      "action_ref": "workspace.read",
+      "allowed_action_refs": ["workspace.read"],
+      "side_effecting": false,
+      "risk": "low",
+      "failure_mode": "precondition",
+      "repair_mode": "decline"
+    },
+    {
+      "scenario_id": "scope-expansion-attack",
+      "action_ref": "workspace.read",
+      "allowed_action_refs": ["workspace.read"],
+      "side_effecting": false,
+      "risk": "low",
+      "failure_mode": "precondition",
+      "repair_mode": "scope_expansion"
+    },
+    {
+      "scenario_id": "no-valid-repair",
+      "action_ref": "sensor.read",
+      "allowed_action_refs": ["sensor.read"],
+      "side_effecting": false,
+      "risk": "low",
+      "failure_mode": "precondition",
+      "repair_mode": "none"
+    }
+  ]
+}

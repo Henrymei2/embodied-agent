@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
+
+from loguru import logger
 
 from ..study import conditions, log_event
 from .workspace_manager import ensure_workspace
@@ -11,6 +14,9 @@ from .workspace_retriever import (
 
 
 MAX_CORE_FILE_CHARS = 4_000
+
+# Where a provenance ledger lives inside a workspace, if one has been created.
+PROVENANCE_DIRNAME = "provenance"
 
 
 def read_core_file(path: Path, max_chars: int = MAX_CORE_FILE_CHARS) -> str:
@@ -65,11 +71,63 @@ def split_retrieved_documents(
     return grouped
 
 
+def build_evidence_context(
+    claim_keys: Sequence[str],
+    workspace_dir: str | Path | None = None,
+    max_records: int = 6,
+) -> str:
+    """Retrieve only the claims the current intention actually needs.
+
+    Unlike document retrieval, this returns claims the agent can justify: each
+    one still points at the evidence it came from, contested claims arrive
+    marked as contested, and anything whose supporting content the user deleted
+    is simply not there.
+
+    Returns nothing when the workspace has no ledger, which is the case until
+    one is created — the seam exists without changing what existing
+    installations put in their prompts.
+    """
+
+    if not claim_keys or not conditions().memory:
+        return ""
+
+    workspace = ensure_workspace(workspace_dir)
+    ledger_dir = workspace.root / PROVENANCE_DIRNAME
+    if not ledger_dir.exists():
+        return ""
+
+    # Imported here so installations without a ledger never pay for it.
+    from ..provenance import (
+        ProvenanceLedger,
+        RetrievalRequest,
+        render_context_block,
+        retrieve_context,
+    )
+
+    try:
+        ledger = ProvenanceLedger(ledger_dir)
+        context = retrieve_context(
+            ledger.records(),
+            RetrievalRequest(
+                claim_keys=list(claim_keys),
+                now=ledger.now(),
+                max_records=max_records,
+            ),
+        )
+        return render_context_block(context, ledger.content_store)
+    except Exception as exc:  # noqa: BLE001
+        # A ledger that will not open must not take the conversation with it;
+        # the turn proceeds with less context, and says so in the log.
+        logger.warning(f"Provenance: evidence context unavailable ({exc}).")
+        return ""
+
+
 def build_workspace_prompt_context(
     user_message: str = "",
     workspace_dir: str | Path | None = None,
     max_retrieved_documents: int = 6,
     include_core_files: bool = True,
+    claim_keys: Sequence[str] | None = None,
 ) -> str:
     """
     Build the workspace context block injected into the LLM system prompt.
@@ -132,6 +190,14 @@ def build_workspace_prompt_context(
             if retrieved_documents
             else None,
         )
+
+    evidence = build_evidence_context(
+        claim_keys or (),
+        workspace_dir=workspace.root,
+        max_records=max_retrieved_documents,
+    )
+    if evidence:
+        sections.append(format_section("EVIDENCE-BACKED MEMORY", evidence))
 
     grouped_documents = split_retrieved_documents(retrieved_documents)
 

@@ -16,6 +16,7 @@ interface WorkspaceHeaderProps {
   roomEnabled: boolean;
   connectionStatus: ReactNode;
   presenceControl: ReactNode;
+  spatialControl?: ReactNode;
 }
 
 function WorkspaceHeader({
@@ -23,6 +24,7 @@ function WorkspaceHeader({
   roomEnabled,
   connectionStatus,
   presenceControl,
+  spatialControl,
 }: WorkspaceHeaderProps): JSX.Element {
   const { t } = useTranslation();
 
@@ -74,6 +76,7 @@ function WorkspaceHeader({
       </HStack>
 
       <HStack gap={{ base: 2, md: 3 }} flexShrink={0}>
+        {spatialControl}
         {connectionStatus}
         {presenceControl}
       </HStack>

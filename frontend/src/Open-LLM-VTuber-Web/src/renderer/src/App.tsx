@@ -1,7 +1,7 @@
 /* eslint-disable no-shadow */
 // import { StrictMode } from 'react';
 import { Box, Flex, ChakraProvider, defaultSystem } from "@chakra-ui/react";
-import { useState, useEffect } from "react";
+import { lazy, Suspense, useState, useEffect } from "react";
 // import Canvas from './components/canvas/canvas'; // Likely unused now
 import Sidebar from "./components/sidebar/sidebar";
 import Footer from "./components/footer/footer";
@@ -36,43 +36,50 @@ import {
   useStudyCondition,
 } from "./context/study-condition-context";
 import { AgentActivityProvider } from "./context/agent-activity-context";
+import SpatialPresentation, {
+  SpatialModeControl,
+} from "./components/spatial/spatial-presentation";
+import { useSpatialPresentation } from "./hooks/canvas/use-spatial-presentation";
 import {
   RendererModeProvider,
   useRendererMode,
 } from "./context/renderer-mode-context";
 import { VrStageProvider } from "./context/vr-stage-context";
-import VrStage from "./components/vr/vr-stage";
+import VrLaunchSurface from "./components/vr/vr-launch-surface";
+
+const VrStage = lazy(() => import("./components/vr/vr-stage"));
 
 function RendererEntry(): JSX.Element {
   const { mode, error, enterVr, useNormal } = useRendererMode();
 
-  if (mode === "vr") return <VrStage />;
+  if (mode === "vr") {
+    return (
+      <Suspense fallback={(
+        <Flex
+          position="fixed"
+          inset="0"
+          align="center"
+          justify="center"
+          color="#e2e8f0"
+          bg="radial-gradient(circle at 50% 20%, #20284f, #080b14 68%)"
+        >
+          <Box fontSize="sm" letterSpacing="0.02em">Preparing your companion space…</Box>
+        </Flex>
+      )}
+      >
+        <VrStage />
+      </Suspense>
+    );
+  }
   if (mode === "normal") return <AppContent />;
 
   return (
-    <Flex
-      position="fixed"
-      inset="0"
-      align="center"
-      justify="center"
-      direction="column"
-      gap="4"
-      bg="#101827"
-      color="white"
-      textAlign="center"
-      padding="6"
-    >
-      <Box fontSize="2xl" fontWeight="semibold">Embodied Agent</Box>
-      {mode === "detecting" && <Box>Checking immersive VR support…</Box>}
-      {mode === "vr-starting" && <Box>Starting VR…</Box>}
-      {mode === "choosing" && (
-        <>
-          <button type="button" onClick={() => void enterVr()}>Enter VR</button>
-          <button type="button" onClick={useNormal}>Use normal mode</button>
-        </>
-      )}
-      {error && <Box color="red.200">{error}</Box>}
-    </Flex>
+    <VrLaunchSurface
+      mode={mode}
+      error={error}
+      onEnter={() => void enterVr()}
+      onContinue={useNormal}
+    />
   );
 }
 
@@ -82,6 +89,11 @@ function AppContent(): JSX.Element {
   );
   const [isFooterCollapsed, setIsFooterCollapsed] = useState(false);
   const { mode } = useMode();
+  const spatial = useSpatialPresentation();
+  const { enterVr, xrSupported } = useRendererMode();
+  const spatialCapability = xrSupported === null
+    ? "checking"
+    : xrSupported ? "webxr-ready" : "preview-only";
   const isElectron = window.api !== undefined;
   // In the embodiment ablation there is no room: the same companion, the same
   // tools, without a place. Everything else on screen is unchanged.
@@ -118,7 +130,14 @@ function AppContent(): JSX.Element {
       )}
 
       {/* Conditional Rendering of Window UI */}
-      {mode === "window" && (
+      {mode === "window" && spatial.enabled && condition.embodiment && (
+        <SpatialPresentation
+          capability={spatialCapability}
+          onExit={spatial.exit}
+        />
+      )}
+
+      {mode === "window" && !spatial.enabled && (
         <>
           {isElectron && <TitleBar />}
           {/* Apply styles by spreading */}
@@ -142,6 +161,15 @@ function AppContent(): JSX.Element {
                 roomEnabled={condition.embodiment}
                 connectionStatus={<WebSocketStatus />}
                 presenceControl={<PresenceIndicator />}
+                spatialControl={condition.embodiment ? (
+                  <SpatialModeControl
+                    capability={spatialCapability}
+                    onEnter={() => {
+                      if (xrSupported) void enterVr();
+                      else void spatial.enter();
+                    }}
+                  />
+                ) : undefined}
               />
               <Box {...layoutStyles.stageArea}>
                 {condition.embodiment && (

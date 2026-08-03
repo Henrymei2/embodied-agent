@@ -12,6 +12,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
         idle_max_seconds=1,
         planner_retry_limit=0,
         fallback_reconsideration_seconds=1,
+        human_preemption_timeout_seconds=0,
     )
 
     assert settings.default_pursuit_seconds == 30
@@ -20,6 +21,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
     assert settings.idle_max_seconds == 5
     assert settings.planner_retry_limit == 1
     assert settings.fallback_reconsideration_seconds == 10
+    assert settings.human_preemption_timeout_seconds == 0.05
 
 
 def test_legacy_tick_setting_migrates_to_the_agenda_cadence():

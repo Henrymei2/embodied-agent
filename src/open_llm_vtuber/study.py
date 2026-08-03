@@ -23,6 +23,7 @@ participant is one that can actually be shared with a supervisor.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -49,6 +50,30 @@ _FALSY = {"0", "false", "no", "off"}
 # than this is recorded as a length so a transcript can never leak in by
 # accident.
 MAX_VALUE_CHARS = 120
+
+_EVENT_FIELDS: dict[str, frozenset[str]] = {
+    "session_start": frozenset(
+        {
+            "condition",
+            "pillar_embodiment",
+            "pillar_memory",
+            "pillar_autonomy",
+        }
+    ),
+    "session_end": frozenset({"duration_seconds"}),
+    "client_connected": frozenset(),
+    "client_disconnected": frozenset(),
+    "turn_started": frozenset({"source", "seconds_since_agent_finished"}),
+    "turn_finished": frozenset({"duration_seconds", "reply_chars"}),
+    "object_click": frozenset({"object_id"}),
+    "memory_recall": frozenset(
+        {"enabled", "query_chars", "documents", "top_score", "top_source"}
+    ),
+    "tool_call": frozenset({"tool", "requires", "allowed"}),
+    "autonomy_action": frozenset({"action", "direction", "status", "attention_cost"}),
+    "autonomy_feedback": frozenset({"receipt_id", "feedback"}),
+}
+_SAFE_EVENT = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 _UNSAFE_IN_NAME = re.compile(r"[^A-Za-z0-9._-]+")
@@ -228,23 +253,32 @@ def _open_session() -> "_Session | None":
 
 def _clean(value: Any) -> Any:
     """Reduce a value to something a shareable log may contain."""
-    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+    if isinstance(value, bool) or value is None or isinstance(value, int):
         return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     text = str(value)
     if len(text) > MAX_VALUE_CHARS:
-        # Length, never the text: this is the guard that keeps transcripts out.
-        return {"chars": len(text)}
+        # The field remains present so missing instrumentation is visible, but
+        # content is never retained in a supposedly shareable artifact.
+        return None
     return text
 
 
 def _write(session: "_Session", event: str, data: dict[str, Any]) -> None:
+    event = (
+        event
+        if isinstance(event, str) and _SAFE_EVENT.fullmatch(event)
+        else "unknown_event"
+    )
+    allowed = _EVENT_FIELDS.get(event, frozenset())
     record = {
         "ts": _utc_now().isoformat(timespec="milliseconds"),
         "session": session.session_id,
         "participant": session.participant,
         "condition": session.conditions.label,
         "event": event,
-        **{key: _clean(value) for key, value in data.items()},
+        **{key: _clean(data[key]) for key in sorted(allowed) if key in data},
     }
     try:
         with session.path.open("a", encoding="utf-8") as handle:

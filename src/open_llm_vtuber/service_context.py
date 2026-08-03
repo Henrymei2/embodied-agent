@@ -16,6 +16,7 @@ from .mcpp.tool_manager import ToolManager
 from .mcpp.mcp_client import MCPClient
 from .mcpp.tool_executor import ToolExecutor
 from .mcpp.tool_adapter import ToolAdapter
+from .authorization.transaction import ActionTransactionCoordinator
 
 from .asr.asr_factory import ASRFactory
 from .tts.fallback_tts import build_tts_engine
@@ -187,7 +188,21 @@ class ServiceContext:
 
             # 5. Initialize ToolExecutor
             if self.mcp_client and self.tool_manager:
-                self.tool_executor = ToolExecutor(self.mcp_client, self.tool_manager)
+                from .workspace import ensure_workspace
+
+                workspace_root = ensure_workspace(
+                    os.environ.get("EMBODIED_AGENT_WORKSPACE")
+                ).root
+                action_transactions = ActionTransactionCoordinator(
+                    workspace_root=workspace_root,
+                    client_uid=self.client_uid or "anonymous",
+                    tool_manager=self.tool_manager,
+                )
+                self.tool_executor = ToolExecutor(
+                    self.mcp_client,
+                    self.tool_manager,
+                    action_transactions=action_transactions,
+                )
                 logger.info("ToolExecutor initialized for this session.")
             else:
                 logger.warning(
