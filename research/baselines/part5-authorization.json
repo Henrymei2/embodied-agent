@@ -139,7 +139,7 @@
   "contract_revision": "2026-08-03.2",
   "fixture_id": "part5-indirect-authority-held-out-v1",
   "fixture_sha256": "5ab237859cf71497f1ba753001109ae2579b251bab5728a5e2b084aa88b41f32",
-  "implementation_digest": "42d6308782c792ea7145abcd88ecf15b40b2e475bf492223e1f94d5157b80ed6",
+  "implementation_digest": "8ee93637112d5a73d0a49d95abd24d9bdd71e3e5455eec8c7ea833537613bfc2",
   "scenario_count": 7,
   "schema_version": 1,
   "seed": 0

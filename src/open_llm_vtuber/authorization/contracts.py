@@ -16,8 +16,23 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Literal
 
-ACTION_DESCRIPTOR_SCHEMA_VERSION = 1
-AUTHORIZATION_POLICY_VERSION = "2026-08-03.1"
+ACTION_DESCRIPTOR_SCHEMA_VERSION = 2
+AUTHORIZATION_POLICY_VERSION = "2026-08-04.1"
+
+# Where the belief behind an action came from. Mirrors the provenance source
+# classes exactly, so the authorization kernel can look up *measured* per-class
+# reliability without a translation layer that could drift from the ledger.
+#
+# Version 2 exists for this field. Part 3 has measured since its completion that
+# the `model` class states 0.73 and is right 47% of the time, and until now
+# nothing consumed that: the kernel compared a model's self-reported number
+# against a fixed threshold, which is the one thing Part 3's own docstring says
+# not to do. A descriptor carrying no source class defaults to `model` — the
+# least-trusted measured class — because an action whose provenance nobody
+# stated should not be treated better than one whose provenance is a guess.
+EVIDENCE_SOURCE_CLASSES = frozenset(
+    {"user", "sensor", "tool", "model", "agent_hypothesis", "external"}
+)
 
 ACTORS = frozenset({"user", "agent", "system", "external"})
 SIDE_EFFECT_CLASSES = frozenset(
@@ -122,6 +137,7 @@ class ActionDescriptor:
     idempotency_key: str
     privacy_class: Literal["public", "internal", "private", "restricted"]
     external_destination: str | None = None
+    evidence_source_class: str = "model"
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -177,6 +193,10 @@ class ActionDescriptor:
         _token(self.idempotency_key, "action.idempotency_key")
         if self.privacy_class not in PRIVACY_CLASSES:
             raise AuthorizationValidationError("action privacy class is invalid")
+        if self.evidence_source_class not in EVIDENCE_SOURCE_CLASSES:
+            raise AuthorizationValidationError(
+                "action evidence source class is invalid"
+            )
         if self.external_destination is not None:
             _bounded(
                 self.external_destination,
@@ -369,6 +389,7 @@ def build_action_descriptor(
     idempotency_key: str,
     privacy_class: Literal["public", "internal", "private", "restricted"],
     external_destination: str | None = None,
+    evidence_source_class: str = "model",
     created_at: datetime | None = None,
 ) -> ActionDescriptor:
     descriptor = ActionDescriptor(
@@ -386,6 +407,7 @@ def build_action_descriptor(
         idempotency_key=idempotency_key,
         privacy_class=privacy_class,
         external_destination=external_destination,
+        evidence_source_class=evidence_source_class,
         created_at=_utc(created_at).isoformat(),
     )
     descriptor.validate()
