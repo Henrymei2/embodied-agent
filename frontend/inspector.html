@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Provenance inspector</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --line: #262b38; --text: #e8ecf4;
+    --muted: #8e97ad; --accent: #6ea8fe; --warn: #f0a35e; --good: #64c98a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  }
+  header { padding: 22px 28px 14px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .2px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
+  main { display: grid; grid-template-columns: 330px 1fr; gap: 0; height: calc(100vh - 88px); }
+  #roots { border-right: 1px solid var(--line); overflow-y: auto; padding: 14px; }
+  #chain { overflow-y: auto; padding: 22px 28px; }
+  .root {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 12px; margin-bottom: 8px; font: inherit;
+  }
+  .root:hover { border-color: var(--accent); }
+  .root.active { border-color: var(--accent); background: #1c2333; }
+  .root .k { font-weight: 600; font-size: 14px; }
+  .root .m { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .link {
+    position: relative; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 11px; padding: 14px 16px; margin: 0 0 12px 26px;
+  }
+  .link::before {
+    content: ""; position: absolute; left: -18px; top: 22px;
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+  }
+  .link::after {
+    content: ""; position: absolute; left: -14px; top: 34px; bottom: -14px; width: 2px;
+    background: var(--line);
+  }
+  .link:last-child::after { display: none; }
+  .stage { font-weight: 650; color: var(--accent); font-size: 13px;
+           text-transform: uppercase; letter-spacing: .6px; }
+  .claim { font-size: 16px; margin: 3px 0 8px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag {
+    font-size: 12px; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 999px; padding: 2px 9px; white-space: nowrap;
+  }
+  .tag b { color: var(--text); font-weight: 600; }
+  .gap { color: var(--warn); border-color: var(--warn); }
+  .banner { border-radius: 9px; padding: 10px 13px; margin-bottom: 16px; font-size: 13px; }
+  .banner.good { background: #12251b; border: 1px solid #24503a; color: var(--good); }
+  .banner.warn { background: #2a2013; border: 1px solid #5a4224; color: var(--warn); }
+  .empty { color: var(--muted); }
+  code { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Provenance inspector</h1>
+  <p>
+    Every autonomous action, traced from what was observed to what was verified.
+    Nothing here is private: the ledger stores opaque references and digests,
+    never message text, so this page is safe to show.
+  </p>
+</header>
+<main>
+  <aside id="roots"><p class="empty">Loading&hellip;</p></aside>
+  <section id="chain"><p class="empty">Select a decision to see why it happened.</p></section>
+</main>
+<script>
+const rootsEl = document.getElementById("roots");
+const chainEl = document.getElementById("chain");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function get(url) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return response.json();
+}
+
+function tag(label, value, extra = "") {
+  if (value === null || value === undefined || value === "") return "";
+  return `<span class="tag ${extra}">${esc(label)} <b>${esc(value)}</b></span>`;
+}
+
+async function showChain(recordId, button) {
+  document.querySelectorAll(".root").forEach((b) => b.classList.remove("active"));
+  if (button) button.classList.add("active");
+  chainEl.innerHTML = '<p class="empty">Loading&hellip;</p>';
+  try {
+    const chain = await get(`/api/operator/provenance/chain/${encodeURIComponent(recordId)}`);
+    const banner = chain.complete
+      ? '<div class="banner good">Complete chain &mdash; every cited piece of evidence was found.</div>'
+      : '<div class="banner warn">Incomplete &mdash; some evidence was deleted or expired. The gap is shown rather than hidden.</div>';
+    const truncated = chain.truncated
+      ? '<div class="banner warn">Truncated: this chain is longer than the display limit.</div>'
+      : "";
+    const links = chain.links.map((link) => `
+      <div class="link">
+        <div class="stage">${esc(link.stage)}</div>
+        <div class="claim">${esc(link.claim_key || link.record_type)}</div>
+        <div class="facts">
+          ${tag("source", link.source_class)}
+          ${tag("authority", link.authority)}
+          ${link.confidence !== null ? tag("confidence", Number(link.confidence).toFixed(2)) : ""}
+          ${tag("status", link.status)}
+          ${tag("at", link.recorded_at)}
+          ${tag("digest", link.content_digest)}
+          ${link.missing_evidence.length
+            ? tag("missing evidence", link.missing_evidence.length, "gap") : ""}
+        </div>
+      </div>`).join("");
+    chainEl.innerHTML = banner + truncated +
+      (links || '<p class="empty">This record cites no evidence.</p>');
+  } catch (error) {
+    chainEl.innerHTML = `<div class="banner warn">Could not load the chain: ${esc(error.message)}</div>`;
+  }
+}
+
+async function loadRoots() {
+  try {
+    const { roots } = await get("/api/operator/provenance/recent?limit=25");
+    if (!roots.length) {
+      rootsEl.innerHTML =
+        '<p class="empty">No decisions recorded yet. Talk to the agent, then reload.</p>';
+      return;
+    }
+    rootsEl.innerHTML = "";
+    roots.forEach((root) => {
+      const button = document.createElement("button");
+      button.className = "root";
+      button.innerHTML =
+        `<div class="k">${esc(root.claim_key || root.record_type)}</div>` +
+        `<div class="m">${esc(root.stage)} &middot; ${esc(root.recorded_at)}</div>`;
+      button.onclick = () => showChain(root.record_id, button);
+      rootsEl.appendChild(button);
+    });
+  } catch (error) {
+    rootsEl.innerHTML =
+      `<div class="banner warn">Could not load decisions: ${esc(error.message)}</div>`;
+  }
+}
+
+loadRoots();
+setInterval(loadRoots, 15000);
+</script>
+</body>
+</html>

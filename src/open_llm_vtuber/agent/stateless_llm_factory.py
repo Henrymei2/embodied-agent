@@ -9,6 +9,7 @@ from .stateless_llm.stateless_llm_with_template import (
 from .stateless_llm.openai_compatible_llm import AsyncLLM as OpenAICompatibleLLM
 from .stateless_llm.ollama_llm import OllamaLLM
 from .stateless_llm.claude_llm import AsyncLLM as ClaudeLLM
+from .stateless_llm.fallback_llm import wrap_with_fallback
 
 
 class LLMFactory:
@@ -16,12 +17,22 @@ class LLMFactory:
     def create_llm(llm_provider, **kwargs) -> Type[StatelessLLMInterface]:
         """Create an LLM based on the configuration.
 
+        The result is wrapped so that a model which cannot be reached at all
+        degrades to a recorded reply instead of ending the conversation, the
+        same way `fallback_tts` keeps the voice alive. The wrapper never
+        replaces a model that answers, and says loudly when it engages. Set
+        EMBODIED_AGENT_REQUIRE_LIVE_LLM=1 to remove the net entirely, which is
+        what a rehearsal should do to prove the real model is being used.
+
         Args:
             llm_provider: The type of LLM to create
             **kwargs: Additional arguments
         """
         logger.info(f"Initializing LLM: {llm_provider}")
+        return wrap_with_fallback(LLMFactory._create_bare_llm(llm_provider, **kwargs))
 
+    @staticmethod
+    def _create_bare_llm(llm_provider, **kwargs) -> Type[StatelessLLMInterface]:
         if (
             llm_provider == "openai_compatible_llm"
             or llm_provider == "openai_llm"

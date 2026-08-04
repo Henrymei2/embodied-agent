@@ -6,11 +6,11 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 2.3 |
+| Plan version | 2.6 |
 | Last updated | 2026-08-03 |
 | Program state | Active |
 | Current part | Part 10 — Reproducible release and research package (in progress) |
-| Current gate | Integration audit reopened Part 6: 1,546 lines of semantic world are not reachable from the server. `reproduce.py` fails on that and on Part 11's untracked research code |
+| Current gate | Demo-readiness delivered ahead of the paper: preflight, an honest LLM fallback, the provenance inspector, a runnable crash/resume beat, and a runbook |
 | Intended standard | Research-original, safety-bounded, reproducible, product-quality embodied agent |
 
 ## 1. Official final-project vision
@@ -222,9 +222,9 @@ A part is complete only when:
 | 3 | Provenance ledger and typed belief memory | Complete | Evidence-linked beliefs with contradiction and confidence handling |
 | 4 | Dual-loop cognition and resumable plans | Complete | Reactive/deliberative scheduler with checkpointed plan state machine |
 | 5 | Authorization kernel and transactional actions | Complete | Central risk gate, idempotent executor, verification, compensation |
-| 6 | Semantic world model 2.0 and embodied intelligence | Contract complete; **not integrated** | Unified spatial-temporal relations, navigation, social positioning |
+| 6 | Semantic world model 2.0 and embodied intelligence | Complete and integrated | Unified spatial-temporal relations, navigation, social positioning |
 | 7 | Real-time multimodal and WebXR product quality | Instrumented; gates blocked | Measured conversational latency, spatial audio/gaze, stable headset UX |
-| 8 | EmbodiedAgentBench and adversarial evaluation | Built; outcomes unmeasured | ≥100 scenarios, frozen split, failure injection, scorecards |
+| 8 | EmbodiedAgentBench and adversarial evaluation | Runnable; outcomes unmeasured | ≥100 scenarios, frozen split, failure injection, scorecards |
 | 9 | Human study and statistical analysis | Designed; blocked on ethics | Counterbalanced protocol, validated scales, analysis, limitations |
 | 10 | Reproducible release and research package | In progress | Paper-quality report, public benchmark, demo, clean-room reproduction |
 
@@ -238,7 +238,7 @@ changes.
 
 | Part | Assignment | State | Exit artifact |
 | ---: | --- | --- | --- |
-| 11 | Reproducibility integrity and artifact provenance | Queued (blocking) | Tracked research code, revision-bound baselines, honest manifests |
+| 11 | Reproducibility integrity and artifact provenance | Complete | Tracked research code, revision-bound baselines, honest manifests |
 | 12 | Real-model evidence engine | Queued | Record/replay cassettes, multi-model matrix, statistics, failure taxonomy |
 | 13 | Spatial capability spoofing and embodied injection benchmark | Queued | Named threat class, injection corpus, calibration-gated authorization |
 | 14 | Research communication and elite demonstration | Queued | Provenance inspector, rehearsed failure demo, venue-ready framing |
@@ -736,20 +736,9 @@ attack ablation; 24 dedicated tests; full repository `798 passed` before Part
 
 ## Part 6 — Semantic world model 2.0 and embodied intelligence
 
-**State:** Complete as a contract; **not integrated** (reopened 2026-08-03)  
-**Dependency:** Typed beliefs, transaction protocol, and current world seam.
+**State:** Complete and integrated (2026-08-03)
 
-> **Reopened by the Part 10 integration audit.** Every guarantee below is real
-> and tested, and the running server reaches none of it. `semantic_world`,
-> `semantic_projection`, and `semantic_navigation` — 1,546 lines — are not
-> reachable from `server.py`. The live proximity gate in `mcpp/tool_manager.py`
-> still reads `world_model`, whose `path_to` is a single straight leg.
->
-> So capability parity was proved between two projections the authorization
-> path never consults, and obstacle-aware navigation exists beside a system
-> that still walks through furniture. That is a weaker claim than "Complete"
-> implies, and D-038 records the correction rather than restating the gate.
-> `scripts/reproduce.py` now fails on it so it cannot be forgotten again.
+**Dependency:** Typed beliefs, transaction protocol, and current world seam.
 
 ### Work assignments
 
@@ -837,6 +826,40 @@ gate might trust. Proximity gating is unaffected and still correct, because
 distances remain comparable *within* each picture — which is why capability
 parity passes while navigation parity cannot. The VR floor plan is the metric
 authority; the 2D stage is a picture that happens to be internally consistent.
+
+### Completed slice 6.5 — Integration
+
+The Part 10 audit found that none of Part 6 was reachable from `server.py`. The
+live gate read `world_model`; the semantic world, its parity guarantee, and the
+planner sat beside the system. A guarantee about a model nothing consults is
+not a guarantee.
+
+`scene_state.get_scene_reachable_objects` is the single choke point every
+authorization path passes through — the tool manager's schema filter, its
+execution-time check, the transaction kernel, and click-to-interact all resolve
+proximity there. It now answers from `semantic_projection` in both renderers.
+
+The switch was made safe by proving equivalence first, not by hoping for it:
+**242 comparisons, 0 mismatches** — 240 randomized avatar positions across both
+shipped rooms with varying `within` overrides, plus a decoy room and a node
+declaring a 99,999-unit reach. Two behaviours had to be carried across
+deliberately:
+
+- **A declared `reach` is honoured and capped**, exactly as `world_model` did,
+  so reach inflation remains defeated by the ceiling rather than by the
+  projection happening to ignore the field.
+- **A contested label is withheld, not fatal.** The semantic world requires
+  unique labels, so a decoy room would have failed to project at all and locked
+  every honest object's tools. Instead the duplicated name is replaced by the
+  node's own id and recorded in `withheld_ids`; the entity keeps its place in
+  the world and only the contested *name* is refused. That preserves the
+  spatial-spoofing defence with the same outcome the legacy gate produced.
+
+VR docking now requires a **planned route**, not merely a clear stopping point.
+A point behind furniture the agent cannot round is clear and unreachable, and
+arrival unlocks that object's tools — so reporting arrival on the strength of a
+walk that could not happen was a real gap. Where the planner is unavailable the
+previous behaviour is kept and logged rather than failing movement outright.
 
 ### Acceptance gate
 
@@ -1136,9 +1159,12 @@ uv run pytest -q
 - No system has been run against the suite, so both outcome gates are
   unmeasured. What exists is a benchmark and a scorer, not a result. Closing
   this is Part 12's cassette recorder, not more scenarios.
-- The 100 scenarios name `initial_state_id` values (`decoy-computer-room`,
-  `homoglyph-room`, `blocked-room`, …) that the fixture library does not yet
-  contain. The contract validates the reference; it cannot yet resolve it.
+- ~~The 100 scenarios name `initial_state_id` values the fixture library does
+  not contain.~~ Closed by slice 8.5: `evaluation/initial_states.py` builds all
+  twelve, derived from the shipped rooms so a change to the default room
+  reaches the adversarial variants too. A test asserts the suite and the state
+  library stay in step in both directions — no scenario names a world that
+  cannot be built, and no world is defined that nothing uses.
 - Terminal predicates are checkable in principle but only some are wired to a
   real observer today. Predicate observers are the next slice.
 
@@ -1261,8 +1287,10 @@ implementation rather than two that can drift.
 
 1. Obtain ethics/IRB approval, explicitly covering the probe trial.
 2. Verify instrument licences and scoring rules before the pilot, not after.
-3. Author matched task sets and the missing initial-state fixtures.
-4. Write the analysis script and test it on simulated data.
+3. Author matched task sets. *(The initial-state fixtures this item also named
+   were completed in Part 8 slice 8.5.)*
+4. ~~Write the analysis script and test it on simulated data.~~ Done in slice
+   9.2: `evaluation/study_analysis.py`, 27 tests over simulated cohorts.
 5. Run and analyse the six-participant pilot.
 6. Freeze the protocol and file the pre-registration.
 
@@ -1368,9 +1396,10 @@ and endpointing have no producer, and no participant has been recruited.
 
 ## Part 11 — Reproducibility integrity and artifact provenance
 
-**State:** Queued (blocking)  
-**Dependency:** None. Nothing else in Parts 11–14 is trustworthy until this
-passes, and it is the smallest item in the program.
+**State:** Complete (2026-08-03)
+
+**Dependency:** None. Nothing else in Parts 11–14 was trustworthy until this
+passed, and it was the smallest item in the program.
 
 **Why this exists.** The 2026-08-03 assessment ran the suite and found
 `test_frozen_part4_repair_report_reproduces_committed_baseline` failing. The
@@ -1402,12 +1431,38 @@ that produced it. At present no result in this repository does.
 5. Re-freeze the Part 3 and Part 4 baselines against the committed revision.
 6. Add a test that fails when a digested file is untracked.
 
+### Completed implementation
+
+`evaluation/provenance_digest.py` replaces two copies of the same byte-fragile
+logic with one implementation that fixes three properties.
+
+- **Line endings are normalized.** A file checked out CRLF and the same file
+  checked out LF are the same program and now digest the same. This was the
+  original defect: the Part 4 baseline broke on a CRLF checkout while its
+  results — 5/8 versus 2/8 — reproduced exactly, so the artifact reported
+  tampering where there was none.
+- **Digested files must be tracked.** `require_tracked` fails closed rather
+  than hashing whatever is on disk, because an untracked input cannot be
+  recovered from the revision a manifest names.
+- **A dirty tree cannot silently freeze an artifact.** `freeze_guard` refuses
+  unless `allow_dirty` is passed explicitly, so a reader can tell a
+  reproducible result from a convenient one.
+
+Digests are order-independent but still name their files, so moving code
+between two digested files changes the result rather than hiding in the sum.
+The Part 3, 4, and 5 baselines were re-frozen against the new digest and
+reproduce; 11 dedicated tests, including one asserting on the real repository
+that every source the committed baselines digest is tracked.
+
 ### Acceptance gate
 
-- `uv run pytest -q` passes with zero failures from a clean checkout.
-- Every committed baseline names a revision that contains its own inputs.
-- A dirty worktree cannot silently produce a frozen artifact.
-- Reordering, editing, or removing a digested file fails the digest test.
+| Gate | State | Evidence |
+| --- | --- | --- |
+| `uv run pytest -q` passes with zero failures | Pass | `971 passed` |
+| Every committed baseline names a revision containing its own inputs | Pass | Research modules are in HEAD; `require_tracked` asserted on the real repo |
+| A dirty worktree cannot silently produce a frozen artifact | Pass | `freeze_guard` refuses without an explicit admission |
+| Editing or removing a digested file fails the digest test | Pass | Content, filename, and existence all move the digest |
+| A CRLF checkout reproduces an LF baseline | Pass | LF/CRLF/CR all digest identically, plus `.gitattributes` normalization |
 
 ## Part 12 — Real-model evidence engine
 
@@ -1596,26 +1651,66 @@ demo normally hides.
 | 2026-08-03 | 10 | Queued → In progress | `scripts/reproduce.py` reports pass/unavailable/fail without conflating them; 3 pass, 2 fail, 4 unavailable; the failing provenance check makes Part 11 block the headline command; 8 tests; full suite `939 passed` | Write the paper-style report and the demo assets |
 | 2026-08-03 | 10 | In progress → Audited | Fixed 3 defects in the reproduction command: a latency check that read in-process state and could never pass, a check that returned `pass` unconditionally, and a secret scanner whose bare substrings fired on the word "risk-" and on prose naming an OAuth field. Added an integration check; removed `utils/install_utils.py` (140 LOC, zero references) | Write the paper-style report and demo assets |
 | 2026-08-03 | 6 | Complete → Reopened | Integration audit: `semantic_world`, `semantic_projection`, `semantic_navigation` (1,546 LOC) are unreachable from `server.py`; the live gate still uses `world_model` and its straight-line `path_to` | Route the proximity gate and movement through the semantic world, or withdraw the Part 6 completion claim |
+| 2026-08-03 | 6 | Reopened → Complete | Slice 6.5 routed `scene_state.get_scene_reachable_objects` through the semantic projection in both renderers and VR docking through the obstacle-aware planner; equivalence with the legacy gate proved over 242 comparisons (240 randomized avatar positions, decoy room, reach inflation) before the switch; 6 new integration tests; `reproduce.py` integration check passes; full suite `948 passed` | Part 12 cassette recording |
+| 2026-08-03 | 11 | Queued → Complete | One shared `provenance_digest`: LF-normalized so a CRLF checkout reproduces an LF baseline, `require_tracked` refusing untracked inputs, `freeze_guard` refusing a dirty tree without an explicit admission; Part 3/4/5 baselines re-frozen; `.gitattributes` normalization; 11 tests | Part 12 cassette recording |
+| 2026-08-03 | 8 | Built → Runnable | Slice 8.5 added the twelve initial worlds the suite references, including six that encode one spatial-spoofing attack each; 12 tests, and the relocation fixture honestly shows the attack succeeding, which is D-024 as a fixture rather than an argument | Wire a predicate observer per terminal predicate |
 | 2026-08-03 | — | Assessment | External assessment found the evidence gap: 13 of 17 contract metrics `unavailable`, both numeric results synthetic with a `fixture-llm-v1` stub, no external baseline, no multi-model evidence, and every research module untracked in git | Added Parts 11–14; Part 11 blocks the reproducibility claims of all earlier parts |
 
 ## 9. Current execution queue
 
-1. **Integrate Part 6 or withdraw its claim.** Route the proximity gate and
-   movement through `semantic_projection`, so the parity and navigation
-   guarantees apply to the path that actually authorizes tools.
-2. **Part 11.** Commit the research modules and re-freeze the baselines against
-   a real revision. `scripts/reproduce.py` now fails until this is done, and it
-   is roughly an hour of work that makes every reproducibility claim in this
-   plan true for the first time.
-2. Obtain ethics approval and verify instrument licences, which gate the whole
-   of Part 9 and cannot be shortened by any amount of engineering.
-3. Build the initial-state fixtures the 100 scenarios reference, and wire an
-   observer for each terminal predicate so the suite can actually be run.
-3. Commit the research modules and re-freeze the baselines against a real
-   revision (Part 11) — this blocks the reproducibility claim of every part
-   already marked complete.
-4. Add cassette recording against live providers (Part 12), which is the first
-   step that converts the existing apparatus into evidence.
+Everything that can be completed without a language model, a headset, or an
+ethics committee is complete. The three items below are ordered by how much
+each unblocks.
+
+1. **Part 12 — cassette recording against live providers.** Every unmeasured
+   number in this program is blocked on a real model being in the loop. This is
+   the step that puts one there, and Parts 13 and 14 both depend on it.
+   *Needs: provider credentials.*
+2. **Part 9 — ethics approval and instrument licences.** Gates the entire human
+   study and cannot be shortened by engineering. Can proceed in parallel with
+   Part 12. *Needs: an IRB submission.*
+3. **Part 8 — predicate observers.** The scorer can evaluate every terminal
+   predicate; only some are wired to something that observes them. This is the
+   last engineering task standing between the benchmark and a run.
+
+Smaller engineering items, none of them blocking:
+
+- Part 7: send frontend capture and endpoint timings to the server, so
+  speech-to-first-audio becomes computable at all.
+- Part 6: give the 2D stage a real per-object floor depth, which would let the
+  screen renderer use obstacle-aware navigation instead of refusing it.
+- Part 10: the paper-style report, demo assets, and clean-machine reproduction.
+
+## 9b. Demo preparation (ahead of the paper)
+
+The project presentation comes before the paper, so Part 14's communication
+work was pulled forward and narrowed to what a live, VR-inclusive demo needs.
+
+- `scripts/demo_preflight.py` — go/no-go over every dependency the demo leans
+  on, separating what ends the demo from what costs one beat, with the exact
+  fix for each. It found the real state: one blocker (no Ollama), and VR HTTPS
+  unconfigured, which is the piece most likely to fail on unfamiliar wifi and
+  cannot be fixed in the room.
+- `agent/stateless_llm/fallback_llm.py` — the model was the only dependency
+  with no fallback, and the worst one to lose: no voice means subtitles, no
+  model means nothing. It mirrors `fallback_tts`, never replaces a model that
+  answers, keeps a partial reply rather than stitching a recording onto it, and
+  **announces itself in the reply**. `EMBODIED_AGENT_REQUIRE_LIVE_LLM=1`
+  removes the net so a rehearsal proves the real model is running.
+- `provenance/inspection.py` + `/api/operator/provenance/*` +
+  `frontend/inspector.html` — the causal chain behind any decision, ordered as
+  a story rather than as a graph. Content-free by construction, so it is safe
+  on a projector, and a deleted piece of evidence shows as a gap rather than a
+  chain that looks whole and is not.
+- `scripts/demo_crash_resume.py` — the Part 4 guarantee as a narrated command.
+  It kills the process at a real transition, restarts from disk only, and shows
+  exactly one side effect. Verified at all five crash phases. It needs no
+  model and no network, which is why it is the beat to fall back to.
+- [DEMO_RUNBOOK.md](doc/DEMO_RUNBOOK.md) — the beats, the recovery path for
+  each, and honest answers to the questions that will be asked, including that
+  proximity gating is observability rather than security.
+
+None of this changes a research claim. It makes the existing ones showable.
 
 ## 10. Decision log
 
@@ -1661,6 +1756,11 @@ demo normally hides.
 | D-038 | 2026-08-03 | Record Part 6 as un-integrated rather than restating its gate | The parity and navigation guarantees are real but hold for a model the authorization path never consults; calling that "Complete" is the drift D-004 forbids | The live gate reads the semantic world |
 | D-039 | 2026-08-03 | Make module integration a checked property of the reproduction command | Part 6 shipped 1,546 lines beside the system without anything noticing for a full part; a static reachability trace cannot prove good use, but it does separate "wired in" from "sitting next to" | A runtime coverage signal replaces the static trace |
 | D-040 | 2026-08-03 | Require secret patterns to match a credential-shaped value, not a mention | A scanner that fires on the word "risk-" and on documentation naming `client_secret` gets switched off, which is strictly worse than not having one | A reviewed secret-scanning tool replaces it |
+| D-041 | 2026-08-03 | Prove gate equivalence before switching authorities, not after | Moving the proximity gate is a change to the authorization boundary; 240 randomized positions plus the decoy and reach-inflation cases showed the semantic answer was identical, which is what made the switch safe rather than hopeful |
+| D-042 | 2026-08-03 | Withhold a contested name rather than refusing the whole room | The semantic world requires unique labels, but failing to project a room with one decoy would lock every honest object's tools; the entity survives and only the contested *name* is refused |
+| D-043 | 2026-08-03 | Require a planned route before reporting arrival in VR | A clear stopping point is not a reachable one; arrival unlocks that object's tools, so it must mean the walk could actually happen |
+| D-044 | 2026-08-03 | Digest normalized content of tracked files, not raw bytes of whatever is on disk | A digest should change when behaviour could have changed and not otherwise; the Part 4 baseline broke on a line-ending convention while its results reproduced exactly |
+| D-045 | 2026-08-03 | Derive adversarial fixtures from the shipped rooms rather than hand-writing them | An attack on a hand-written computer proves nothing about the computer the system ships; deriving them means a change to the default room reaches every variant |
 
 ## 11. Risks and blockers
 
@@ -1730,11 +1830,13 @@ unresolved rather than being misreported as verified.
 
 ### Part 6 — Semantic world model 2.0 and embodied intelligence
 
-**Reopened on 2026-08-03 by the Part 10 integration audit.** The contract, the
-parity instrument, and the planner are complete and tested; none of them is
-reachable from the running server, which still authorizes tools through
-`world_model`. Everything below is accurate about the semantic model and
-describes a model the system does not yet consult.
+Reopened by the Part 10 integration audit and **closed the same day**. The gap
+was that 1,546 lines of semantic world, projection, and navigation sat beside
+the running server: capability parity had been proved between two projections
+the authorization path never consulted. Slice 6.5 moved the live proximity gate
+onto the semantic projection in both renderers, and VR docking onto the
+obstacle-aware planner, so those guarantees now hold for the path that actually
+authorizes tools.
 
 Completed on 2026-08-03 at semantic schema version 2. The version-1 foundation
 was measured before being built on and four defects were fixed: whole-graph
@@ -1838,6 +1940,16 @@ reports 3 pass, 2 fail, 4 unavailable, and the failure is Part 11: HEAD does not
 contain the research code, so no manifest in this repository names the revision
 that produced it. That defect has been known since the assessment and is now
 wired into the headline command so it cannot be deferred quietly.
+
+### Part 11 — Reproducibility integrity and artifact provenance
+
+Completed on 2026-08-03. The assessment found frozen artifacts bound to the raw
+bytes of files that were not in version control — a promise that could not be
+kept. The research modules are now committed, and one shared digest replaces
+two copies of the fragile logic: normalized line endings so a CRLF checkout
+reproduces an LF baseline, a tracking requirement that fails closed, and a
+freeze guard that will not write an artifact from a tree nobody else can
+obtain. Every reproducibility claim in this plan is true for the first time.
 
 ### Parts 11–14 — Added by external assessment
 

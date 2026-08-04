@@ -558,6 +558,43 @@ def init_operator_routes() -> APIRouter:
         reset_recorder()
         return JSONResponse({"status": "reset"})
 
+    def _ledger_records() -> list[dict]:
+        from .provenance import ProvenanceLedger
+        from .workspace import ensure_workspace
+
+        return ProvenanceLedger(ensure_workspace().root).records()
+
+    @router.get("/provenance/recent")
+    async def provenance_recent(limit: int = 25):
+        """Recent decisions worth asking 'why?' about."""
+        from .provenance.inspection import recent_roots
+
+        if limit < 1 or limit > 100:
+            return JSONResponse({"error": "invalid limit"}, status_code=400)
+        try:
+            records = await run_in_threadpool(_ledger_records)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse({"roots": list(recent_roots(records, limit=limit))})
+
+    @router.get("/provenance/chain/{record_id}")
+    async def provenance_chain(record_id: str):
+        """The full causal chain behind one thing the agent did.
+
+        Content-free by construction: the ledger stores opaque references and
+        digests, never text, so this is safe to put on a projector.
+        """
+        from .provenance.inspection import build_chain
+
+        try:
+            records = await run_in_threadpool(_ledger_records)
+            chain = build_chain(records, record_id)
+        except KeyError:
+            return JSONResponse({"error": "unknown record"}, status_code=404)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=503)
+        return JSONResponse(chain.as_dict())
+
     return router
 
 

@@ -1,0 +1,26 @@
+[
+  {
+    "keywords": ["hello", "hi ", "good morning", "hey"],
+    "reply": "Good morning. I'm here. Note that I'm currently speaking from a recorded line because I can't reach my language model."
+  },
+  {
+    "keywords": ["what can you do", "who are you", "introduce"],
+    "reply": "I live in this room. I can walk to the objects in it, and each one unlocks the tools bound to it, so nothing consequential happens without you seeing me go there first. Right now I'm answering from a recorded line, not from my model."
+  },
+  {
+    "keywords": ["file", "notes", "read my"],
+    "reply": "I'd need to walk to the computer before I could read anything for you. Watch the avatar move. I'm on a recorded line at the moment, so I won't actually open it."
+  },
+  {
+    "keywords": ["calendar", "meeting", "schedule"],
+    "reply": "The calendar is on the far wall, so I'd walk there before touching it. I'm on a recorded line right now, so I won't change anything."
+  },
+  {
+    "keywords": ["weather", "outside", "window"],
+    "reply": "I check the weather from the window. That one runs from recorded responses today, so it works even with no network."
+  },
+  {
+    "keywords": ["book", "read", "shelf"],
+    "reply": "The bookshelf holds what I've shelved to read. Those pages are recorded too, so the reading chair still works offline."
+  }
+]

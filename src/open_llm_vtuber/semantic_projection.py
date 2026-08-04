@@ -27,10 +27,12 @@ something the screen would have refused.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Literal
 
+from .world_model import REACH_CEILING, reach_for
 from .semantic_world import (
     AABB,
     Bounds3,
@@ -103,6 +105,73 @@ def _affordances(label: str, node: dict[str, Any]) -> frozenset[str]:
     return frozenset(name for name in granted if name and len(name) <= 200)
 
 
+def _declared_label(node: dict[str, Any]) -> str:
+    """The name a scene node asks to be known by, normalized."""
+    node_id = node.get("id")
+    label = node.get("label")
+    if isinstance(label, str) and label.strip():
+        return " ".join(label.split())
+    return node_id if isinstance(node_id, str) else ""
+
+
+def _resolve_labels(
+    nodes: list[dict[str, Any]],
+) -> tuple[dict[str, str], frozenset[str], frozenset[str]]:
+    """Give every node a unique semantic name, and report the names that aren't.
+
+    A label worn by two objects names neither of them: the gate asks "is the
+    agent near the computer?" and a room with two computers cannot answer.
+    The semantic world requires unique labels, so rather than refusing to
+    project such a room at all — which would lock every honest object's tools
+    over one bad node — the duplicated name is replaced by the node's own id
+    and reported as ambiguous. `reachable_labels` then withholds it, which is
+    exactly what `world_model` already does and why a decoy object placed
+    beside the agent cannot answer for the real one.
+    """
+    counts: dict[str, int] = {}
+    for node in nodes:
+        label = _declared_label(node)
+        if label:
+            counts[label.casefold()] = counts.get(label.casefold(), 0) + 1
+    ambiguous = frozenset(name for name, count in counts.items() if count > 1)
+
+    resolved: dict[str, str] = {}
+    withheld: set[str] = set()
+    taken: set[str] = set()
+    for node in nodes:
+        node_id = node.get("id")
+        if not isinstance(node_id, str) or not node_id:
+            raise ProjectionError("scene node has no id")
+        label = _declared_label(node)
+        if label.casefold() in ambiguous:
+            # Renamed to its own id so the world keeps unique labels, and
+            # recorded so the gate withholds it: the entity survives, the
+            # contested *name* does not.
+            withheld.add(node_id)
+            label = node_id
+        elif not label:
+            label = node_id
+        # Ids are unique, but an id can still collide with another node's
+        # label; the suffix keeps the world's uniqueness invariant intact.
+        while label.casefold() in taken:
+            label = f"{label}#{node_id}"
+        taken.add(label.casefold())
+        resolved[node_id] = label
+    return resolved, ambiguous, frozenset(withheld)
+
+
+def _reach_of(node: dict[str, Any], width: float, depth: float) -> float:
+    """The same reach the live gate has always used, read the same way."""
+    declared = node.get("reach")
+    if (
+        not isinstance(declared, bool)
+        and isinstance(declared, (int, float))
+        and declared > 0
+    ):
+        return min(float(declared), REACH_CEILING)
+    return reach_for(width, depth)
+
+
 def _entity(
     node: dict[str, Any],
     *,
@@ -110,14 +179,11 @@ def _entity(
     height: float,
     centre_z: float,
     observed_at: str,
+    label: str,
 ) -> SemanticEntity:
     node_id = node.get("id")
     if not isinstance(node_id, str) or not node_id:
         raise ProjectionError("scene node has no id")
-    label = node.get("label")
-    label = (
-        " ".join(label.split()) if isinstance(label, str) and label.strip() else node_id
-    )
     return SemanticEntity(
         entity_id=node_id,
         label=label,
@@ -133,7 +199,7 @@ def _entity(
             _number(node.get(depth_key), f"{node_id}.{depth_key}"),
             height,
         ),
-        affordances=_affordances(label, node),
+        affordances=_affordances(_declared_label(node) or label, node),
         observed_at=observed_at,
         updated_at=observed_at,
     )
@@ -154,6 +220,17 @@ class SemanticProjection:
     # planning a walk with real clearance around pictorial footprints seals the
     # room, so navigation asks for this before it will plan.
     floor_is_metric: bool
+    # Per-entity reach, read the way the live gate has always read it: a
+    # declared `reach` capped at the ceiling, otherwise derived from the
+    # footprint. Held here rather than on the entity because how far the agent
+    # can stretch is an authorization policy, not a fact about the furniture.
+    reaches: dict[str, float] = field(default_factory=dict)
+    # Names worn by more than one object, and therefore naming none of them.
+    ambiguous_labels: frozenset[str] = frozenset()
+    # Entities whose declared name was contested. They keep their place in the
+    # world but the gate refuses them, so a decoy cannot answer for the real
+    # object and the real object cannot be reached by the contested name either.
+    withheld_ids: frozenset[str] = frozenset()
 
     def relation(
         self, subject: str, relation: str, reference: str, **kwargs: Any
@@ -177,6 +254,46 @@ class SemanticProjection:
     ) -> RelationEvidence:
         return self.world.line_of_sight(observer, target, **kwargs)
 
+    def agent(self) -> SemanticEntity | None:
+        for entity in self.world.entities:
+            if entity.kind == "agent":
+                return entity
+        return None
+
+    def reachable_labels(self, *, within: float | None = None) -> list[str]:
+        """The labels the proximity gate should currently admit, failing closed.
+
+        This is the authorization question, answered from the semantic world
+        rather than from a renderer's node dictionaries. Distance is measured
+        on the floor plane in both renderers, because the agent walks the floor
+        and an object mounted high on a wall is still at arm's length.
+
+        `within` overrides every object's own reach, which is how a caller asks
+        a different question — "what is within 300 units?" — without changing
+        what the gate itself allows. The gate always passes None.
+        """
+        agent = self.agent()
+        if agent is None:
+            # No avatar means no position, and no position means nothing is
+            # reachable. Unreadable is treated as unreachable.
+            return []
+        admitted: list[str] = []
+        for entity in self.world.entities:
+            if entity.kind == "agent":
+                continue
+            if entity.entity_id in self.withheld_ids:
+                continue
+            limit = (
+                self.reaches.get(entity.entity_id, 0.0) if within is None else within
+            )
+            flat = math.dist(
+                (agent.position.x, agent.position.y),
+                (entity.position.x, entity.position.y),
+            )
+            if flat <= limit:
+                admitted.append(entity.label)
+        return admitted
+
 
 def _project(
     stage: Any,
@@ -195,24 +312,28 @@ def _project(
     units = world_block.get("units_per_meter", 100.0)
     moment = observed_at or _now_iso()
 
+    scene_nodes = [node for node in nodes if isinstance(node, dict)]
+    labels, ambiguous, withheld = _resolve_labels(scene_nodes)
     entities: list[SemanticEntity] = []
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
+    reaches: dict[str, float] = {}
+    for node in scene_nodes:
         if renderer == "vr":
             height = _number(node.get("height"), "node.height")
             centre_z = _number(node.get("elevation"), "node.elevation")
         else:
             height = SCREEN_NOMINAL_HEIGHT
             centre_z = SCREEN_NOMINAL_HEIGHT / 2
-        entities.append(
-            _entity(
-                node,
-                depth_key=depth_key,
-                height=height,
-                centre_z=centre_z,
-                observed_at=moment,
-            )
+        entity = _entity(
+            node,
+            depth_key=depth_key,
+            height=height,
+            centre_z=centre_z,
+            observed_at=moment,
+            label=labels[node["id"]],
+        )
+        entities.append(entity)
+        reaches[entity.entity_id] = _reach_of(
+            node, entity.bounds.width, entity.bounds.depth
         )
 
     if not entities:
@@ -256,6 +377,9 @@ def _project(
         world=world,
         vertical_axis=renderer == "vr",
         floor_is_metric=renderer == "vr",
+        reaches=reaches,
+        ambiguous_labels=ambiguous,
+        withheld_ids=withheld,
     )
 
 

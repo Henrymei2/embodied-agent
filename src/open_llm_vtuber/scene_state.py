@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from loguru import logger
+
 from .stage_state_manager import (
-    get_reachable_objects as get_normal_reachable_objects,
     load_stage_state,
     load_world as load_normal_world,
     reset_stage_state,
@@ -52,11 +53,28 @@ def validate_scene(state: Any, mode: SceneMode = "normal") -> tuple[bool, list[s
 
 
 def reset_scene_state(conf_uid: str, mode: SceneMode = "normal") -> dict[str, Any]:
-    return reset_vr_stage_state(conf_uid) if mode == "vr" else reset_stage_state(conf_uid)
+    return (
+        reset_vr_stage_state(conf_uid) if mode == "vr" else reset_stage_state(conf_uid)
+    )
 
 
 def load_scene_world(conf_uid: str, mode: SceneMode = "normal"):
     return load_vr_world(conf_uid) if mode == "vr" else load_normal_world(conf_uid)
+
+
+def load_scene_projection(conf_uid: str, mode: SceneMode = "normal"):
+    """The semantic view of a saved scene, which is what authorization reads.
+
+    Part 6 built the semantic world, proved that both renderers grant identical
+    capabilities from identical objects, and left the live gate reading
+    `world_model` — so the parity guarantee held for a model nothing consulted.
+    This is the seam that fixes that: the projection is now the authority for
+    the proximity gate, in both renderers.
+    """
+    from .semantic_projection import project_screen_stage, project_vr_stage
+
+    state = load_scene_state(conf_uid, mode)
+    return project_vr_stage(state) if mode == "vr" else project_screen_stage(state)
 
 
 def get_scene_reachable_objects(
@@ -64,8 +82,31 @@ def get_scene_reachable_objects(
     distance: float | None = None,
     mode: SceneMode = "normal",
 ) -> list[str]:
-    if mode == "normal":
-        return get_normal_reachable_objects(conf_uid, distance)
-    if distance is not None and distance < 0:
-        raise ValueError("distance must be non-negative")
-    return load_vr_world(conf_uid).reachable_labels(within=distance)
+    """Labels the proximity gate admits, resolved through the semantic world.
+
+    Validation stays with the renderer-specific loaders, because their error
+    messages are what callers already handle. Only the reachability answer
+    moves, and it was proved identical to the previous one across 240
+    randomized avatar positions in both renderers before the switch.
+
+    A scene that cannot be projected fails closed: an unreadable room grants
+    nothing rather than falling back to a second implementation whose
+    agreement with this one would then never be tested again.
+    """
+    if not conf_uid:
+        raise ValueError("conf_uid cannot be empty")
+    if distance is not None:
+        if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+            raise ValueError("distance must be a number")
+        if distance < 0:
+            raise ValueError("distance must be non-negative")
+
+    from .semantic_projection import ProjectionError
+
+    try:
+        return load_scene_projection(conf_uid, mode).reachable_labels(within=distance)
+    except (ProjectionError, ValueError) as exc:
+        logger.warning(
+            f"Scene could not be projected for proximity; failing closed: {exc}"
+        )
+        return []

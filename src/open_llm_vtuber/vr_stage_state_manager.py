@@ -101,9 +101,7 @@ _VR_PRESENTATION: dict[str, dict[str, Any]] = {
         provider="google_calendar_status",
     ),
     "bed": _furniture("bed", texture="bed.png"),
-    "archive_shelf": _furniture(
-        "archive shelf", texture="archive-shelf.png"
-    ),
+    "archive_shelf": _furniture("archive shelf", texture="archive-shelf.png"),
     "mailbox": {
         **_furniture(
             "mailbox",
@@ -288,7 +286,9 @@ def point_inside_node(point: WorldPoint, node: dict[str, Any]) -> bool:
     return left <= point.x <= right and back <= point.y <= front
 
 
-def validate_vr_endpoint(stage: dict[str, Any], point: WorldPoint) -> tuple[bool, str | None]:
+def validate_vr_endpoint(
+    stage: dict[str, Any], point: WorldPoint
+) -> tuple[bool, str | None]:
     room = stage.get("room", {})
     avatar = next((n for n in stage.get("nodes", []) if n.get("id") == "avatar"), None)
     if avatar is None:
@@ -300,11 +300,16 @@ def validate_vr_endpoint(stage: dict[str, Any], point: WorldPoint) -> tuple[bool
         return False, "Agent endpoint is outside the VR room."
     for node in stage.get("nodes", []):
         if node.get("id") != "avatar" and point_inside_node(point, node):
-            return False, f"Agent endpoint is inside {effective_label(node) or node.get('id')}."
+            return (
+                False,
+                f"Agent endpoint is inside {effective_label(node) or node.get('id')}.",
+            )
     return True, None
 
 
-def docking_point(stage: dict[str, Any], target_name: str) -> tuple[WorldPoint | None, str | None]:
+def docking_point(
+    stage: dict[str, Any], target_name: str
+) -> tuple[WorldPoint | None, str | None]:
     """Return the nearest deterministic clear point outside a target box."""
     nodes = [node for node in stage.get("nodes", []) if isinstance(node, dict)]
     matches = [
@@ -336,7 +341,55 @@ def docking_point(stage: dict[str, Any], target_name: str) -> tuple[WorldPoint |
     origin = WorldPoint(float(avatar["x"]), float(avatar["y"]))
     # Python's stable sort preserves north/east/south/west for exact ties.
     valid.sort(key=origin.distance_to)
-    return valid[0], None
+
+    # A clear stopping point is not the same as a reachable one. The VR
+    # document is a real floor plan, so the nearest candidate the agent can
+    # actually walk to wins; a point standing behind a wall it cannot round
+    # would otherwise be reported as arrival and unlock that object's tools on
+    # the strength of a walk that never happened.
+    routable, route_error = _first_routable(stage, target_name, origin, valid)
+    if routable is not None:
+        return routable, None
+    return (
+        None,
+        route_error or f"no clear stopping point is available near {target_name}",
+    )
+
+
+def _first_routable(
+    stage: dict[str, Any],
+    target_name: str,
+    origin: WorldPoint,
+    candidates: list[WorldPoint],
+) -> tuple[WorldPoint | None, str | None]:
+    """Nearest candidate with an obstacle-aware route, or why there is none."""
+    try:
+        from .semantic_navigation import plan_route
+        from .semantic_projection import ProjectionError, project_vr_stage
+
+        projection = project_vr_stage(stage)
+    except (ImportError, ProjectionError, ValueError) as exc:
+        logger.warning(f"VR route planning unavailable; docking unverified: {exc}")
+        return (candidates[0] if candidates else None), None
+
+    target = projection.world.find(target_name)
+    ignoring = frozenset({target.entity_id}) if target is not None else frozenset()
+    last_reason: str | None = None
+    for point in candidates:
+        result = plan_route(
+            projection.world,
+            (origin.x, origin.y),
+            (point.x, point.y),
+            ignoring=ignoring,
+        )
+        if result.reachable:
+            return point, None
+        last_reason = result.reason
+    return None, (
+        f"no route to a stopping point near {target_name} ({last_reason})"
+        if last_reason
+        else None
+    )
 
 
 def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
@@ -401,16 +454,32 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
         import re
 
         allowed_keys = {
-            "id", "type", "label", "x", "y", "width", "depth", "height",
-            "elevation", "color", "texture", "stateTextures", "spritesheet",
-            "uiWindow", "pose", "interaction", "reach",
+            "id",
+            "type",
+            "label",
+            "x",
+            "y",
+            "width",
+            "depth",
+            "height",
+            "elevation",
+            "color",
+            "texture",
+            "stateTextures",
+            "spritesheet",
+            "uiWindow",
+            "pose",
+            "interaction",
+            "reach",
         }
         for index, node in enumerate(nodes):
             if not isinstance(node, dict):
                 errors.append(f"VR node {index} must be an object.")
                 continue
             node_id = node.get("id")
-            if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", node_id):
+            if not isinstance(node_id, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{1,80}", node_id
+            ):
                 errors.append(f"VR node {index} id is invalid.")
                 node_id = str(index)
             elif node_id in seen_ids:
@@ -438,7 +507,9 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
             if label:
                 folded = label.casefold()
                 if folded in seen_labels:
-                    errors.append(f"VR node {node_id} label duplicates {seen_labels[folded]}.")
+                    errors.append(
+                        f"VR node {node_id} label duplicates {seen_labels[folded]}."
+                    )
                 else:
                     seen_labels[folded] = node_id
             if not _is_safe_text(node.get("label"), LABEL_LIMIT):
@@ -446,14 +517,28 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
             for key in ("x", "y", "width", "depth", "height", "elevation"):
                 if not _is_number(node.get(key)):
                     errors.append(f"VR node {node_id} {key} must be numeric.")
-            if all(_is_number(node.get(key)) for key in ("x", "y", "width", "depth", "height", "elevation")):
+            if all(
+                _is_number(node.get(key))
+                for key in ("x", "y", "width", "depth", "height", "elevation")
+            ):
                 x, y = float(node["x"]), float(node["y"])
-                width, depth, height = float(node["width"]), float(node["depth"]), float(node["height"])
+                width, depth, height = (
+                    float(node["width"]),
+                    float(node["depth"]),
+                    float(node["height"]),
+                )
                 elevation = float(node["elevation"])
                 if width <= 0 or depth <= 0 or height <= 0:
                     errors.append(f"VR node {node_id} dimensions must be positive.")
-                if x - width / 2 < 0 or x + width / 2 > room_width or y - depth / 2 < 0 or y + depth / 2 > room_depth:
-                    errors.append(f"VR node {node_id} footprint must be inside the room.")
+                if (
+                    x - width / 2 < 0
+                    or x + width / 2 > room_width
+                    or y - depth / 2 < 0
+                    or y + depth / 2 > room_depth
+                ):
+                    errors.append(
+                        f"VR node {node_id} footprint must be inside the room."
+                    )
                 if elevation - height / 2 < 0 or elevation + height / 2 > room_height:
                     errors.append(f"VR node {node_id} height must be inside the room.")
             if not _is_safe_color(node.get("color")):
@@ -476,7 +561,9 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
         point = WorldPoint(float(avatar["x"]), float(avatar["y"]))
         for node in nodes:
             if node.get("id") != "avatar" and point_inside_node(point, node):
-                errors.append(f"VR avatar starts inside {effective_label(node) or node.get('id')}.")
+                errors.append(
+                    f"VR avatar starts inside {effective_label(node) or node.get('id')}."
+                )
                 break
     return not errors, errors
 
