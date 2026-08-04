@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+
+from .provenance_digest import implementation_digest, require_tracked
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -45,19 +47,18 @@ def _canonical(value: Any) -> str:
     )
 
 
+# The sources whose behaviour this frozen result depends on.
+PART4_DIGESTED_SOURCES = (
+    "src/open_llm_vtuber/autonomy/plan_state.py",
+    "src/open_llm_vtuber/autonomy/plan_execution.py",
+    "src/open_llm_vtuber/evaluation/part4.py",
+)
+
+
 def _implementation_digest() -> str:
-    root = Path(__file__).resolve().parents[3]
-    digest = hashlib.sha256()
-    for relative in (
-        "src/open_llm_vtuber/autonomy/plan_state.py",
-        "src/open_llm_vtuber/autonomy/plan_execution.py",
-        "src/open_llm_vtuber/evaluation/part4.py",
-    ):
-        digest.update(relative.encode("utf-8"))
-        digest.update(b"\x00")
-        digest.update((root / relative).read_bytes())
-        digest.update(b"\x00")
-    return digest.hexdigest()
+    """Line-ending stable, and only over files git can supply again."""
+    require_tracked(PART4_DIGESTED_SOURCES)
+    return implementation_digest(PART4_DIGESTED_SOURCES)
 
 
 def _contract_revision() -> str:

@@ -1,1 +1,6 @@
 static/libs/* linguist-vendored
+# Digested research sources must checkout identically everywhere. The Part 4
+# baseline once broke on a CRLF checkout while its results reproduced exactly;
+# normalization plus an LF-normalized digest means that cannot recur.
+*.py text eol=lf
+research/**/*.json text eol=lf

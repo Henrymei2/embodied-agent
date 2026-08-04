@@ -430,3 +430,123 @@ def test_recent_movement_still_never_predicts_the_future():
     assert world.recently_moved("lamp", at=NOW) is True
     assert world.recently_moved("lamp", at=NOW - timedelta(seconds=5)) is False
     assert world.recently_moved("lamp", at=NOW + timedelta(minutes=5)) is False
+
+
+# --- slice 6.5: the live authorization path reads the semantic world --------
+
+
+def test_the_live_gate_resolves_through_the_semantic_projection(monkeypatch, tmp_path):
+    """Part 6's guarantees are worthless unless the gate actually consults it."""
+    from src.open_llm_vtuber import scene_state
+
+    called = {}
+    real = scene_state.load_scene_projection
+
+    def spy(conf_uid, mode="normal"):
+        called["mode"] = mode
+        return real(conf_uid, mode)
+
+    monkeypatch.setattr(scene_state, "load_scene_projection", spy)
+    scene_state.get_scene_reachable_objects("parity", mode="normal")
+    assert called["mode"] == "normal", "the gate must go through the projection"
+
+
+def test_the_semantic_gate_matches_the_legacy_gate_on_the_shipped_rooms():
+    """The switch was only safe because the two agree everywhere they are asked."""
+    import copy
+    import random
+
+    from src.open_llm_vtuber.vr_stage_state_manager import world_from_vr_stage
+    from src.open_llm_vtuber.world_model import world_from_stage
+
+    rng = random.Random(11)
+    for base, project, legacy in (
+        (get_default_stage("gate"), project_screen_stage, world_from_stage),
+        (get_default_vr_stage("gate"), project_vr_stage, world_from_vr_stage),
+    ):
+        for _ in range(40):
+            stage = copy.deepcopy(base)
+            avatar = next(n for n in stage["nodes"] if n["id"] == "avatar")
+            avatar["x"] = rng.uniform(0, 960)
+            avatar["y"] = rng.uniform(0, 540)
+            within = rng.choice([None, None, 150.0, 300.0])
+            assert sorted(
+                project(stage, observed_at=MOMENT).reachable_labels(within=within)
+            ) == sorted(legacy(stage).reachable_labels(within=within))
+
+
+def test_a_decoy_object_withholds_the_contested_name_from_the_gate():
+    """The spatial-spoofing defence must survive the move to the semantic world."""
+    import copy
+
+    stage = copy.deepcopy(get_default_stage("decoy"))
+    computer = next(n for n in stage["nodes"] if n["id"] == "computer")
+    avatar = next(n for n in stage["nodes"] if n["id"] == "avatar")
+    decoy = copy.deepcopy(computer)
+    decoy["id"] = "decoy"
+    decoy["label"] = "computer"
+    decoy["x"], decoy["y"] = avatar["x"], avatar["y"]
+    stage["nodes"].append(decoy)
+
+    projection = project_screen_stage(stage, observed_at=MOMENT)
+    assert "computer" in projection.ambiguous_labels
+    assert {"computer", "decoy"} <= projection.withheld_ids
+    assert "computer" not in projection.reachable_labels()
+    # The entity still exists; only the contested name is refused.
+    assert len(projection.world.entities) == len(stage["nodes"])
+
+
+def test_a_declared_oversized_reach_is_still_capped():
+    import copy
+
+    from src.open_llm_vtuber.world_model import REACH_CEILING
+
+    stage = copy.deepcopy(get_default_stage("inflate"))
+    next(n for n in stage["nodes"] if n["id"] == "calendar")["reach"] = 99999
+    projection = project_screen_stage(stage, observed_at=MOMENT)
+    assert projection.reaches["calendar"] == REACH_CEILING
+
+
+def test_a_scene_that_cannot_be_projected_grants_nothing(monkeypatch):
+    """Fail closed: an unreadable room must not fall back to a second gate."""
+    from src.open_llm_vtuber import scene_state
+
+    def broken(conf_uid, mode="normal"):
+        raise ProjectionError("scene is unreadable")
+
+    monkeypatch.setattr(scene_state, "load_scene_projection", broken)
+    assert scene_state.get_scene_reachable_objects("anything") == []
+
+
+def test_vr_docking_requires_a_route_not_merely_a_clear_point():
+    """A point behind a wall is clear and unreachable; arrival must mean arrival."""
+    from src.open_llm_vtuber.vr_stage_state_manager import docking_point
+
+    stage = get_default_vr_stage("dock")
+    point, error = docking_point(stage, "bookshelf")
+    assert error is None
+    assert point is not None
+
+    walled = get_default_vr_stage("walled")
+    target = next(n for n in walled["nodes"] if n["id"] == "hourglass")
+    # Box the target in on all four sides with tall furniture.
+    for index, (dx, dy, w, d) in enumerate(
+        ((0, -120, 400, 40), (0, 120, 400, 40), (-200, 0, 40, 280), (200, 0, 40, 280))
+    ):
+        walled["nodes"].append(
+            {
+                "id": f"wall{index}",
+                "type": "furniture",
+                "label": f"wall {index}",
+                "x": float(target["x"]) + dx,
+                "y": float(target["y"]) + dy,
+                "width": float(w),
+                "depth": float(d),
+                "height": 200.0,
+                "elevation": 100.0,
+                "color": "#333333",
+            }
+        )
+    point, error = docking_point(walled, "hourglass")
+    assert point is None
+    assert error is not None and "hourglass" in error
