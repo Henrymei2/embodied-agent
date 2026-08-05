@@ -110,7 +110,29 @@ class WebSocketHandler:
             "screen-context": self._handle_screen_context,
             "autonomy-feedback": self._handle_autonomy_feedback,
             "request-presence-state": self._handle_presence_state_request,
+            "turn-timing": self._handle_turn_timing,
         }
+
+    async def _handle_turn_timing(
+        self,
+        websocket: WebSocket,
+        client_uid: str,
+        data: WSMessage,
+    ) -> None:
+        """Take the browser's capture and endpoint timings for the next turn.
+
+        `capture` and `endpoint` happen before the server sees the turn, so
+        without this message three of the seven stages in the speech-to-first-
+        audio budget have no producer and the product figure is `unavailable`
+        however fast the system actually is.
+
+        Nothing here can fail the connection: an implausible or malformed
+        timing is dropped and the stage stays absent, which the latency report
+        already knows how to say.
+        """
+        from .latency import client_timings, parse_client_timings
+
+        client_timings().offer(client_uid, parse_client_timings(data))
 
     async def handle_new_connection(
         self,
@@ -428,6 +450,15 @@ class WebSocketHandler:
 
     async def handle_disconnect(self, client_uid: str) -> None:
         """Handle client disconnection"""
+        try:
+            # Pending client timings are per-connection and must not outlive it.
+            # An unbounded per-client dictionary is the same growth defect slice
+            # 7.2 had to fix in the recorder, arriving one connection at a time.
+            from .latency import client_timings
+
+            client_timings().forget(client_uid)
+        except Exception as exc:  # noqa: BLE001 - cleanup must continue
+            logger.debug(f"Failed clearing client timings for {client_uid}: {exc}")
         try:
             group = self.chat_group_manager.get_client_group(client_uid)
         except Exception as exc:  # noqa: BLE001 - cleanup must still detach resources

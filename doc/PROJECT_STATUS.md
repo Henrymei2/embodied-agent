@@ -63,7 +63,23 @@ including what that evidence cannot settle on its own.
 - Stage state synchronizes on connection and persists after live
   frontend actions.
 
-### Spatial safety
+### Spatial legibility (proximity gating)
+
+**What this is, stated precisely.** Proximity gating is an *observability*
+mechanism, not a security boundary. It does not stop an adversary: an injected
+planner calls `move_to("computer")` and then proceeds, and nothing in the gate
+can tell an instruction the user gave from one that arrived in an email. Calling
+it a security boundary invites exactly the dismantling it cannot survive.
+
+What it does provide is worth more than the overclaim: **no consequential side
+effect happens without a visible, pre-action, non-textual signal.** The avatar
+walks across the room before the first use of any gated tool. That is a channel
+a person can monitor without reading anything, and it is the property the
+Part 9 human study is designed to test — whether users detect an unauthorized
+action faster when it is spatially legible. Measured in
+`research/baselines/part13-spoofing.json` rather than asserted.
+
+The mechanisms:
 
 - Every skill is bound to an object: computer, calendar, todo list, hourglass,
   window, archive shelf, mailbox, bookshelf, reading chair, writing desk, sofa,
@@ -72,7 +88,8 @@ including what that evidence cannot settle on its own.
   ceiling, which no object may exceed — from every other one and starts the
   avatar clear of all of them, so one object never unlocks another's tools and
   the first use of any is preceded by a walk.
-- Gating occurs at schema exposure and again at execution time.
+- Gating occurs at schema exposure and again at execution time, both resolved
+  through the semantic projection rather than through renderer data.
 - Object labels are unique, so a second object cannot answer for a gated one:
   a decoy `computer` placed beside the agent would otherwise hand it the real
   computer's tools without the walk. Refused on save by both validators, and
@@ -81,6 +98,30 @@ including what that evidence cannot settle on its own.
 - Objects whose removal would strand their tools cannot be removed.
 - Frontend actions are routed by exact client and character; replies from a
   different client cannot complete or persist the request.
+
+**Measured, including where it loses.** The Part 13 corpus scores six spatial
+capability spoofing attacks against this gate and against a naive proximity gate
+without these defences. Five of six defeat the naive gate; one defeats this one.
+`object-relocation` — dragging the gated object onto the agent — succeeds,
+because the gate cannot tell why an object is where it is and never could.
+Moving furniture requires `move_object`, which is itself bound to the design
+board, so the attack costs a walk to a different object, and that walk is
+visible. That is the guarantee, stated at its true strength.
+
+### Authorization (the actual boundary)
+
+The security boundary is the authorization kernel, not the room. Every
+consequential action passes one fail-closed policy decision covering actor,
+capability, evidence, calibrated confidence, user authority, proximity,
+Presence, quota, privacy, destination, and idempotency, and produces exactly one
+terminal outcome in an append-only hash-chained journal.
+
+Since Part 13, the confidence check reads *measured* per-source-class
+calibration rather than a self-reported number, with the required threshold set
+by the action's risk. A source class that has never been calibrated fails
+closed. On the held-out fixture this takes unauthorized effects from 6/6 to 0/6,
+at a measured cost of 2/3 legitimate actions refused — the cost of failing
+closed on unmeasured sources, reported rather than tuned away.
 
 ### Scheduling and autonomy
 

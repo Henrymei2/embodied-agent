@@ -161,10 +161,84 @@ def check_held_out_is_frozen() -> tuple[str, str]:
 
 
 def check_benchmark_results() -> tuple[str, str]:
-    """The Part 8 outcome gates. Unmeasured, and said so."""
-    return UNAVAILABLE, (
-        "no system has been run against the suite; full-task success and "
-        "forbidden-effect count need a real model in the loop (Part 12)"
+    """The Part 8 outcome gates, read from whatever evidence actually exists."""
+    from src.open_llm_vtuber.evaluation.benchmark_report import matrix_status
+
+    status = matrix_status()
+    if not status["meets_multi_family_gate"]:
+        recorded = status["recorded_models"]
+        return UNAVAILABLE, (
+            f"{recorded}/{status['declared_models']} declared models have a "
+            "cassette, so full-task success and forbidden-effect count are "
+            "unmeasured. Record one with scripts/record_cassettes.py (Part 12)"
+        )
+    report = ROOT / "research" / "baselines" / "part12-benchmark.json"
+    if not report.exists():
+        return UNAVAILABLE, "cassettes exist but no benchmark report has been written"
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    measured = [
+        row for row in payload.get("conditions", []) if row.get("claim_class") == "system"
+    ]
+    if not measured:
+        return UNAVAILABLE, "the benchmark report contains no system claim"
+    failing = [row for row in measured if not row.get("release_gate_met")]
+    if failing:
+        return FAIL, f"{len(failing)} measured conditions miss the release gate"
+    return PASS, f"{len(measured)} measured conditions meet the release gate"
+
+
+def check_benchmark_instrument() -> tuple[str, str]:
+    """Can a scenario in this suite be passed at all?
+
+    A property of the measuring device rather than of any system. If some
+    predicate were unreachable in every world, every model measured against the
+    suite would be scored partly on a defect in the harness — and the failure
+    would look like a model weakness, which is the worst possible disguise.
+    """
+    from src.open_llm_vtuber.evaluation.harness import (
+        OracleDriver,
+        observer_coverage,
+        run_suite,
+    )
+    from src.open_llm_vtuber.evaluation.scenarios import load_suite
+    from src.open_llm_vtuber.evaluation.scoring import score_suite
+
+    missing, extra = observer_coverage()
+    if missing:
+        return FAIL, f"terminal predicates nothing observes: {list(missing)}"
+    if extra:
+        return FAIL, f"observers no scenario can assert: {list(extra)}"
+
+    suite = load_suite(ROOT / "research" / "scenarios" / "embodied-agent-bench.json")
+    unwinnable: list[str] = []
+    scored = 0
+    for split in ("development", "validation"):
+        scenarios = suite.select(split=split)
+        run = run_suite(scenarios, OracleDriver())
+        score = score_suite(scenarios, run.results, split=split)
+        scored += score.scored
+        unwinnable.extend(s.scenario_id for s in score.scores if not s.success)
+    if unwinnable:
+        return FAIL, f"{len(unwinnable)} scenarios cannot be passed: {unwinnable[:3]}"
+    return PASS, f"all {scored} open-split scenarios are passable by construction"
+
+
+def check_spoofing_corpus() -> tuple[str, str]:
+    """Part 13: the attacks land where the corpus says, including the one that wins."""
+    from src.open_llm_vtuber.evaluation.spoofing import corpus_report
+
+    report = corpus_report()
+    if report["unexpected_results"]:
+        return FAIL, (
+            "attacks landed differently than declared: "
+            f"{report['unexpected_results']}"
+        )
+    if not report["defences_with_a_demonstrated_attack"]:
+        return FAIL, "no defence is backed by an attack that defeats a naive gate"
+    return PASS, (
+        f"{report['granted_by_naive_gate']}/{report['attacks']} attacks defeat a "
+        f"naive gate, {report['granted_by_shipped_gate']}/{report['attacks']} "
+        f"defeat the shipped one; known gaps declared: {report['known_gaps']}"
     )
 
 
@@ -184,8 +258,8 @@ def check_latency_budget() -> tuple[str, str]:
         return UNAVAILABLE, (
             "no exported latency report; run the server, exercise it, and save "
             "GET /api/operator/health to research/baselines/latency-report.json. "
-            "Note that capture and endpoint have no producer yet, so the "
-            "end-to-end figure will still be unavailable"
+            "Every stage now has a producer, so the end-to-end figure is "
+            "computable once a client sends `turn-timing`"
         )
     payload = json.loads(export.read_text(encoding="utf-8"))
     figure = payload.get("latency", {}).get("speech_to_first_audio", {})
@@ -235,6 +309,12 @@ SYSTEM_COMPONENTS = (
     "semantic_projection",
     "semantic_navigation",
 )
+
+# `evaluation.harness`, `evaluation.cassettes`, and `evaluation.spoofing` are
+# deliberately absent: they are offline research tooling and are *supposed* to be
+# unreachable from the server. The equivalent guarantee for them — that they are
+# exercised rather than merely present — is carried by the `benchmark-instrument`
+# and `spoofing-corpus` checks, which run them on every reproduction.
 
 
 def _reachable_from_server() -> set[str]:
@@ -415,9 +495,19 @@ def main() -> int:
             check_held_out_is_frozen,
         ),
         _run(
+            "benchmark-instrument",
+            "Every scenario in the suite can actually be passed",
+            check_benchmark_instrument,
+        ),
+        _run(
             "benchmark-results",
             "Full-task success and forbidden effects",
             check_benchmark_results,
+        ),
+        _run(
+            "spoofing-corpus",
+            "Spatial capability spoofing lands where the corpus declares",
+            check_spoofing_corpus,
         ),
         _run(
             "latency-budget",

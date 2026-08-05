@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "artifact": "part12-benchmark",
+  "generated_at": "2026-08-04T23:29:33.162313+00:00",
+  "contract_revision": "2026-08-03.2",
+  "code_revision": "17b3fe7f11909b3e2b99fce0a98b4c9f0791f223",
+  "worktree_dirty": false,
+  "implementation_digest": "6c720eb1f071793ad3f08741fcd761e01ad4643ab35663acc646cc81fe6400a3",
+  "suite_revision": "2026-08-03.1",
+  "suite_digest": "2c1f62ce46bbec5e4ccdee1fe4460bfb0f902fbb3805a424ac8d6818e4efa48a",
+  "split": "development",
+  "split_digest": "796a59f328a80052386d96ba9201cc10ebfa0d0b606c5728aadf6793a9690ec7",
+  "seed": 0,
+  "declared_model_matrix": [
+    {
+      "model_id": "claude-3-haiku-20240307",
+      "family": "claude",
+      "provider": "anthropic",
+      "temperature": 0.0,
+      "max_tokens": 1024
+    },
+    {
+      "model_id": "gpt-4o-mini",
+      "family": "gpt",
+      "provider": "openai",
+      "temperature": 0.0,
+      "max_tokens": 1024
+    },
+    {
+      "model_id": "qwen2.5:latest",
+      "family": "qwen",
+      "provider": "ollama",
+      "temperature": 0.0,
+      "max_tokens": 1024
+    }
+  ],
+  "claim": "no system claim: every condition below is a harness proof or unavailable, because no language model has been recorded against this suite",
+  "conditions": [
+    {
+      "condition_id": "oracle-instrument-check",
+      "claim_class": "harness_proof",
+      "driver_id": "oracle-harness-proof-v1",
+      "status": "measured",
+      "scored": 41,
+      "full_task_success": {
+        "value": 1.0,
+        "low": 1.0,
+        "high": 1.0,
+        "n": 41
+      },
+      "partial_credit": {
+        "value": 1.0,
+        "low": 1.0,
+        "high": 1.0,
+        "n": 41
+      },
+      "forbidden_effect_count": 0,
+      "harness_error_count": 0,
+      "by_area": [
+        {
+          "area": "autonomy",
+          "passed": 4,
+          "total": 4
+        },
+        {
+          "area": "conversation",
+          "passed": 4,
+          "total": 4
+        },
+        {
+          "area": "interruption",
+          "passed": 3,
+          "total": 3
+        },
+        {
+          "area": "long_horizon_planning",
+          "passed": 4,
+          "total": 4
+        },
+        {
+          "area": "memory",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "area": "offline_degradation",
+          "passed": 3,
+          "total": 3
+        },
+        {
+          "area": "recovery",
+          "passed": 4,
+          "total": 4
+        },
+        {
+          "area": "safety",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "area": "spatial_grounding",
+          "passed": 6,
+          "total": 6
+        },
+        {
+          "area": "vr_lifecycle",
+          "passed": 3,
+          "total": 3
+        }
+      ],
+      "failure_taxonomy": [],
+      "release_gate_met": true,
+      "release_gate_reasons": []
+    },
+    {
+      "condition_id": "full:claude",
+      "claim_class": "unavailable",
+      "driver_id": "cassette:claude-3-haiku-20240307",
+      "status": "unavailable",
+      "reason": "no cassette exists for claude-3-haiku-20240307; no completion from this model has ever been recorded, so nothing about it is measured",
+      "remedy": "set EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING=1 and run `uv run python scripts/record_cassettes.py --model claude-3-haiku-20240307` with that provider's credentials available"
+    },
+    {
+      "condition_id": "full:gpt",
+      "claim_class": "unavailable",
+      "driver_id": "cassette:gpt-4o-mini",
+      "status": "unavailable",
+      "reason": "no cassette exists for gpt-4o-mini; no completion from this model has ever been recorded, so nothing about it is measured",
+      "remedy": "set EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING=1 and run `uv run python scripts/record_cassettes.py --model gpt-4o-mini` with that provider's credentials available"
+    },
+    {
+      "condition_id": "full:qwen",
+      "claim_class": "unavailable",
+      "driver_id": "cassette:qwen2.5:latest",
+      "status": "unavailable",
+      "reason": "no cassette exists for qwen2.5:latest; no completion from this model has ever been recorded, so nothing about it is measured",
+      "remedy": "set EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING=1 and run `uv run python scripts/record_cassettes.py --model qwen2.5:latest` with that provider's credentials available"
+    }
+  ]
+}

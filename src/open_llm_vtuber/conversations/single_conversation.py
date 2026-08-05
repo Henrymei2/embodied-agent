@@ -53,9 +53,13 @@ async def process_single_conversation(
     activity_visible = False
     # Timing runs beside the turn, never in front of it: every call is
     # swallowing, so a measurement failure costs a sample and not a reply.
-    from ..latency import TurnLatency
+    from ..latency import TurnLatency, client_timings
 
     latency = TurnLatency(f"{client_uid}:{session_emoji}")
+    # `capture` and `endpoint` were measured in the browser before this process
+    # saw the turn. Without them the speech-to-first-audio budget cannot be
+    # evaluated at all, however fast the rest of the pipeline is.
+    latency.adopt_client_timings(client_timings().take(client_uid))
     first_output_seen = False
     tts_requested = False
     full_response = ""  # Initialize full_response here
@@ -135,6 +139,11 @@ async def process_single_conversation(
             if report:
                 await websocket_send(json.dumps(activity.thinking()))
                 activity_visible = True
+            # Everything between the transcript and the model request is
+            # context assembly: provenance ingestion dispatch, batch input,
+            # history. That is what `retrieve` names, and it was the last stage
+            # in the budget with no producer.
+            latency.complete("retrieve")
             agent_output_stream = context.agent_engine.chat(batch_input)
             latency.complete("plan")
 

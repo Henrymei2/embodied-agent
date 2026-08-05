@@ -128,6 +128,17 @@ class TurnTimer:
         self._mark = now
         return elapsed
 
+    def set_stage(self, stage: str, milliseconds: float) -> None:
+        """File a duration measured somewhere else, without moving the cursor.
+
+        `complete()` closes the span since the previous stage; this records a
+        stage whose span happened before this process saw the turn, so advancing
+        the cursor would charge the server's next stage with time that elapsed
+        in the browser.
+        """
+        sample = StageSample(self.turn_id, stage, milliseconds)
+        self._stages[sample.stage] = sample.milliseconds
+
     def samples(self) -> tuple[StageSample, ...]:
         return tuple(
             StageSample(self.turn_id, stage, self._stages[stage])
@@ -354,6 +365,24 @@ class TurnLatency:
         except Exception:
             pass
 
+    def adopt_client_timings(self, timings: dict[str, float]) -> None:
+        """Fold the browser's `capture` and `endpoint` into this turn.
+
+        These are set rather than timed, because the events they measure
+        finished before this process was involved. Only stages the client is
+        allowed to report are accepted, so a message naming `first_audio` cannot
+        overwrite a figure the server measured itself.
+        """
+        if self._timer is None:
+            return
+        for stage, milliseconds in (timings or {}).items():
+            if not client_timing_is_plausible(stage, milliseconds):
+                continue
+            try:
+                self._timer.set_stage(stage, float(milliseconds))
+            except Exception:
+                pass
+
     def finish(self) -> None:
         if self._timer is None:
             return
@@ -371,3 +400,114 @@ def record_interruption_ms(turn_id: str, milliseconds: float) -> None:
         _recorder.record_sample(StageSample(turn_id, "interruption", milliseconds))
     except Exception:
         pass
+
+
+# --- client-reported stages ---------------------------------------------------
+
+# `capture` and `endpoint` happen entirely in the browser: the microphone opens,
+# the user speaks, and the VAD decides they have stopped — all before the server
+# sees a single byte of the turn. They were the reason the end-to-end product
+# figure reported `unavailable` for every real turn no matter how good the
+# model was, because three of its seven stages had no producer at all.
+#
+# So the client reports them, and the server treats them the way it treats every
+# other client claim: bounded, validated, and never authoritative for anything
+# but the number it is. A latency sample cannot authorize an action, so the risk
+# here is not privilege — it is a client making the system look faster than it
+# is. Two rules contain that:
+#
+#   - **A client timing can only make a turn slower.** Negative and non-finite
+#     values are refused outright, and a value is only ever *added* to the
+#     end-to-end sum. There is no path by which a client report subtracts time.
+#   - **An implausible timing is dropped, not clamped.** Clamping a 30-minute
+#     `capture` to the ceiling would file a fabricated number as a real
+#     measurement. Refusing it leaves the stage absent, and absent is what the
+#     report already knows how to say.
+CLIENT_REPORTED_STAGES = frozenset({"capture", "endpoint"})
+
+# A spoken turn's capture is bounded by how long a person talks at one go, and
+# endpointing by how long a VAD waits before deciding. Anything beyond these is
+# a clock the browser cannot be trusted about — a suspended laptop, a tab thrown
+# into the background — rather than a slow turn.
+MAX_CLIENT_CAPTURE_MS = 120_000.0
+MAX_CLIENT_ENDPOINT_MS = 10_000.0
+
+_CLIENT_LIMITS = {
+    "capture": MAX_CLIENT_CAPTURE_MS,
+    "endpoint": MAX_CLIENT_ENDPOINT_MS,
+}
+
+
+def client_timing_is_plausible(stage: str, milliseconds: float) -> bool:
+    """Whether a client-reported stage duration can be believed at all."""
+    if stage not in CLIENT_REPORTED_STAGES:
+        return False
+    if isinstance(milliseconds, bool) or not isinstance(milliseconds, (int, float)):
+        return False
+    value = float(milliseconds)
+    if not math.isfinite(value) or value < 0:
+        return False
+    return value <= _CLIENT_LIMITS[stage]
+
+
+def parse_client_timings(payload: object) -> dict[str, float]:
+    """Extract the believable client stages from a websocket message.
+
+    Silently drops anything else. This runs on the live path, so a malformed
+    message must cost a sample rather than a connection — the same rule D-025
+    set for every other measurement on that path.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    accepted: dict[str, float] = {}
+    for stage in sorted(CLIENT_REPORTED_STAGES):
+        value = payload.get(f"{stage}_ms")
+        if client_timing_is_plausible(stage, value):
+            accepted[stage] = float(value)
+    return accepted
+
+
+class ClientTurnTimings:
+    """The most recent believable client timings, per client, awaiting a turn.
+
+    Bounded by construction: one entry per connected client, replaced rather
+    than accumulated, and dropped when the client disconnects. The recorder's
+    own unbounded-growth defect was the exact failure slice 7.2 had to fix, and
+    a per-client dictionary that nothing ever removed from would reintroduce it
+    one connection at a time.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._pending: dict[str, dict[str, float]] = {}
+
+    def offer(self, client_uid: str, timings: dict[str, float]) -> None:
+        if not timings:
+            return
+        with self._lock:
+            self._pending[client_uid] = dict(timings)
+
+    def take(self, client_uid: str) -> dict[str, float]:
+        """Consume the timings for the turn that is starting now.
+
+        Consumed rather than read, so one report cannot be counted against
+        several turns — which would make a single fast capture look like a
+        session-wide property.
+        """
+        with self._lock:
+            return self._pending.pop(client_uid, {})
+
+    def forget(self, client_uid: str) -> None:
+        with self._lock:
+            self._pending.pop(client_uid, None)
+
+    def pending_clients(self) -> int:
+        with self._lock:
+            return len(self._pending)
+
+
+_client_timings = ClientTurnTimings()
+
+
+def client_timings() -> ClientTurnTimings:
+    return _client_timings
