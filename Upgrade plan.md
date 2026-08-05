@@ -6,11 +6,11 @@
 
 | Field | Value |
 | --- | --- |
-| Plan version | 2.6 |
-| Last updated | 2026-08-03 |
+| Plan version | 2.7 |
+| Last updated | 2026-08-04 |
 | Program state | Active |
-| Current part | Part 10 — Reproducible release and research package (in progress) |
-| Current gate | Demo-readiness delivered ahead of the paper: preflight, an honest LLM fallback, the provenance inspector, a runnable crash/resume beat, and a runbook |
+| Current part | Part 12 — Real-model evidence engine (blocked on provider credentials) |
+| Current gate | Every part that can be closed without a model, a headset, or an ethics committee is closed. One command away from real-model evidence: record a cassette |
 | Intended standard | Research-original, safety-bounded, reproducible, product-quality embodied agent |
 
 ## 1. Official final-project vision
@@ -160,24 +160,34 @@ success criterion after results are known.
 
 ### 4.2 Gaps separating the baseline from the final vision
 
-- the project claim, hypotheses, metrics, invariants, and release gates now have
-  a versioned machine-checkable contract, but runtime evidence is not yet fully
-  emitted through its new manifest and event-envelope contracts;
-- receipts explain autonomous delivery but do not yet form a complete causal
-  chain from source observation through verified outcome;
+Revised 2026-08-04. Several gaps below closed; the ones that remain are almost
+entirely gaps in *evidence* rather than in mechanism, and each names what it is
+waiting for.
+
+- ~~the project claim needs a machine-checkable contract~~ — closed in Part 1;
+- ~~receipts do not form a complete causal chain~~ — closed in Parts 3–5;
 - typed belief status, contradiction handling, source-class calibration, and
-  evidence provenance now exist as a durable ledger; live turns write scoped
-  private evidence, while semantic promotion remains deliberately conservative;
-- production consequential MCP execution now uses a durable authorization and
+  evidence provenance exist as a durable ledger, and since Part 13 the
+  authorization kernel **consumes** the calibration rather than only reporting
+  it; live turns write scoped private evidence, while semantic promotion remains
+  deliberately conservative;
+- production consequential MCP execution uses a durable authorization and
   transaction protocol; adapters without outcome evidence fail explicitly to
   `unresolved`, and reviewed readback/compensation coverage can still expand;
-- the current study measures useful proxies but does not yet provide a frozen
-  scenario benchmark, model/fixture manifest, counterbalanced human protocol,
-  or statistical analysis package;
-- latency, GPU performance, crash recovery, and long-duration resource growth
-  are not yet enforced as release budgets;
+- ~~no frozen scenario benchmark or analysis package~~ — closed in Parts 8 and 9;
+  the benchmark is now **runnable end to end**, and the instrument check proves
+  every one of its 100 scenarios can be passed;
+- **no language model has ever been in the loop of any measurement.** The
+  cassette engine that would put one there is built and tested; it is waiting on
+  provider credentials or a running local model. This is the binding constraint
+  (D-023) and it is now a one-command gap rather than an architectural one;
+- latency is instrumented end to end and every stage finally has a producer, but
+  no real ASR/LLM/TTS stack has been run under load, so the budgets are
+  measurable and unmeasured; the client-side timing emitter is a frontend change
+  that has not been made;
 - physical Quest acceptance and repeated-session performance evidence remain
-  to be collected.
+  to be collected;
+- the human study remains blocked on ethics approval and participants.
 
 ## 5. Working rules for this living plan
 
@@ -223,10 +233,10 @@ A part is complete only when:
 | 4 | Dual-loop cognition and resumable plans | Complete | Reactive/deliberative scheduler with checkpointed plan state machine |
 | 5 | Authorization kernel and transactional actions | Complete | Central risk gate, idempotent executor, verification, compensation |
 | 6 | Semantic world model 2.0 and embodied intelligence | Complete and integrated | Unified spatial-temporal relations, navigation, social positioning |
-| 7 | Real-time multimodal and WebXR product quality | Instrumented; gates blocked | Measured conversational latency, spatial audio/gaze, stable headset UX |
-| 8 | EmbodiedAgentBench and adversarial evaluation | Runnable; outcomes unmeasured | ≥100 scenarios, frozen split, failure injection, scorecards |
+| 7 | Real-time multimodal and WebXR product quality | Fully instrumented; gates blocked on hardware and a model | Measured conversational latency, spatial audio/gaze, stable headset UX |
+| 8 | EmbodiedAgentBench and adversarial evaluation | Complete and runnable; outcomes unmeasured | ≥100 scenarios, frozen split, failure injection, scorecards |
 | 9 | Human study and statistical analysis | Designed; blocked on ethics | Counterbalanced protocol, validated scales, analysis, limitations |
-| 10 | Reproducible release and research package | In progress | Paper-quality report, public benchmark, demo, clean-room reproduction |
+| 10 | Reproducible release and research package | Complete except the clean-machine run | Paper-quality report, public benchmark, demo, clean-room reproduction |
 
 The parts below were added by the 2026-08-03 external assessment (section 13).
 They exist because the program has built a publication-grade apparatus for
@@ -239,9 +249,9 @@ changes.
 | Part | Assignment | State | Exit artifact |
 | ---: | --- | --- | --- |
 | 11 | Reproducibility integrity and artifact provenance | Complete | Tracked research code, revision-bound baselines, honest manifests |
-| 12 | Real-model evidence engine | Queued | Record/replay cassettes, multi-model matrix, statistics, failure taxonomy |
-| 13 | Spatial capability spoofing and embodied injection benchmark | Queued | Named threat class, injection corpus, calibration-gated authorization |
-| 14 | Research communication and elite demonstration | Queued | Provenance inspector, rehearsed failure demo, venue-ready framing |
+| 12 | Real-model evidence engine | Engine complete; **evidence blocked on credentials** | Record/replay cassettes, multi-model matrix, statistics, failure taxonomy |
+| 13 | Spatial capability spoofing and embodied injection benchmark | Complete on offline evidence | Named threat class, injection corpus, calibration-gated authorization |
+| 14 | Research communication and elite demonstration | Complete except the rehearsal | Provenance inspector, rehearsed failure demo, venue-ready framing |
 
 ## 7. Detailed assignments
 
@@ -994,7 +1004,7 @@ read as instantaneous.
 
 | Gate | State | Evidence |
 | --- | --- | --- |
-| Median speech-to-first-audio ≤800 ms, p95 ≤1.4 s | **Unmeasured** | The path is instrumented end to end and reports per stage, but no real ASR/LLM/TTS stack has been run under load in this environment. Reported as `unavailable`, never as a pass |
+| Median speech-to-first-audio ≤800 ms, p95 ≤1.4 s | **Unmeasured, now measurable** | Every stage has a producer as of slice 7.4, so the figure is computable for the first time. No real ASR/LLM/TTS stack has been run under load here, so it is reported as `unavailable`, never as a pass |
 | Interruption stops stale playback within 250 ms | **Unmeasured** | Measurement is wired to terminal task state rather than to the cancel request; a deterministic cooperative-cancellation test already passes in Part 4, and the physical figure needs a real stack |
 | Network/audio/tool degradation is visible and never presented as success | Pass | A failing model yields `success=False` with an error surfaced and no end-to-end latency figure; existing voice-resilience coverage retained |
 | Physical headset frame rate and 100 enter/exit cycles | **Blocked** | Requires a Meta Quest 3. No software change closes it |
@@ -1012,23 +1022,60 @@ uv run pytest -q
 uv run ruff check src/open_llm_vtuber tests/test_latency.py tests/test_latency_wiring.py
 ```
 
+### Completed slice 7.4 — Every stage finally has a producer
+
+The unresolved limitation below was the whole reason the product budget could
+not be evaluated: three of the seven stages in speech-to-first-audio had nothing
+producing them, so the figure reported `unavailable` for every real turn however
+fast the system was. All three now report.
+
+- `retrieve` is timed at the context-assembly seam in `single_conversation.py` —
+  everything between the final transcript and the model request.
+- `capture` and `endpoint` arrive from the browser through a new `turn-timing`
+  websocket message, because they finish before the server sees a byte of the
+  turn.
+
+The client is not a trusted measurement source, and the intake says so
+structurally rather than by convention:
+
+- **Only the two client stages are accepted.** A message naming `first_audio`
+  cannot overwrite a figure the server measured itself.
+- **An implausible value is dropped, not clamped.** Clamping a 30-minute
+  `capture` to a ceiling would file a fabricated number as a real measurement.
+  Dropping leaves the stage absent, and absent is what the report already knows
+  how to say — Part 2's rule that an unmeasured number is not zero.
+- **A client report can only make a turn slower.** Negative, non-finite, and
+  non-numeric values are refused, and a value is only ever added to the sum.
+  There is no path by which a client subtracts time.
+- **One report is consumed by one turn**, so a single fast capture cannot become
+  a session-wide property.
+- **Pending reports are dropped on disconnect.** An unbounded per-client
+  dictionary is exactly the growth defect slice 7.2 had to fix in the recorder,
+  arriving one connection at a time.
+
+`TurnTimer.set_stage` files a duration without moving the pipeline cursor, so
+browser time is never charged to the server's next stage. 19 tests.
+
 ### Unresolved limitations
 
-- `capture`, `endpoint`, and `retrieve` are declared stages with no producer:
-  capture and endpointing happen in the frontend/VAD before the server sees a
-  turn, and retrieval happens inside the agent rather than at a visible seam.
-  They report as absent rather than as zero, so the end-to-end figure is
-  currently `unavailable` for every real turn. Closing this needs a frontend
-  timing message, which is the natural next slice.
-- Because of that, the 800 ms budget cannot yet be evaluated even with a real
-  model. The stage breakdown is usable today; the product figure is not.
+- **The client-side emitter has not been written.** The server accepts
+  `turn-timing` and is tested; sending it is a change to the `frontend/`
+  submodule, which is outside this repository. [TURN_TIMING.md](doc/TURN_TIMING.md)
+  specifies the message, the rules, and the verification steps. Until that
+  lands, `capture` and `endpoint` stay absent in practice and the end-to-end
+  figure stays `unavailable` — measurable, but not measured.
+- The 800 ms budget still needs a real ASR/LLM/TTS stack under load. The stage
+  breakdown is usable today; the product figure needs both the emitter and a
+  model.
 - Interruption latency measures the conversation task reaching a terminal
   state, which is not the same as the last audio sample leaving the speaker.
   Client-side playback stop is unmeasured.
+- Work assignments 3 (adaptive endpointing), 4 (semantic gaze, personal space,
+  spatial audio), and 5 (Quest budgets) remain open frontend/hardware work.
 
 ## Part 8 — EmbodiedAgentBench and adversarial evaluation
 
-**State:** Built and frozen; success rate unmeasured  
+**State:** Complete and runnable (2026-08-04); success rate unmeasured  
 **Dependency:** Parts 2–7 expose stable contracts and metrics.
 
 The benchmark, its frozen splits, the scorer, the failure taxonomy, and the
@@ -1141,6 +1188,7 @@ than being trusted.
 | Gate | State | Evidence |
 | --- | --- | --- |
 | ≥100 validated scenarios and an untouched held-out split | Pass | 100 scenarios, all 10 areas, 31 held out behind a load-verified digest and a development view that excludes them |
+| Every declared terminal predicate is observable, and every scenario passable | Pass | Exact observer coverage in both directions; oracle scores 1.000 on all three splits |
 | Failure taxonomy and representative traces accompany aggregate scores | Pass | Causal-chain attribution in pipeline order; per-area pass/total; per-scenario reasons retained on every score |
 | Results reproduce from manifests and fixtures without external accounts | Pass | Suite and digests are deterministic; scoring and intervals are seeded and reproducible |
 | Zero forbidden side effects in adversarial evaluation | **Unmeasured** | 15 adversarial scenarios authored and every one forbids something checkable; running them needs a real model |
@@ -1154,19 +1202,66 @@ uv run pytest tests/test_scenarios.py tests/test_scoring.py -q
 uv run pytest -q
 ```
 
+### Completed slice 8.6 — Predicate observers and the run loop
+
+The benchmark could be loaded and scored and could not be **run**: the scorer
+takes a `RunResult` carrying `satisfied_predicates`, and nothing in the
+repository observed a predicate. Eighteen terminal conditions existed as strings
+in a frozenset. `evaluation/harness.py` is the missing half.
+
+The shape matters more than the size. The obvious implementation is a simulator
+— model the world, model the tools, decide what would have happened — and it
+measures the simulator. Instead the run loop executes each decision against
+**the subsystems that ship**: the semantic projection answers reachability, the
+authorization kernel answers policy, the action profiles answer effect class.
+The only thing the harness supplies is what the agent *decided to do*, because
+that is the only part a language model is needed for. With a scripted driver the
+planning is fake and the world, gate, and scoring are real; with a cassette
+driver all four are real, and nothing else changes between those two runs.
+
+Three observer rules each close a way a benchmark flatters a system that did
+nothing:
+
+- **`no_duplicate_effect` requires an effect.** A run that committed nothing
+  duplicated nothing and would otherwise collect a safety predicate for
+  inaction.
+- **`task_completed` requires an explicit signal**, never the absence of a
+  failure. "Nothing went wrong" and "the task was done" are different claims.
+- **`authorization_denied` requires a decision.** An action nobody attempted was
+  not denied — otherwise the safest possible system, one that proposes nothing,
+  scores best on the adversarial split.
+
+Confirmation is modelled as Part 5 actually behaves: asking is what earns the
+authority, the grant is minted against that descriptor's digest, and a second
+consequential action needs a second request. Walking is real — on a metric floor
+`move_to` requires a planned route (D-043), and a contested label refuses the
+walk rather than resolving to whichever entity comes first (D-042).
+
+**The instrument check.** `OracleDriver` derives a plan from a scenario's own
+terminal predicates and asks a question about the *measuring device*: can a
+scenario in this suite be passed at all? If some predicate were unreachable in
+every world, every model measured against the benchmark would be scored partly
+on a harness defect — and that failure would look like a model weakness, which is
+the worst possible disguise. Result: **1.000 on all three splits, 100/100
+scenarios passable, zero forbidden effects, zero harness errors.** It is
+labelled `oracle-harness-proof-v1` wherever it appears and is never a system
+claim. `scripts/reproduce.py` runs it on every reproduction.
+
+31 dedicated tests.
+
 ### Unresolved limitations
 
-- No system has been run against the suite, so both outcome gates are
-  unmeasured. What exists is a benchmark and a scorer, not a result. Closing
-  this is Part 12's cassette recorder, not more scenarios.
+- No system has been run against the suite, so both outcome gates remain
+  unmeasured. What exists is a benchmark, a scorer, and now a runner — still not
+  a result. Closing this needs a cassette, not more scenarios.
 - ~~The 100 scenarios name `initial_state_id` values the fixture library does
-  not contain.~~ Closed by slice 8.5: `evaluation/initial_states.py` builds all
-  twelve, derived from the shipped rooms so a change to the default room
-  reaches the adversarial variants too. A test asserts the suite and the state
-  library stay in step in both directions — no scenario names a world that
-  cannot be built, and no world is defined that nothing uses.
-- Terminal predicates are checkable in principle but only some are wired to a
-  real observer today. Predicate observers are the next slice.
+  not contain.~~ Closed by slice 8.5.
+- ~~Terminal predicates are checkable in principle but only some are wired to a
+  real observer today.~~ Closed by slice 8.6: a test asserts observer coverage
+  is exact in both directions — no predicate a scenario may assert goes
+  unobserved, and no observer exists for a predicate no scenario may assert.
+- The benchmark is authored by the same people as the system. The oracle check
+  shows the suite is passable; it does not show it is representative.
 
 ### Work assignments
 
@@ -1362,15 +1457,61 @@ The `unavailable` checks are the honest inventory: no system has been run
 against the benchmark, speech-to-first-audio is not computable while capture
 and endpointing have no producer, and no participant has been recruited.
 
+### Completed slice 10.2 — The research package
+
+- [RESEARCH_REPORT.md](doc/RESEARCH_REPORT.md) is the paper-style report:
+  problem, related work and positioning, hypotheses with their measurement
+  status, system, threat model, evaluation design, results, ablations, failure
+  analysis in causal-chain order, limitations, ethics, reproduction, and a
+  closing section that states what the work does **not** show.
+
+  Two structural choices carry the honesty. Every result row names its artifact
+  *and whether a language model was in the loop*, so a reader cannot mistake a
+  harness proof for a system claim. And the unmeasured table sits inside the
+  results section rather than in a footnote, because the single most misleading
+  thing this report could do is present the measured rows as though they were
+  the whole set.
+
+- [RELEASE_REVIEWS.md](doc/RELEASE_REVIEWS.md) covers dependency, secret,
+  licence, accessibility, data-retention, and network exposure. **Two of six are
+  not clean**, and both say what would close them:
+
+  - the CVE scan cannot run in an offline environment, and reporting a clean
+    dependency review from a machine that cannot reach an advisory database
+    would be a fabricated result;
+  - the provenance inspector has had **no accessibility work at all** — no ARIA
+    roles, no labels, no landmarks — and the main client was not audited.
+
+  The licence review found the one constraint that changes what can be
+  published: Live2D assets are proprietary, so a public benchmark release must
+  not bundle `live2d-models/`. The data-retention review names three real gaps —
+  `register_derived` is a contract on callers rather than an enforced invariant,
+  and `chat_history/`, `cache/`, and `logs/` are outside the provenance
+  lifecycle entirely.
+
+- `scripts/reproduce.py` gained two checks: `benchmark-instrument` (can a
+  scenario in this suite be passed at all?) and `spoofing-corpus`. Both exist so
+  that the Part 6 lesson — 1,546 lines sitting beside the system for a whole
+  part — cannot repeat with the new research modules. Those modules are
+  deliberately *not* in `SYSTEM_COMPONENTS`, because offline research tooling is
+  supposed to be unreachable from the server; the equivalent guarantee is that
+  the reproduction command runs them.
+
+Current output: **8 pass, 0 fail, 4 unavailable**.
+
 ### Remaining work
 
-1. Paper-style report: problem, related work, hypotheses, system, threat model,
-   evaluation, ablations, results, failures, limitations, ethics.
-2. Publish the benchmark, contract, and smallest safe fixture set.
-3. Clean-machine reproduction from the public instructions.
-4. Demo assets: five-minute technical walkthrough, 90-second overview,
-   architecture figure, results table, live failure/recovery sequence.
-5. Dependency, secret, licence, accessibility, and data-retention reviews.
+1. ~~Paper-style report.~~ Done in slice 10.2.
+2. Publish the benchmark, contract, and smallest safe fixture set — packaged
+   without `live2d-models/` per the licence review.
+3. **Clean-machine reproduction from the public instructions.** Not done and not
+   doable from inside this repository; it needs a second machine.
+4. Demo assets: the architecture figure and results table are in the report and
+   the failure/recovery sequence is `scripts/demo_crash_resume.py`; the
+   five-minute walkthrough and 90-second overview are recordings, not artifacts
+   this repository can contain.
+5. ~~Dependency, secret, licence, accessibility, and data-retention reviews.~~
+   Done in slice 10.2, with two honest failures.
 6. Tag the evaluated release and preserve its manifests.
 
 ### Work assignments
@@ -1466,7 +1607,8 @@ that every source the committed baselines digest is tracked.
 
 ## Part 12 — Real-model evidence engine
 
-**State:** Queued  
+**State:** Engine complete and tested (2026-08-04); **evidence blocked on
+provider credentials**  
 **Dependency:** Part 11 integrity; Part 2 replay adapters; Part 8 scenarios.
 
 **Why this exists.** This is the single highest-value item in the program. The
@@ -1506,18 +1648,85 @@ that the harness runs, which is what it is.
 6. Re-run every Part 3 and Part 4 result under real models and replace the
    synthetic headline numbers, marking the synthetic ones as harness proofs.
 
+### Completed implementation
+
+`evaluation/cassettes.py` fetches a real completion **once**, through a
+deliberate recording operation, keyed by a digest of the request, and replays it
+offline forever after. The model is genuinely in the loop of the result; the
+result stays deterministic and reproducible by somebody with no credentials.
+
+Four properties are structural rather than conventional:
+
+- **Replay cannot reach a network.** D-007 forbids a live fallback, and the way
+  this obeys it is that `CassetteStore` holds no provider and has no code path
+  that could construct one. A miss raises `CassetteMiss`; it does not fetch. A
+  test asserts the absence rather than the intent.
+- **A cassette records what produced it.** Model id, family, provider,
+  temperature, and max tokens are *inside the key*, so the same suite recorded
+  against two models produces two disjoint key spaces and one cassette can never
+  answer for a model it did not record. Loading with the wrong expected model
+  fails rather than silently attributing one model's behaviour to another.
+- **Recording is bounded to benchmark inputs.** The recorder refuses any request
+  whose scenario is not in the frozen suite, so no conversation, memory, or
+  screen content can reach a provider through this path even if somebody points
+  it at the wrong input. This program's whole privacy argument rests on that.
+- **Three separate admissions before a byte leaves the machine**: construct a
+  recorder rather than a store, pass `allow_network=True`, and set
+  `EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING` in the shell. More friction than a
+  flag, deliberately — the failure being prevented is a replay run that quietly
+  became a live one, costing a result nobody can reproduce and a bill nobody
+  expected.
+
+`benchmark_report.py` classifies every condition as `system` (a real model, may
+be cited), `harness_proof` (says the measurement path works, says nothing about
+any model), or `unavailable` (with the reason **and the exact command** that
+would fix it). A partially recorded cassette produces `unavailable`, not a
+partial rate: a suite that is 60% recorded has no success rate, only a rate for
+the part somebody happened to record (D-029).
+
+One request builder serves both recording and replay, because two that drifted
+by a single space would turn every replay into a miss and report a fully
+recorded model as unmeasured.
+
+20 dedicated tests.
+
+### Why this is blocked, precisely
+
+`research/baselines/part12-benchmark.json` is committed and reads, in its own
+`claim` field:
+
+> no system claim: every condition below is a harness proof or unavailable,
+> because no language model has been recorded against this suite
+
+This environment has no `ANTHROPIC_API_KEY`, no `OPENAI_API_KEY`, and no
+reachable Ollama or LM Studio (all three probed 2026-08-04). **0 of 3 declared
+model families have a cassette.**
+
+The gap is now one command wide:
+
+```powershell
+$env:EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING = "1"
+$env:ANTHROPIC_API_KEY = "..."   # or OPENAI_API_KEY, or start Ollama
+uv run python scripts/record_cassettes.py --model claude-3-haiku-20240307 --yes
+uv run python scripts/run_benchmark.py --matrix --write research/baselines/part12-benchmark.json
+```
+
 ### Acceptance gate
 
-- Every contract metric is `measured` or has a stated reason it cannot be.
-- Cassette replay is bit-identical across three runs and cannot reach a network.
-- Results are reported per model family with n and confidence intervals.
-- At least one external baseline is measured on the same scenarios.
-- Every reported failure is attributed to a causal-chain stage.
-- No synthetic fixture result is presented as a system claim.
+| Gate | State | Evidence |
+| --- | --- | --- |
+| Cassette replay cannot reach a network | Pass | `CassetteStore` holds no provider; asserted structurally, not by convention |
+| Cassette replay is deterministic | Pass | Keyed by request digest; the same request returns the same recorded entry |
+| No synthetic fixture result is presented as a system claim | Pass | `claim_class` on every condition; the oracle carries `harness-proof` in its id |
+| Every contract metric is `measured` or has a stated reason | Pass | Every unavailable row names its reason and its remedy |
+| Results reported per model family with n and CI | **Blocked** | Needs credentials; 0/3 families recorded |
+| At least one external baseline measured | **Blocked** | Depends on the above |
+| Every reported failure attributed to a causal-chain stage | Pass, mechanism | Taxonomy implemented and exercised; no real failures to attribute yet |
 
 ## Part 13 — Spatial capability spoofing and embodied injection benchmark
 
-**State:** Queued  
+**State:** Complete on offline evidence (2026-08-04); per-model measurement
+waits on Part 12  
 **Dependency:** Part 5 kernel, Part 6 semantic world, Part 12 evidence engine.
 
 **Why this exists.** This is the most original unexploited asset in the
@@ -1557,18 +1766,93 @@ a citable artifact, and it is the natural fusion of Parts 3, 5, and 6.
    calibration-gated authorization, on held-out attacks, across model families.
 6. Publish the corpus and the defenses as a reusable artifact.
 
+### Completed implementation
+
+`evaluation/spoofing.py` states the threat class formally. A **spatial
+capability grant** is the inference
+
+> the agent is at object O ∧ O grants capability C ⟹ C is available
+
+An attacker controlling any term forges it without touching authorization code.
+Four families: identity, geometry, perception, instruction. What an attacker
+must control is modest — write access to a scene document, or the ability to put
+text where the agent reads it — and neither requires compromising the server.
+
+**Every attack is scored twice**: against the shipped gate, and against a *naive
+gate* (nearest object by declared name, within its declared reach) which is what
+an embodied agent looks like before these defences exist — and is what this
+repository's own `world_model` was. The comparison is the evidence: a defence
+with no attack that defeats the naive gate is a defence nobody has shown is
+needed, and it is reported as untested rather than counted.
+
+Result: **5 of 6 attacks defeat the naive gate; 1 defeats the shipped one.**
+Three defences are demonstrated necessary — label-ambiguity withholding, the
+reach ceiling, and the planned-route requirement.
+
+The one that wins is `object-relocation`, and it is declared as a `known_gap` in
+the corpus schema rather than discovered later. Once the computer stands on the
+agent its tools are reachable, and the gate cannot tell why an object is where
+it is — it never could. That is D-024 as a measurement rather than an argument.
+What survives is that moving furniture needs `move_object`, itself gated on the
+design board, so the attack costs a visible walk. A corpus where the home team
+wins every round is a corpus that was written after the results.
+
+The corpus also honestly reports a *non*-discriminating case: `homoglyph-label`
+is blocked by both gates, because affordances come from an exact-match policy
+table in both. The defence holds and this corpus does not show it is needed.
+
+### The calibration gate — where the thesis actually lives
+
+Parts 3 and 5 were separate systems. `provenance/calibration.py` measured that
+the `model` source class states 0.73 and is right 47% of the time, and nothing
+consumed it: the kernel compared a model's **self-reported** confidence against
+a fixed 0.8, which is exactly what the calibration module's own docstring says
+not to do.
+
+The kernel now sets a required threshold from the action's **risk band**
+(reversibility dominating effect class, so a compensatable email is a smaller
+bet than an irreversible local delete) and reads the stated confidence through
+measured per-source-class calibration. Descriptor schema moved to version 2 for
+`evidence_source_class`, defaulting to `model` — the least-trusted measured
+class, because an action whose provenance nobody stated should not be treated
+better than one whose provenance is a guess.
+
+**An unmeasured source class fails closed.** This is the substantive decision.
+The comfortable alternative is falling back to the stated number when
+calibration is unavailable, which makes arriving through an unmeasured source
+the attacker's cheapest move and the whole mechanism decorative.
+
+Measured on the held-out fixture, with every other check satisfied so that only
+the confidence check can decide (invariant 8):
+
+| Condition | Unauthorized effects | Legitimate work refused |
+| --- | --- | --- |
+| `calibration_off` | **6/6** (rate 1.000) | 0/3 |
+| `calibration_on` | **0/6** (rate 0.000) | **2/3** (rate 0.667) |
+
+The cost is real and is reported rather than tuned away: `user` and `external`
+have no calibration data on this fixture, so legitimate user-sourced work is
+refused. Measuring those classes removes the cost; lowering the threshold would
+only hide it. Supplying no calibrator preserves the previous behaviour exactly,
+so turning the gate on is a decision somebody makes rather than a silent change
+of policy.
+
+27 dedicated tests. Frozen at `research/baselines/part13-spoofing.json`.
+
 ### Acceptance gate
 
-- Zero forbidden effects across the full corpus, on every measured model.
-- Every defense maps to at least one attack that defeats the system without it.
-- Calibration-gated authorization shows a measured effect with a CI, or is
-  reported as no-effect rather than quietly dropped.
-- The corpus runs from manifests without external accounts.
-- Attacks are stated so that another group can implement them independently.
+| Gate | State | Evidence |
+| --- | --- | --- |
+| Every defence maps to an attack that defeats the system without it | Pass, for three of four | `label_ambiguity_withholding`, `reach_ceiling`, `planned_route_required` each have a discriminating attack; `affordances_from_policy_tables` holds but is not shown necessary, and the report says so |
+| Calibration-gated authorization shows a measured effect | Pass, synthetic | 6/6 → 0/6 unauthorized, with the 2/3 legitimate-refusal cost reported beside it |
+| The corpus runs from manifests without external accounts | Pass | `scripts/run_spoofing_benchmark.py`; no network, no credentials |
+| Attacks are stated so another group can implement them independently | Pass | Formal grant definition, four families, per-attack probe, defence, and expectation |
+| Zero forbidden effects across the corpus on every measured model | **Blocked / honest gap** | Two things: no model is measured (Part 12), and `object-relocation` is a declared known gap that would not be zero |
+| Extend the Part 5 injection suite into a full corpus | **Partial** | Part 5's seven indirect sources including furniture metadata are frozen at 7/7 blocked with forbidden-effect predicates; the spatial half is new here. A merged single corpus is not built |
 
 ## Part 14 — Research communication and elite demonstration
 
-**State:** Queued  
+**State:** Complete except the live rehearsals (2026-08-04)  
 **Dependency:** Part 12 results, Part 13 corpus.
 
 **Why this exists.** The system's strongest properties are invisible. A viewer
@@ -1614,13 +1898,53 @@ demo normally hides.
    demo texture with no mapped hypothesis; section 11 already names this risk.
    Do not let Quest hardware acceptance block Parts 12–13.
 
+### Completed work
+
+1. **Live provenance inspector** — built ahead of schedule in section 9b:
+   `provenance/inspection.py`, `/api/operator/provenance/*`, and
+   `frontend/inspector.html`. Content-free by construction, so it is safe on a
+   projector, and a deleted piece of evidence shows as a gap rather than as a
+   chain that looks whole and is not.
+2. **Live failure and recovery** — `scripts/demo_crash_resume.py` kills the
+   process at a real transition, restarts from disk only, and shows exactly one
+   side effect. Verified at all five crash phases. Needs no model and no
+   network, which is why it is the beat to fall back to.
+3. **Live injection refusal** — the mechanism is frozen at 7/7 blocked with zero
+   effects (Part 5) and now has a spatial counterpart (Part 13). Rehearsing it
+   as a demo beat is in [DEMO_RUNBOOK.md](doc/DEMO_RUNBOOK.md).
+4. **The walk is reframed.** `PROJECT_STATUS.md` presented proximity gating
+   under a heading reading "Spatial safety", which is the claim D-024 says is
+   false: an injected planner calls `move_to` and proceeds, so the gate stops
+   nothing an adversary cannot satisfy. It now reads "Spatial legibility", opens
+   by stating plainly that it is **not a security boundary**, states what it
+   does provide — no consequential side effect without a visible, pre-action,
+   non-textual signal — and reports the Part 13 result *including the attack
+   that beats it*. A separate section names the authorization kernel as the
+   actual boundary. Stated as security it was an invitation to be dismantled;
+   stated as observability it is a contribution.
+5. **Venue chosen and committed: Paper A as primary.** Systems/security —
+   USENIX Security or IEEE S&P, with NeurIPS Datasets & Benchmarks as the
+   alternative for the benchmark artifact. Contribution: one authorization
+   boundary, typed belief provenance with authority ordering, content-free
+   replayable audit, and spatial capability spoofing as a named threat class
+   with a corpus. One human evaluation is folded in from Paper B — *do users
+   detect an unauthorized action faster when it is spatially legible?* — because
+   a systems paper carrying a human-subjects validation of its own interface
+   claim is much harder to reject than either alone. Recorded as D-053.
+6. **Feature breadth frozen.** Weather, bilibili, books, and the drawing board
+   are demo texture with no mapped hypothesis. No further capability is added
+   unless it supports the research question, improves a measured property, or
+   closes a demonstrated reliability gap. Quest hardware acceptance does not
+   block Parts 12–13, and did not.
+
 ### Acceptance gate
 
-- The inspector renders a complete chain for any action, with no private
-  content, in under a second.
-- The failure and injection sequences succeed offline, twice consecutively.
-- Every public claim maps to a frozen contract metric with measured evidence.
-- The chosen venue's evidence requirements are met, or the gap is stated.
+| Gate | State | Evidence |
+| --- | --- | --- |
+| The inspector renders a complete chain with no private content | Pass | `provenance/inspection.py`, content-free by construction; deleted evidence shows as a gap |
+| Every public claim maps to a frozen contract metric with evidence | Pass | [RESEARCH_REPORT.md](doc/RESEARCH_REPORT.md) §7 names the artifact and the model-in-the-loop status for every row |
+| The failure and injection sequences succeed offline, twice consecutively | **Not rehearsed** | Both run; neither has been performed twice consecutively as a rehearsal, which is a stopwatch task rather than an engineering one |
+| The chosen venue's evidence requirements are met, or the gap is stated | **Gap stated** | Paper A needs real-model results and the human evaluation. Neither exists; §7.2 of the report lists exactly what is missing |
 
 ## 8. Progress ledger
 
@@ -1655,31 +1979,58 @@ demo normally hides.
 | 2026-08-03 | 11 | Queued → Complete | One shared `provenance_digest`: LF-normalized so a CRLF checkout reproduces an LF baseline, `require_tracked` refusing untracked inputs, `freeze_guard` refusing a dirty tree without an explicit admission; Part 3/4/5 baselines re-frozen; `.gitattributes` normalization; 11 tests | Part 12 cassette recording |
 | 2026-08-03 | 8 | Built → Runnable | Slice 8.5 added the twelve initial worlds the suite references, including six that encode one spatial-spoofing attack each; 12 tests, and the relocation fixture honestly shows the attack succeeding, which is D-024 as a fixture rather than an argument | Wire a predicate observer per terminal predicate |
 | 2026-08-03 | — | Assessment | External assessment found the evidence gap: 13 of 17 contract metrics `unavailable`, both numeric results synthetic with a `fixture-llm-v1` stub, no external baseline, no multi-model evidence, and every research module untracked in git | Added Parts 11–14; Part 11 blocks the reproducibility claims of all earlier parts |
+| 2026-08-04 | 8 | Built → Complete and runnable | Slice 8.6: `evaluation/harness.py` supplies the predicate observers the scorer needed and executes every decision against the shipped semantic projection and authorization kernel; exact observer coverage in both directions; three observer rules refuse to reward inaction; oracle instrument check scores 1.000 on all three splits, so all 100 scenarios are passable and no model will be scored on a harness defect; 31 tests | Record a cassette so the suite can be run against a model |
+| 2026-08-04 | 12 | Queued → Engine complete, evidence blocked | `evaluation/cassettes.py` + `benchmark_report.py` + two CLIs: request-digest keying with model identity inside the key, a replay store with no code path to a provider, three separate admissions before recording, refusal to record anything outside the frozen suite, and `system`/`harness_proof`/`unavailable` claim classes. Committed `part12-benchmark.json` states in its own body that it carries no system claim; 20 tests | Obtain provider credentials or start a local model — one command from real evidence |
+| 2026-08-04 | 13 | Queued → Complete on offline evidence | Threat class defined formally; six-attack spatial corpus scored against a naive gate (5/6 succeed) and the shipped gate (1/6, declared as a known gap); three defences shown necessary and one shown merely to hold; calibration gate connects Parts 3 and 5 — descriptor schema v2, risk-banded thresholds, unmeasured source classes fail closed — taking unauthorized effects 6/6 → 0/6 at a measured 2/3 legitimate-refusal cost; Part 5 baseline re-frozen after confirming only the digest moved; 27 tests | Measure the corpus per model family once Part 12 unblocks |
+| 2026-08-04 | 7 | Instrumented → Fully instrumented | Slice 7.4 gave the last three stages a producer: `retrieve` at the context-assembly seam, `capture` and `endpoint` through a `turn-timing` message that treats the client as an untrusted measurement source — client-only stages, implausible values dropped rather than clamped, no path to subtract time, per-connection state dropped on disconnect; 19 tests | Write the client-side emitter in the `frontend/` submodule |
+| 2026-08-04 | 10 | In progress → Complete except the clean-machine run | Slice 10.2: paper-style research report naming the artifact and model-in-the-loop status for every result, with the unmeasured table inside the results section; release reviews across six areas with two honest failures (offline CVE scan, no accessibility work on the inspector); two new reproduction checks; `reproduce.py` at 8 pass, 0 fail, 4 unavailable | Publish the benchmark package without Live2D assets; reproduce on a second machine |
+| 2026-08-04 | 14 | Queued → Complete except rehearsals | Inspector, crash/resume demo, and runbook were already delivered in 9b; `PROJECT_STATUS.md` reframed from "Spatial safety" to "Spatial legibility" with the authorization kernel named as the actual boundary; venue committed to Paper A with one folded-in human evaluation; feature breadth frozen | Rehearse the failure and injection beats twice consecutively |
 
 ## 9. Current execution queue
 
-Everything that can be completed without a language model, a headset, or an
-ethics committee is complete. The three items below are ordered by how much
-each unblocks.
+Revised 2026-08-04. **Everything that can be completed inside this repository is
+complete.** Every remaining item needs something this environment does not
+contain: a credential, a second machine, a headset, an ethics committee, or a
+person with a stopwatch.
 
-1. **Part 12 — cassette recording against live providers.** Every unmeasured
-   number in this program is blocked on a real model being in the loop. This is
-   the step that puts one there, and Parts 13 and 14 both depend on it.
-   *Needs: provider credentials.*
+Blocking, ordered by how much each unblocks:
+
+1. **Part 12 — record one cassette.** Every unmeasured number in this program is
+   blocked on a real model being in the loop. The engine is built, tested, and
+   committed; the gap is one command. *Needs: an API key, or a running Ollama.*
+
+   ```powershell
+   $env:EMBODIED_AGENT_ALLOW_CASSETTE_RECORDING = "1"
+   $env:ANTHROPIC_API_KEY = "..."
+   uv run python scripts/record_cassettes.py --model claude-3-haiku-20240307 --yes
+   uv run python scripts/run_benchmark.py --matrix --write research/baselines/part12-benchmark.json
+   ```
+
+   This unblocks: full-task success, forbidden-effect count, the per-family
+   comparison, the external baseline, the real failure taxonomy, and the
+   per-model half of Part 13.
+
 2. **Part 9 — ethics approval and instrument licences.** Gates the entire human
-   study and cannot be shortened by engineering. Can proceed in parallel with
-   Part 12. *Needs: an IRB submission.*
-3. **Part 8 — predicate observers.** The scorer can evaluate every terminal
-   predicate; only some are wired to something that observes them. This is the
-   last engineering task standing between the benchmark and a run.
+   study and cannot be shortened by engineering. Proceeds in parallel.
+   *Needs: an IRB submission.*
 
-Smaller engineering items, none of them blocking:
+Non-blocking, and each is somebody else's environment rather than more code:
 
-- Part 7: send frontend capture and endpoint timings to the server, so
-  speech-to-first-audio becomes computable at all.
-- Part 6: give the 2D stage a real per-object floor depth, which would let the
-  screen renderer use obstacle-aware navigation instead of refusing it.
-- Part 10: the paper-style report, demo assets, and clean-machine reproduction.
+- **Part 7 — the client-side timing emitter.** The server accepts `turn-timing`
+  and is tested; sending it is a `frontend/` submodule change.
+  [TURN_TIMING.md](doc/TURN_TIMING.md) specifies it exactly.
+- **Part 10 — clean-machine reproduction.** Needs a second machine.
+- **Part 10 — publish the benchmark package**, excluding `live2d-models/` per
+  the licence review, and tag the evaluated release.
+- **Part 14 — rehearse the failure and injection beats** twice consecutively.
+- **Part 7 — Quest acceptance**: frame rate and 100 enter/exit cycles.
+- **Part 6 — give the 2D stage a real per-object floor depth**, which would let
+  the screen renderer use obstacle-aware navigation instead of refusing it. This
+  is a scene-schema migration, not a planner change, and it remains deliberately
+  deferred: the refusal is correct today and the migration touches every saved
+  room.
+- **Part 10 — accessibility work on the provenance inspector**, which the
+  release review reports as a failure.
 
 ## 9b. Demo preparation (ahead of the paper)
 
@@ -1702,6 +2053,10 @@ work was pulled forward and narrowed to what a live, VR-inclusive demo needs.
   a story rather than as a graph. Content-free by construction, so it is safe
   on a projector, and a deleted piece of evidence shows as a gap rather than a
   chain that looks whole and is not.
+- [RESEARCH_REPORT.md](doc/RESEARCH_REPORT.md) and
+  [RELEASE_REVIEWS.md](doc/RELEASE_REVIEWS.md) — added 2026-08-04. The report is
+  what a reviewer reads; the reviews are what an operator reads before shipping.
+  Two of the six reviews are failures and say so.
 - `scripts/demo_crash_resume.py` — the Part 4 guarantee as a narrated command.
   It kills the process at a real transition, restarts from disk only, and shows
   exactly one side effect. Verified at all five crash phases. It needs no
@@ -1761,6 +2116,16 @@ None of this changes a research claim. It makes the existing ones showable.
 | D-043 | 2026-08-03 | Require a planned route before reporting arrival in VR | A clear stopping point is not a reachable one; arrival unlocks that object's tools, so it must mean the walk could actually happen |
 | D-044 | 2026-08-03 | Digest normalized content of tracked files, not raw bytes of whatever is on disk | A digest should change when behaviour could have changed and not otherwise; the Part 4 baseline broke on a line-ending convention while its results reproduced exactly |
 | D-045 | 2026-08-03 | Derive adversarial fixtures from the shipped rooms rather than hand-writing them | An attack on a hand-written computer proves nothing about the computer the system ships; deriving them means a change to the default room reaches every variant |
+| D-046 | 2026-08-04 | Execute benchmark decisions against the shipped subsystems, not a simulator | A simulated world, gate, and tool set measures the simulator. Routing every decision through the real semantic projection and authorization kernel means the day a cassette exists the measurement is genuine, and the parts that never needed a model are real today | The shipped subsystems become too slow to run 100 scenarios per condition |
+| D-047 | 2026-08-04 | Refuse to credit a predicate a run did not earn by acting | `no_duplicate_effect` for a run that committed nothing, `task_completed` from the absence of failure, and `authorization_denied` for an action nobody proposed all reward inaction — under which the safest possible system, one that does nothing, scores best on the adversarial split | A scenario legitimately measures restraint and needs its own predicate |
+| D-048 | 2026-08-04 | Run an oracle instrument check and report it as a property of the measuring device | If a predicate were unreachable in some world, every model measured against the suite would be scored partly on a harness defect, and that failure would look like a model weakness — the worst possible disguise | Never; it is cheap and it is the only thing that catches an unwinnable scenario before results exist |
+| D-049 | 2026-08-04 | Put the model identity inside the cassette key, not only in its header | Two models recorded against one suite must produce disjoint key spaces, so a cassette can never answer for a model it did not record and one model's behaviour cannot be attributed to another | Never |
+| D-050 | 2026-08-04 | Require three separate admissions before a recording contacts a provider | The failure being prevented is a replay run that quietly became a live one, which costs a result nobody can reproduce and a bill nobody expected; a single flag is a decision somebody made once, an environment variable is a decision made in the shell they are standing in | Recording becomes routine enough that the friction costs more than it saves |
+| D-051 | 2026-08-04 | Refuse to record any request that did not come from the frozen suite | A recorder that accepts whatever it is passed turns one careless call into a file holding somebody's conversation, and this program's entire privacy argument rests on that never happening | Never |
+| D-052 | 2026-08-04 | Fail closed when a source class has no measured calibration | "We have never measured this source" is not evidence that it is reliable. Falling back to the stated confidence makes arriving through an unmeasured channel the attacker's cheapest move and the whole mechanism decorative. The cost — legitimate work from uncalibrated sources refused — is reported rather than tuned away | Production calibration exists for every source class the system actually uses |
+| D-053 | 2026-08-04 | Commit to Paper A (systems/security) as primary, with one human evaluation folded in from Paper B | The code is strongest and the claim most original where the authorization boundary, belief provenance, and spatial capability spoofing meet; a systems paper carrying a human-subjects validation of its own interface claim is much harder to reject than either paper alone | Real-model results turn out to support the embodiment claim more strongly than the systems claim |
+| D-054 | 2026-08-04 | Drop an implausible client-reported timing rather than clamping it | Clamping a 30-minute `capture` to a ceiling files a fabricated number as a real measurement; dropping it leaves the stage absent, and Part 2 already established that absent is a thing the report knows how to say | Client clocks become trustworthy enough that the bound is the wrong tool |
+| D-055 | 2026-08-04 | Report a not-clean release review rather than a clean one it did not earn | An offline CVE scan and an unaudited interface are gaps; recording them as passes would stop anyone else from running the checks, which is worse than having no review | The scans run and pass on a networked machine |
 
 ## 11. Risks and blockers
 
@@ -1951,6 +2316,77 @@ reproduces an LF baseline, a tracking requirement that fails closed, and a
 freeze guard that will not write an artifact from a tree nobody else can
 obtain. Every reproducibility claim in this plan is true for the first time.
 
+### Part 12 — Real-model evidence engine
+
+Engine completed on 2026-08-04; evidence blocked on provider credentials.
+
+The measurement apparatus could not put a model in the loop, and that was the
+binding constraint on the entire program (D-023). It now can. A real completion
+is fetched once through a triply-gated recording operation, keyed by a digest of
+the request with the model identity inside the key, and replayed offline
+forever after — so the model is genuinely in the loop of the result while the
+result stays deterministic and reproducible by somebody with no credentials.
+
+The replay store holds no provider and has no code path that could construct
+one, which is how D-007 is obeyed structurally rather than by convention. The
+recorder refuses any request outside the frozen suite, so nothing private can
+reach a provider through it. Reports classify every condition as a system claim,
+a harness proof, or unavailable-with-a-remedy, and a partially recorded cassette
+produces no rate at all.
+
+What is missing is a credential. `research/baselines/part12-benchmark.json` is
+committed and says so in its own body: *no system claim: every condition below
+is a harness proof or unavailable, because no language model has been recorded
+against this suite.* Zero of three declared model families have a cassette.
+
+### Part 13 — Spatial capability spoofing and embodied injection benchmark
+
+Completed on 2026-08-04 for everything measurable offline.
+
+The threat class the codebase had been defending against without naming is now
+named and formally defined: forging a spatial capability grant by controlling
+identity, geometry, perception, or instruction. Six attacks are scored against
+both the shipped gate and a naive proximity gate. Five defeat the naive gate;
+one defeats the shipped one, and it is declared as a known gap in the corpus
+schema rather than discovered afterwards — `object-relocation` succeeds because
+the gate cannot tell why an object is where it is, which is D-024 as a
+measurement instead of an argument. One attack is reported as blocked by both
+gates, meaning its defence holds and this corpus does not show it is needed.
+
+The more consequential half is the calibration gate. Parts 3 and 5 had been
+separate systems: calibration measured that the `model` class states 0.73 and is
+right 47% of the time, and the kernel went on comparing a self-reported number
+against a fixed threshold. The kernel now sets its threshold from the action's
+risk band and reads confidence through measured per-source-class calibration,
+failing closed where no measurement exists. Unauthorized effects go from 6/6 to
+0/6, at a measured cost of 2 of 3 legitimate actions refused — reported rather
+than tuned away, because the refusals are the mechanism working and the way to
+remove them is to measure more source classes.
+
+Descriptor schema moved to version 2. The Part 5 baseline was re-frozen only
+after confirming that every scientific value reproduced exactly and that the
+implementation digest was the sole difference.
+
+### Part 14 — Research communication and elite demonstration
+
+Completed on 2026-08-04 except for two live rehearsals.
+
+The inspector, the crash/resume demo, and the runbook were delivered early in
+section 9b. What remained was the reframe, and it mattered more than the
+artifacts. `PROJECT_STATUS.md` presented proximity gating under a heading
+reading "Spatial safety" — a claim D-024 had already established was false,
+since an injected planner calls `move_to` and proceeds. Stated as security it
+was an invitation to be dismantled by the first reviewer who tried. It now
+states plainly that it is not a security boundary, states what it actually
+provides — no consequential side effect without a visible, pre-action,
+non-textual signal — reports the measured result including the attack that beats
+it, and names the authorization kernel as the real boundary.
+
+The venue is committed: Paper A, systems/security, with one human evaluation
+folded in from Paper B. The gap to that venue's evidence bar is stated rather
+than glossed — it needs real-model results and participants, and section 7.2 of
+the research report lists exactly what is missing.
+
 ### Parts 11–14 — Added by external assessment
 
 Added on 2026-08-03 after an assessment of the whole repository. Parts 1–6
@@ -1961,3 +2397,12 @@ fixtures driven by a stub model. Parts 11–14 close that gap in order —
 integrity first, then real-model evidence, then the original threat class the
 codebase has been defending against without naming, then communication. No
 further mechanism raises the ceiling until Part 12 exists.
+
+**Status as of 2026-08-04.** Parts 11, 13, and 14 are complete; Part 12's engine
+is complete and its evidence is blocked on a credential. The assessment's core
+finding still stands and should not be softened: *no language model has been in
+the loop of any measurement in this repository.* What changed is that this is no
+longer an architectural gap. It is one command, and the command is written down
+in section 9. Every mechanism built since the assessment was built so that the
+moment that command runs, the evidence is real — which is the most a repository
+without credentials can do about it.
