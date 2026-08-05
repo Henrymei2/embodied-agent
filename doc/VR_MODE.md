@@ -92,8 +92,16 @@ Locomotion rules:
 - Apply a radial `0.2` thumbstick dead zone and rescale the remaining magnitude
   from `[0.2, 1]` to `[0, 1]`.
 - Project the headset's forward vector onto the floor plane and normalize it.
-  Derive right from that vector. Do not use controller orientation.
+  Derive right from that vector. Read orientation directly from the current
+  animation callback's `XRFrame.getViewerPose()` and compose it with the
+  locomotion rig yaw. Three.js does not merge the current viewer pose into its
+  render camera until `renderer.render()`, which occurs after locomotion is
+  calculated. Do not use the previous render camera or controller orientation.
 - Move the camera rig by `(right * axisX - forward * axisY) * 1.5 m/s * dt`.
+- Normalize Quest Touch Plus `xr-standard` input at the controller boundary:
+  axis 2 is left/right and axis 3 is vertical with forward negative. Convert it
+  to semantic `{x: axis2, y: -axis3}` before applying head-relative movement;
+  do not leak device ordering into world helpers.
 - Keep the rig at least 25 cm inside the room and outside the 25 cm clearance
   zone around furniture and the companion. If a diagonal move is blocked, try
   each axis independently so the user slides along an edge instead of sticking.
@@ -119,6 +127,11 @@ remote controller models. On `select`, raycast in this order:
 1. visible panel controls;
 2. the panel background;
 3. furniture meshes.
+
+The target-ray spaces and headset camera must share the locomotion rig. WebXR
+reports both in reference-space coordinates; parenting controllers at the scene
+root while moving only the camera rig leaves the ray behind at its initial
+world position and makes interaction disagree with locomotion.
 
 Selecting furniture toggles its panel and sends the existing
 `{"type":"object-interaction","object_id":"..."}` message, subject to the
@@ -173,10 +186,12 @@ right and `y` increases toward the front. Nodes are axis-aligned; VR furniture
 rotation is not represented in v1.
 
 Each furniture node becomes a box with dimensions `width`, `height`, and
-`depth`. Its existing PNG is applied to the face looking toward increasing
-document `y`; the other five faces use `color`. Preserve alpha on the textured
-face. An object without a texture, such as `drawing_board`, is a solid box.
-State textures such as the unread mailbox replace only the textured face.
+`depth`. `elevation` is already the centre height of the box and is passed to
+Three.js directly; renderers must not add another half-height. Its existing PNG
+is aspect-contained on slightly offset decals on all four vertical faces; the
+top, bottom, and box itself use `color`. Preserve alpha on every decal. An
+object without a texture, such as `drawing_board`, is a solid box. State
+textures such as the unread mailbox replace the four decals together.
 
 Texture load failure falls back to the solid material and records one visible
 warning; it does not remove the object from the world. Sanitize asset sources
@@ -254,6 +269,13 @@ interface VrStageNode {
 normally uses `height / 2`; wall furniture uses an explicit mounting height.
 Elevation affects rendering and endpoint volume checks, but MVP reach and path
 distance use floor-plane `x/y` only.
+
+A successful VR `move_to` has a stronger postcondition than merely reaching a
+clear endpoint: after the frontend result is saved and reloaded, the target
+must be admitted by the same proximity projection used by tool authorization.
+If it is not, the move reports the final coordinates, centre distance, and
+effective reach instead of claiming arrival. Mounted height never changes this
+floor-plane authorization rule.
 
 Store the document at `stage_state/<sanitized-conf_uid>/vr_stage.json`, beside
 the current `stage.json`. Use the existing path sanitization, atomic write, and

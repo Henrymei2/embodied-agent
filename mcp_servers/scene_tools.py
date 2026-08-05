@@ -40,13 +40,20 @@ from mcp_servers.bridge_client import post_frontend_action as _post_frontend_act
 from mcp_servers.bridge_client import (
     post_frontend_action_result as _post_frontend_action_result,
 )
-from src.open_llm_vtuber.scene_state import load_scene_state, load_scene_world, validate_scene
+from src.open_llm_vtuber.scene_state import (
+    load_scene_state,
+    load_scene_world,
+    validate_scene,
+)
 from src.open_llm_vtuber.stage_state_manager import (
     load_stage_state,
     validate_stage,
     world_from_stage,
 )
-from src.open_llm_vtuber.vr_stage_state_manager import docking_point
+from src.open_llm_vtuber.vr_stage_state_manager import (
+    docking_point,
+    verify_vr_target_reach,
+)
 from src.open_llm_vtuber.world_model import World, WorldPoint
 
 _OBJECT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -206,10 +213,15 @@ async def move_to(target: str) -> str:
         where = f"x={position.x:g}, y={position.y:g}" if position else "an unknown spot"
         return f"Error: the walk to {target} did not finish; the agent is at {where}."
 
-    return (
-        f"OK: arrived at {target} "
-        f"(x={final_position.x:g}, y={final_position.y:g})."
-    )
+    if _get_scene_mode() == "vr":
+        reachable, detail = verify_vr_target_reach(_load_state(conf_uid), target)
+        if not reachable:
+            return (
+                f"Error: arrived at {target}, but its tools remain unavailable "
+                f"after reloading the saved VR scene ({detail})."
+            )
+
+    return f"OK: arrived at {target} (x={final_position.x:g}, y={final_position.y:g})."
 
 
 @mcp.tool()

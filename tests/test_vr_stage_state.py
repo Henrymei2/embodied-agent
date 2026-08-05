@@ -12,6 +12,7 @@ from src.open_llm_vtuber.vr_stage_state_manager import (
     save_vr_stage_state,
     validate_vr_endpoint,
     validate_vr_stage,
+    verify_vr_target_reach,
 )
 from src.open_llm_vtuber.world_model import WorldPoint
 
@@ -66,7 +67,9 @@ def test_normal_and_vr_persistence_are_independent(tmp_path, monkeypatch):
     assert json.loads(vr_path.read_text())["nodes"][-1]["x"] == 75
 
 
-def test_missing_and_corrupt_vr_state_fall_back_without_importing_normal(tmp_path, monkeypatch):
+def test_missing_and_corrupt_vr_state_fall_back_without_importing_normal(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     normal = get_default_stage("character")
     normal["nodes"][-1]["x"] = 777
@@ -107,11 +110,19 @@ def test_docking_fails_without_moving_when_all_four_candidates_are_blocked():
         (target["x"] - target["width"] / 2 - radius - gap, target["y"]),
     ]
     for index, (x, y) in enumerate(candidates):
-        stage["nodes"].append({
-            "id": f"blocker_{index}", "type": "furniture", "x": x, "y": y,
-            "width": 30, "depth": 30, "height": 30, "elevation": 15,
-            "color": "#334155",
-        })
+        stage["nodes"].append(
+            {
+                "id": f"blocker_{index}",
+                "type": "furniture",
+                "x": x,
+                "y": y,
+                "width": 30,
+                "depth": 30,
+                "height": 30,
+                "elevation": 15,
+                "color": "#334155",
+            }
+        )
 
     point, error = docking_point(stage, "hourglass")
     assert point is None
@@ -127,3 +138,47 @@ def test_vr_reachability_uses_the_floor_plane_and_vr_file(tmp_path, monkeypatch)
 
     assert "computer" in get_scene_reachable_objects("character", mode="vr")
     assert "computer" not in get_scene_reachable_objects("character", mode="normal")
+
+
+def test_every_default_vr_docking_point_unlocks_its_target():
+    stage = get_default_vr_stage("character")
+    for node in stage["nodes"]:
+        if node["type"] != "furniture":
+            continue
+        point, error = docking_point(stage, node["id"])
+        assert error is None, node["id"]
+        assert point is not None
+        allowed, detail = verify_vr_target_reach(stage, node["id"], point=point)
+        assert allowed, detail
+
+
+def test_wall_height_does_not_change_window_tool_reach():
+    stage = get_default_vr_stage("character")
+    window = next(node for node in stage["nodes"] if node["id"] == "window")
+    point, error = docking_point(stage, "window")
+    assert error is None and point is not None
+    before = verify_vr_target_reach(stage, "window", point=point)
+
+    window["height"] = 20
+    window["elevation"] = 250
+    after = verify_vr_target_reach(stage, "window", point=point)
+    assert before[0] is True
+    assert after[0] is True
+    assert (
+        before[1].split("center_distance=", 1)[1]
+        == after[1].split("center_distance=", 1)[1]
+    )
+
+
+def test_too_small_custom_reach_fails_with_distance_diagnostics():
+    stage = get_default_vr_stage("character")
+    window = next(node for node in stage["nodes"] if node["id"] == "window")
+    window["reach"] = 10
+
+    point, error = docking_point(stage, "window")
+
+    assert point is None
+    assert error is not None
+    assert "satisfies tool reach" in error
+    assert "center_distance=" in error
+    assert "effective_reach=10.0" in error

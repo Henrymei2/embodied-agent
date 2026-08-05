@@ -1,17 +1,24 @@
 import { describe, expect, it } from "vitest";
+import * as THREE from "three";
 import {
   clampCaptionText,
   floorToScene,
+  furnitureCenterSceneY,
+  furnitureDecalLayouts,
   browserEndpoints,
   headRelativeDelta,
+  inputSourcesByHand,
   isViewerPositionClear,
   pointInsideAabb,
   pressedEdge,
+  questLocomotionStick,
   rescaleThumbstick,
   selectDockingPoint,
   selectViewerSpawn,
   snapTurnStep,
   validateVrStageShape,
+  viewerForwardFromPose,
+  viewerPoseCamera,
   withRendererMode,
 } from "./vr-helpers";
 
@@ -79,6 +86,57 @@ describe("VR spatial helpers", () => {
 });
 
 describe("Quest controller helpers", () => {
+  it("reads live headset pose from an eye camera instead of the outer XR rig", () => {
+    const eye = new THREE.PerspectiveCamera();
+    const xrCamera = new THREE.ArrayCamera([eye]);
+    expect(viewerPoseCamera(xrCamera)).toBe(eye);
+    expect(viewerPoseCamera(new THREE.ArrayCamera())).toBeInstanceOf(THREE.ArrayCamera);
+  });
+
+  it("rotates forward locomotion with the live headset yaw", () => {
+    const eye = new THREE.PerspectiveCamera();
+    eye.rotation.y = -Math.PI / 2;
+    eye.updateMatrixWorld(true);
+    const forward = viewerPoseCamera(new THREE.ArrayCamera([eye]))
+      .getWorldDirection(new THREE.Vector3());
+    forward.y = 0;
+    forward.normalize();
+    const delta = headRelativeDelta({ x: 0, y: 1 }, forward, 1, 1);
+    expect(delta.x).toBeCloseTo(1);
+    expect(delta.z).toBeCloseTo(0);
+  });
+
+  it("derives current-frame facing directly from XR viewer pose and rig yaw", () => {
+    const headYaw = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      -Math.PI / 2,
+    );
+    const headFacing = viewerForwardFromPose(headYaw);
+    expect(headFacing.x).toBeCloseTo(1);
+    expect(headFacing.z).toBeCloseTo(0);
+
+    const rigYaw = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI / 2,
+    );
+    const combined = viewerForwardFromPose(headYaw, rigYaw);
+    expect(combined.x).toBeCloseTo(0);
+    expect(combined.z).toBeCloseTo(-1);
+  });
+
+  it("resolves controllers by handedness regardless of source order", () => {
+    const right = { handedness: "right" };
+    const left = { handedness: "left" };
+    expect(inputSourcesByHand([right, left])).toEqual({ left, right });
+  });
+
+  it("normalizes the Quest xr-standard primary stick axes", () => {
+    expect(questLocomotionStick(0, -1)).toEqual({ x: 0, y: 1 });
+    expect(questLocomotionStick(0, 1)).toEqual({ x: 0, y: -1 });
+    expect(questLocomotionStick(-1, 0)).toEqual({ x: -1, y: 0 });
+    expect(questLocomotionStick(1, 0)).toEqual({ x: 1, y: 0 });
+  });
+
   it("applies and rescales the thumbstick dead zone", () => {
     expect(rescaleThumbstick(0.1, 0.1)).toEqual({ x: 0, y: 0 });
     expect(rescaleThumbstick(1, 0)).toEqual({ x: 1, y: 0 });
@@ -86,6 +144,19 @@ describe("Quest controller helpers", () => {
 
   it("moves relative to horizontal headset facing", () => {
     expect(headRelativeDelta({ x: 0, y: 1 }, { x: 0, z: -1 }, 1.5, 2)).toEqual({ x: 0, z: -3 });
+    expect(headRelativeDelta({ x: 1, y: 0 }, { x: 0, z: -1 }, 1.5, 2)).toEqual({ x: 3, z: 0 });
+  });
+
+  it("maps all four raw Quest stick directions around headset forward", () => {
+    const facing = { x: 0, z: -1 };
+    expect(headRelativeDelta(questLocomotionStick(0, -1), facing, 1, 1)).toEqual({ x: 0, z: -1 });
+    expect(headRelativeDelta(questLocomotionStick(0, 1), facing, 1, 1)).toEqual({ x: 0, z: 1 });
+    const left = headRelativeDelta(questLocomotionStick(-1, 0), facing, 1, 1);
+    const right = headRelativeDelta(questLocomotionStick(1, 0), facing, 1, 1);
+    expect(left.x).toBe(-1);
+    expect(left.z).toBeCloseTo(0);
+    expect(right.x).toBe(1);
+    expect(right.z).toBeCloseTo(0);
   });
 
   it("requires rearming between 30 degree snap turns", () => {
@@ -99,5 +170,27 @@ describe("Quest controller helpers", () => {
     expect(pressedEdge(true, false)).toBe(true);
     expect(pressedEdge(true, true)).toBe(false);
     expect(pressedEdge(false, true)).toBe(false);
+  });
+});
+
+describe("VR furniture presentation helpers", () => {
+  it("uses elevation as the furniture centre without adding half-height", () => {
+    expect(furnitureCenterSceneY(165)).toBe(1.65);
+  });
+
+  it("places the same contained texture on all four side faces", () => {
+    const layouts = furnitureDecalLayouts(
+      { id: "bed", x: 480, y: 430, width: 210, depth: 150, height: 65 },
+      { width: 230, height: 180 },
+    );
+    expect(layouts.map((layout) => layout.face)).toEqual(["+x", "-x", "+z", "-z"]);
+    layouts.forEach((layout) => {
+      expect(layout.width / layout.height).toBeCloseTo(230 / 180);
+      expect(layout.height).toBeLessThanOrEqual(65);
+    });
+    expect(layouts[0].width).toBeLessThanOrEqual(150);
+    expect(layouts[1].width).toBeLessThanOrEqual(150);
+    expect(layouts[2].width).toBeLessThanOrEqual(210);
+    expect(layouts[3].width).toBeLessThanOrEqual(210);
   });
 });

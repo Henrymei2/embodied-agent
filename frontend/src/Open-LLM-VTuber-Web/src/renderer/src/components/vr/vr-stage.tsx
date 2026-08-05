@@ -10,13 +10,19 @@ import { useAgentActivity } from "@/context/agent-activity-context";
 import { useWebSocket } from "@/context/websocket-context";
 import {
   floorToScene,
+  furnitureCenterSceneY,
+  furnitureDecalLayouts,
   headRelativeDelta,
+  inputSourcesByHand,
   isViewerPositionClear,
   pressedEdge,
+  questLocomotionStick,
   rescaleThumbstick,
   selectViewerSpawn,
   snapTurnStep,
   clampCaptionText,
+  viewerForwardFromPose,
+  viewerPoseCamera,
 } from "@/utils/vr-helpers";
 
 const SCALE = 0.01;
@@ -44,6 +50,8 @@ interface VrRuntime {
   lastFrame: number;
   clickTimes: Map<string, number>;
   collisionNodes: VrStageNode[];
+  panelGeneration: number;
+  textureWarnings: Set<string>;
 }
 
 interface PanelAction {
@@ -199,8 +207,23 @@ function createSpatialAvatar(node: VrStageNode) {
   head.position.y = 1.25;
   head.castShadow = true;
   avatar.add(head);
-  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.4, 0.2), darkGlass);
-  face.position.set(0, 1.25, 0.301);
+  // A shallow spherical visor follows the head instead of floating as a flat
+  // plane in front of it. The slightly larger radius prevents z-fighting while
+  // preserving the same silhouette and material treatment.
+  const face = new THREE.Mesh(
+    new THREE.SphereGeometry(
+      0.347,
+      32,
+      12,
+      Math.PI / 2 - 0.64,
+      1.28,
+      Math.PI / 2 - 0.31,
+      0.62,
+    ),
+    darkGlass,
+  );
+  face.scale.copy(head.scale);
+  face.position.y = 1.25;
   avatar.add(face);
   const leftEye = new THREE.Mesh(new THREE.CircleGeometry(0.035, 24), glow);
   leftEye.position.set(-0.09, 1.27, 0.307);
@@ -265,7 +288,9 @@ export default function VrStage() {
   const startMicRef = useRef(startMic);
   const stopMicRef = useRef(stopMic);
   const micStatusTimerRef = useRef<number | null>(null);
+  const warningTimerRef = useRef<number | null>(null);
   const [micStatus, setMicStatus] = useState<string | null>(null);
+  const [vrWarning, setVrWarning] = useState<string | null>(null);
   const initialMicOnRef = useRef(micOn);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
@@ -281,6 +306,7 @@ export default function VrStage() {
 
   useEffect(() => () => {
     if (micStatusTimerRef.current !== null) window.clearTimeout(micStatusTimerRef.current);
+    if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -323,17 +349,23 @@ export default function VrStage() {
     const controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
     controllers.forEach((controller) => {
       const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -2.2)];
-      controller.add(new THREE.Line(
+      const ray = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(points),
         new THREE.LineBasicMaterial({ color: 0xc7d2fe, transparent: true, opacity: 0.58 }),
-      ));
+      );
+      ray.visible = false;
+      controller.add(ray);
       const reticle = new THREE.Mesh(
         new THREE.RingGeometry(0.009, 0.014, 24),
         new THREE.MeshBasicMaterial({ color: 0xe0e7ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide }),
       );
       reticle.position.z = -2.2;
+      reticle.visible = false;
       controller.add(reticle);
-      scene.add(controller);
+      // Target-ray poses are reported in XR reference-space coordinates. Keep
+      // them under the same locomotion rig as the headset so walking and snap
+      // turns transform the head and hands together.
+      rig.add(controller);
     });
 
     const hudTexture = captionTexture("Preparing your companion space", "Connecting");
@@ -351,8 +383,26 @@ export default function VrStage() {
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
       clickTimes: new Map<string, number>(),
       collisionNodes: [],
+      panelGeneration: 0,
+      textureWarnings: new Set<string>(),
     };
     runtimeRef.current = runtime;
+
+    const setPanelLines = (panel: THREE.Mesh, lines: string[]) => {
+      const material = panel.material as THREE.MeshBasicMaterial;
+      const previous = material.map;
+      material.map = canvasTexture(lines, 768, 300);
+      material.needsUpdate = true;
+      previous?.dispose();
+    };
+
+    const closePanel = () => {
+      runtime.panelGeneration += 1;
+      if (!runtime.panel) return;
+      scene.remove(runtime.panel);
+      disposeObject(runtime.panel);
+      runtime.panel = null;
+    };
 
     const selectFurniture = async (node: VrStageNode) => {
       const now = performance.now();
@@ -361,13 +411,34 @@ export default function VrStage() {
         sendMessageRef.current({ type: "object-interaction", object_id: node.id });
       }
       const closingCurrent = runtime.panel?.userData.nodeId === node.id;
-      if (runtime.panel) {
-        scene.remove(runtime.panel);
-        disposeObject(runtime.panel);
-        runtime.panel = null;
-      }
+      closePanel();
       if (closingCurrent || !node.uiWindow) return;
-      const lines = [node.uiWindow.title, node.uiWindow.body || "", "Trigger the object again to close"];
+      const generation = runtime.panelGeneration;
+      const lines = [node.uiWindow.title, node.uiWindow.body || "", "Loading…"];
+      const panelTexture = canvasTexture(lines, 768, 300);
+      const panel = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.5, 0.59),
+        new THREE.MeshBasicMaterial({ map: panelTexture, transparent: true, side: THREE.DoubleSide }),
+      );
+      const position = documentToScene(stageRef.current!, node.x, node.y);
+      panel.position.set(position.x, Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE), position.z);
+      const headset = viewerPoseCamera(renderer.xr.getCamera());
+      const headsetPosition = new THREE.Vector3();
+      headset.getWorldPosition(headsetPosition);
+      panel.lookAt(headsetPosition.x, panel.position.y, headsetPosition.z);
+      panel.userData.panel = true;
+      panel.userData.node = node;
+      panel.userData.nodeId = node.id;
+      const closeButton = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.22, 0.12),
+        new THREE.MeshBasicMaterial({ map: canvasTexture(["Close"], 220, 96), transparent: true }),
+      );
+      closeButton.position.set(0.58, 0.22, 0.012);
+      closeButton.userData.panelClose = true;
+      panel.add(closeButton);
+      scene.add(panel);
+      runtime.panel = panel;
+
       const route = node.uiWindow.provider ? providerRoutes[node.uiWindow.provider] : undefined;
       let liveData: Record<string, unknown> | null = null;
       if (route) {
@@ -384,20 +455,9 @@ export default function VrStage() {
           lines.splice(2, 0, "Live data unavailable");
         }
       }
-      const panelTexture = canvasTexture(lines, 768, 300);
-      const panel = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.5, 0.59),
-        new THREE.MeshBasicMaterial({ map: panelTexture, transparent: true, side: THREE.DoubleSide }),
-      );
-      const position = documentToScene(stageRef.current!, node.x, node.y);
-      panel.position.set(position.x, Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE), position.z);
-      const headset = renderer.xr.getCamera();
-      const headsetPosition = new THREE.Vector3();
-      headset.getWorldPosition(headsetPosition);
-      panel.lookAt(headsetPosition.x, panel.position.y, headsetPosition.z);
-      panel.userData.panel = true;
-      panel.userData.node = node;
-      panel.userData.nodeId = node.id;
+      if (runtime.panel !== panel || runtime.panelGeneration !== generation) return;
+      lines.splice(lines.indexOf("Loading…"), 1, "Select the furniture again to close");
+      setPanelLines(panel, lines);
       const pending = Array.isArray(liveData?.pending) ? liveData.pending[0] as Record<string, unknown> | undefined : undefined;
       const collection = node.uiWindow.provider === "plan_status" ? "plans" : node.uiWindow.provider === "skill_status" ? "skills" : null;
       const decisionId = collection === "plans" ? pending?.plan_id : pending?.slug;
@@ -415,8 +475,6 @@ export default function VrStage() {
           panel.add(button);
         });
       }
-      scene.add(panel);
-      runtime.panel = panel;
     };
 
     const activatePanelAction = async (action: PanelAction) => {
@@ -434,9 +492,7 @@ export default function VrStage() {
 
     const handleSelect = (event: THREE.Event & { target: THREE.Object3D }) => {
       const controller = event.target;
-      const sourceIndex = controllers.indexOf(controller as THREE.XRTargetRaySpace);
-      const source = xrSession.inputSources[sourceIndex];
-      if (source?.handedness !== "right") return;
+      if (controller.userData.handedness !== "right") return;
       const origin = new THREE.Vector3();
       const direction = new THREE.Vector3(0, 0, -1);
       controller.getWorldPosition(origin);
@@ -448,27 +504,51 @@ export default function VrStage() {
         void activatePanelAction(panelAction);
         return;
       }
+      if (hits.some((hit) => hit.object.userData.panelClose === true)) {
+        closePanel();
+        return;
+      }
       const node = hits.map((hit) => hit.object.userData.node as VrStageNode | undefined).find(Boolean);
       if (node) void selectFurniture(node);
     };
+    const handleConnected = (event: THREE.Event & { target: THREE.Object3D; data: XRInputSource }) => {
+      event.target.userData.handedness = event.data.handedness;
+      event.target.children.forEach((child) => { child.visible = event.data.handedness === "right"; });
+    };
+    const handleDisconnected = (event: THREE.Event & { target: THREE.Object3D }) => {
+      event.target.userData.handedness = undefined;
+      event.target.children.forEach((child) => { child.visible = false; });
+    };
     controllers.forEach((controller) => controller.addEventListener("select", handleSelect as never));
+    controllers.forEach((controller) => controller.addEventListener("connected", handleConnected as never));
+    controllers.forEach((controller) => controller.addEventListener("disconnected", handleDisconnected as never));
 
-    const renderFrame = (time: number) => {
+    const renderFrame = (time: number, frame?: XRFrame) => {
       const currentStage = stageRef.current;
       const dt = Math.min(0.05, (time - runtime.lastFrame) / 1000);
       runtime.lastFrame = time;
-      const inputSources = [...xrSession.inputSources];
-      inputSources.forEach((source, index) => {
-        controllers[index].userData.handedness = source.handedness;
-      });
-      const left = inputSources.find((source) => source.handedness === "left")?.gamepad;
-      const right = inputSources.find((source) => source.handedness === "right")?.gamepad;
+      const inputSources = inputSourcesByHand(xrSession.inputSources);
+      const left = inputSources.left?.gamepad;
+      const right = inputSources.right?.gamepad;
       if (left && left.axes.length >= 4 && currentStage) {
-        const axes = rescaleThumbstick(left.axes[2] || 0, left.axes[3] || 0, DEAD_ZONE);
-        const xrCamera = renderer.xr.getCamera();
-        const forward = xrCamera.getWorldDirection(new THREE.Vector3());
-        forward.y = 0;
-        if (forward.lengthSq() > 0) forward.normalize();
+        const rawAxes = questLocomotionStick(left.axes[2] || 0, left.axes[3] || 0);
+        const axes = rescaleThumbstick(rawAxes.x, rawAxes.y, DEAD_ZONE);
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const viewerPose = frame && referenceSpace
+          ? frame.getViewerPose(referenceSpace)
+          : null;
+        const forward = viewerPose
+          ? viewerForwardFromPose(
+            viewerPose.transform.orientation,
+            rig.getWorldQuaternion(new THREE.Quaternion()),
+          )
+          : (() => {
+            const fallback = viewerPoseCamera(renderer.xr.getCamera())
+              .getWorldDirection(new THREE.Vector3());
+            fallback.y = 0;
+            if (fallback.lengthSq() > 0) fallback.normalize();
+            return fallback;
+          })();
         const delta = headRelativeDelta(axes, forward, MOVE_SPEED, dt);
         const halfWidth = currentStage.room.width * SCALE / 2 - 0.25;
         const halfDepth = currentStage.room.depth * SCALE / 2 - 0.25;
@@ -491,7 +571,7 @@ export default function VrStage() {
         const axis = right.axes[2] || 0;
         const turn = snapTurnStep(axis, runtime.turnArmed, SNAP_THRESHOLD, SNAP_REARM, SNAP_RADIANS);
         if (turn.delta) {
-          const xrCamera = renderer.xr.getCamera();
+          const xrCamera = viewerPoseCamera(renderer.xr.getCamera());
           const before = xrCamera.getWorldPosition(new THREE.Vector3());
           rig.rotation.y += turn.delta;
           rig.updateMatrixWorld(true);
@@ -543,7 +623,7 @@ export default function VrStage() {
         visuals.chest.scale.setScalar(1 + Math.max(0, pulse) * 0.08);
         visuals.halo.rotation.z = time * 0.00012;
         const headsetPosition = new THREE.Vector3();
-        renderer.xr.getCamera().getWorldPosition(headsetPosition);
+        viewerPoseCamera(renderer.xr.getCamera()).getWorldPosition(headsetPosition);
         runtime.avatar.lookAt(headsetPosition.x, runtime.avatar.position.y, headsetPosition.z);
       }
       renderer.render(scene, camera);
@@ -554,6 +634,8 @@ export default function VrStage() {
     return () => {
       renderer.setAnimationLoop(null);
       controllers.forEach((controller) => controller.removeEventListener("select", handleSelect as never));
+      controllers.forEach((controller) => controller.removeEventListener("connected", handleConnected as never));
+      controllers.forEach((controller) => controller.removeEventListener("disconnected", handleDisconnected as never));
       disposeObject(scene);
       renderer.dispose();
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
@@ -566,7 +648,8 @@ export default function VrStage() {
     if (!runtime || !stage) return;
     const { furniture, scene } = runtime;
     while (furniture.children.length) {
-      const child = furniture.children.pop()!;
+      const child = furniture.children[furniture.children.length - 1];
+      furniture.remove(child);
       disposeObject(child);
     }
     const loader = new THREE.TextureLoader();
@@ -577,26 +660,63 @@ export default function VrStage() {
       });
       const materials: THREE.Material[] = Array.from({ length: 6 }, () => solid.clone());
       solid.dispose();
-      if (node.texture?.src) {
-        const texture = loader.load(node.texture.src);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.magFilter = THREE.LinearFilter;
-        texture.minFilter = THREE.LinearMipmapLinearFilter;
-        texture.anisotropy = Math.min(8, runtime.renderer.capabilities.getMaxAnisotropy());
-        materials[4].dispose();
-        materials[5].dispose();
-        materials[4] = new THREE.MeshStandardMaterial({ map: texture, transparent: true, roughness: 0.55 });
-        materials[5] = new THREE.MeshStandardMaterial({ map: texture, transparent: true, roughness: 0.55 });
-      }
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(node.width * SCALE, node.height * SCALE, node.depth * SCALE),
         materials,
       );
       const position = documentToScene(stage, node.x, node.y);
-      mesh.position.set(position.x, (node.elevation + node.height / 2) * SCALE, position.z);
+      mesh.position.set(position.x, furnitureCenterSceneY(node.elevation), position.z);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       mesh.userData.node = node;
+      if (node.texture?.src) {
+        loader.load(
+          node.texture.src,
+          (texture) => {
+            if (mesh.parent !== furniture) {
+              texture.dispose();
+              return;
+            }
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.magFilter = THREE.LinearFilter;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            texture.anisotropy = Math.min(8, runtime.renderer.capabilities.getMaxAnisotropy());
+            const image = texture.image as { width?: number; height?: number };
+            const layouts = furnitureDecalLayouts(
+              node,
+              { width: image.width || 1, height: image.height || 1 },
+            );
+            layouts.forEach((layout) => {
+              const decal = new THREE.Mesh(
+                new THREE.PlaneGeometry(layout.width * SCALE, layout.height * SCALE),
+                new THREE.MeshStandardMaterial({
+                  map: texture,
+                  transparent: true,
+                  roughness: 0.55,
+                  side: THREE.DoubleSide,
+                  depthWrite: false,
+                }),
+              );
+              decal.position.set(layout.x * SCALE, 0, layout.z * SCALE);
+              decal.rotation.y = layout.rotationY;
+              decal.renderOrder = 1;
+              decal.userData.node = node;
+              mesh.add(decal);
+            });
+          },
+          undefined,
+          () => {
+            if (runtime.textureWarnings.has(node.id)) return;
+            runtime.textureWarnings.add(node.id);
+            setVrWarning(`Texture unavailable: ${node.label || node.id}`);
+            if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
+            warningTimerRef.current = window.setTimeout(() => {
+              setVrWarning(null);
+              warningTimerRef.current = null;
+            }, 3000);
+          },
+        );
+      }
       const edge = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry, 24),
         new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 }),
@@ -699,20 +819,21 @@ export default function VrStage() {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const activityText = activity.phase === "idle" ? "" : activity.phase.replace(/-/g, " ");
-    const shouldShow = Boolean(subtitleText.trim() || activityText || micStatus || wsState !== "OPEN");
+    const shouldShow = Boolean(subtitleText.trim() || activityText || micStatus || vrWarning || wsState !== "OPEN");
     runtime.hud.visible = shouldShow;
     if (!shouldShow) return;
     const status = [
       wsState === "OPEN" ? "Connected" : wsState.toLowerCase(),
       activityText,
       micStatus,
+      vrWarning,
     ].filter(Boolean).join(" · ");
-    const caption = subtitleText.trim() || micStatus || activityText || "Reconnecting to your companion";
+    const caption = subtitleText.trim() || vrWarning || micStatus || activityText || "Reconnecting to your companion";
     const next = captionTexture(caption, status);
     (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
     runtime.hudTexture.dispose();
     runtime.hudTexture = next;
-  }, [subtitleText, activity, micStatus, wsState]);
+  }, [subtitleText, activity, micStatus, vrWarning, wsState]);
 
   return (
     <>

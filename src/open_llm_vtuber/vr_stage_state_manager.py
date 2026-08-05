@@ -307,6 +307,40 @@ def validate_vr_endpoint(
     return True, None
 
 
+def verify_vr_target_reach(
+    stage: dict[str, Any],
+    target_name: str,
+    *,
+    point: WorldPoint | None = None,
+) -> tuple[bool, str]:
+    """Explain whether a VR position unlocks a target without widening reach."""
+    from .semantic_projection import ProjectionError, project_vr_stage
+
+    try:
+        projection = project_vr_stage(stage)
+    except (ProjectionError, ValueError) as exc:
+        return False, f"VR proximity projection failed: {exc}"
+    target = projection.world.find(target_name)
+    if target is None or target.entity_id in projection.withheld_ids:
+        return False, f"VR target '{target_name}' is missing or has an ambiguous label"
+    origin = point
+    if origin is None:
+        agent = projection.agent()
+        if agent is None:
+            return False, "VR scene has no avatar"
+        origin = WorldPoint(agent.position.x, agent.position.y)
+    center_distance = origin.distance_to(
+        WorldPoint(target.position.x, target.position.y)
+    )
+    effective_reach = projection.reaches.get(target.entity_id, 0.0)
+    allowed = center_distance <= effective_reach
+    detail = (
+        f"target={target.label}, position=({origin.x:g}, {origin.y:g}), "
+        f"center_distance={center_distance:.1f}, effective_reach={effective_reach:.1f}"
+    )
+    return allowed, detail
+
+
 def docking_point(
     stage: dict[str, Any], target_name: str
 ) -> tuple[WorldPoint | None, str | None]:
@@ -338,6 +372,19 @@ def docking_point(
     valid = [point for point in candidates if validate_vr_endpoint(stage, point)[0]]
     if not valid:
         return None, f"no clear stopping point is available near {target_name}"
+    reachable = [
+        point
+        for point in valid
+        if verify_vr_target_reach(stage, target_name, point=point)[0]
+    ]
+    if not reachable:
+        closest = min(valid, key=WorldPoint(x, y).distance_to)
+        _allowed, detail = verify_vr_target_reach(stage, target_name, point=closest)
+        return (
+            None,
+            f"no stopping point near {target_name} satisfies tool reach ({detail})",
+        )
+    valid = reachable
     origin = WorldPoint(float(avatar["x"]), float(avatar["y"]))
     # Python's stable sort preserves north/east/south/west for exact ties.
     valid.sort(key=origin.distance_to)

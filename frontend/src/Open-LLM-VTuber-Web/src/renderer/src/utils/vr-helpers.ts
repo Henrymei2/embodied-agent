@@ -11,6 +11,107 @@ export interface Point2 {
   y: number;
 }
 
+export interface QuaternionLike {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
+export interface HandedInputSource {
+  handedness: string;
+  gamepad?: Gamepad | null;
+}
+
+export interface FurnitureDecalNode extends FloorAabbNode {
+  height: number;
+}
+
+export function inputSourcesByHand<T extends HandedInputSource>(sources: Iterable<T>) {
+  const ordered = [...sources];
+  return {
+    left: ordered.find((source) => source.handedness === "left"),
+    right: ordered.find((source) => source.handedness === "right"),
+  };
+}
+
+/** The outer WebXR ArrayCamera follows the locomotion rig; an eye camera
+ * carries the live headset pose. Either eye has the same useful facing vector. */
+export function viewerPoseCamera(xrCamera: ArrayCamera): Camera {
+  return xrCamera.cameras[0] || xrCamera;
+}
+
+function rotateVector(
+  vector: { x: number; y: number; z: number },
+  quaternion: QuaternionLike,
+) {
+  const uv = {
+    x: quaternion.y * vector.z - quaternion.z * vector.y,
+    y: quaternion.z * vector.x - quaternion.x * vector.z,
+    z: quaternion.x * vector.y - quaternion.y * vector.x,
+  };
+  const uuv = {
+    x: quaternion.y * uv.z - quaternion.z * uv.y,
+    y: quaternion.z * uv.x - quaternion.x * uv.z,
+    z: quaternion.x * uv.y - quaternion.y * uv.x,
+  };
+  return {
+    x: vector.x + 2 * (quaternion.w * uv.x + uuv.x),
+    y: vector.y + 2 * (quaternion.w * uv.y + uuv.y),
+    z: vector.z + 2 * (quaternion.w * uv.z + uuv.z),
+  };
+}
+
+/** Current-frame headset forward from XR reference space into scene space. */
+export function viewerForwardFromPose(
+  viewerOrientation: QuaternionLike,
+  rigOrientation?: QuaternionLike,
+) {
+  let forward = rotateVector({ x: 0, y: 0, z: -1 }, viewerOrientation);
+  if (rigOrientation) forward = rotateVector(forward, rigOrientation);
+  const magnitude = Math.hypot(forward.x, forward.z);
+  return magnitude
+    ? { x: forward.x / magnitude, z: forward.z / magnitude }
+    : { x: 0, z: 0 };
+}
+
+/** Normalize WebXR's xr-standard primary stick into semantic room axes.
+ * Axis 2 is left/right; axis 3 is down/forward-negative. */
+export function questLocomotionStick(axis2: number, axis3: number): Point2 {
+  return { x: axis2, y: axis3 === 0 ? 0 : -axis3 };
+}
+
+export function furnitureCenterSceneY(elevation: number, unitsPerMeter = 100) {
+  return elevation / unitsPerMeter;
+}
+
+export function furnitureDecalLayouts(
+  node: FurnitureDecalNode,
+  image: { width: number; height: number },
+  offset = 0.5,
+) {
+  const safeImageWidth = Math.max(1, image.width);
+  const safeImageHeight = Math.max(1, image.height);
+  const contain = (faceWidth: number) => {
+    const scale = Math.min(
+      faceWidth / safeImageWidth,
+      node.height / safeImageHeight,
+    );
+    return {
+      width: safeImageWidth * scale,
+      height: safeImageHeight * scale,
+    };
+  };
+  const xFace = contain(node.depth);
+  const zFace = contain(node.width);
+  return [
+    { ...xFace, x: node.width / 2 + offset, z: 0, rotationY: Math.PI / 2, face: "+x" },
+    { ...xFace, x: -node.width / 2 - offset, z: 0, rotationY: -Math.PI / 2, face: "-x" },
+    { ...zFace, x: 0, z: node.depth / 2 + offset, rotationY: 0, face: "+z" },
+    { ...zFace, x: 0, z: -node.depth / 2 - offset, rotationY: Math.PI, face: "-z" },
+  ] as const;
+}
+
 /**
  * Break spoken captions into a small number of headset-safe lines. The final
  * line is truncated rather than allowing a panel to grow into the companion's
@@ -235,3 +336,4 @@ export function selectDockingPoint(
       Math.hypot(b.point.x - avatar.x, b.point.y - avatar.y) || a.order - b.order
     ))[0]?.point || null;
 }
+import type { ArrayCamera, Camera } from "three";

@@ -4,7 +4,8 @@ import io
 import json
 
 from mcp_servers import bridge_client, scene_tools
-from src.open_llm_vtuber.stage_state_manager import get_default_stage
+from src.open_llm_vtuber.stage_state_manager import get_default_stage, world_from_stage
+from src.open_llm_vtuber.vr_stage_state_manager import get_default_vr_stage
 
 
 def test_scene_reads_session_bound_character(monkeypatch):
@@ -259,6 +260,47 @@ async def test_move_to_an_unknown_object_never_reaches_the_frontend(monkeypatch)
     assert await scene_tools.move_to("trapdoor") == (
         "Error: no object found with label 'trapdoor'; cannot move there."
     )
+
+
+async def test_vr_move_to_rechecks_tool_reach_from_saved_scene(monkeypatch):
+    stage = get_default_vr_stage("character")
+    avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
+
+    async def post(_action, args):
+        avatar["x"], avatar["y"] = args["x"], args["y"]
+        return True, None, {"ok": True, "arrived": True}
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_load_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(
+        scene_tools, "_get_world", lambda _conf_uid: world_from_stage(stage)
+    )
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", post)
+
+    assert (await scene_tools.move_to("window")).startswith("OK: arrived at window")
+
+
+async def test_vr_move_to_reports_post_save_reach_mismatch(monkeypatch):
+    stage = get_default_vr_stage("character")
+    avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
+    window = next(node for node in stage["nodes"] if node["id"] == "window")
+
+    async def post(_action, args):
+        avatar["x"], avatar["y"] = args["x"], args["y"]
+        window["reach"] = 1
+        return True, None, {"ok": True, "arrived": True}
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_load_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(
+        scene_tools, "_get_world", lambda _conf_uid: world_from_stage(stage)
+    )
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", post)
+
+    result = await scene_tools.move_to("window")
+    assert "tools remain unavailable" in result
+    assert "center_distance=" in result
+    assert "effective_reach=1.0" in result
 
 
 def test_the_bridge_hands_back_what_the_frontend_reported(monkeypatch):
