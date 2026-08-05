@@ -41,6 +41,9 @@ class AsyncLLM(StatelessLLMInterface):
         logger.info(f"Initialized Claude AsyncLLM with model: {self.model}")
         logger.debug(f"Base URL: {base_url}")
 
+    def get_tool_mode(self):
+        return "Claude"
+
     def _convert_message_format(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Convert message format to Claude's expected format."""
         # Handle potential tool_result content blocks

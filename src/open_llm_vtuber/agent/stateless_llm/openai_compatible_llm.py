@@ -20,6 +20,7 @@ from loguru import logger
 from .stateless_llm_interface import StatelessLLMInterface
 from .request_logging import log_llm_request
 from ...mcpp.types import ToolCallObject
+from ...mcpp.dsml_parser import DSMLStreamParser
 
 
 class AsyncLLM(StatelessLLMInterface):
@@ -58,6 +59,9 @@ class AsyncLLM(StatelessLLMInterface):
             f"Initialized AsyncLLM with the parameters: {self.base_url}, {self.model}"
         )
 
+    def get_tool_mode(self):
+        return "OpenAI"
+
     async def chat_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -85,6 +89,8 @@ class AsyncLLM(StatelessLLMInterface):
         # Tool call related state variables
         accumulated_tool_calls = {}
         in_tool_call = False
+        pending_dsml_calls: List[ToolCallObject] | None = None
+        native_tool_calls_seen = False
 
         try:
             # If system prompt is provided, add it to the messages
@@ -96,6 +102,18 @@ class AsyncLLM(StatelessLLMInterface):
                 ]
 
             available_tools = tools if self.support_tools else NOT_GIVEN
+            # Some OpenAI-compatible DeepSeek endpoints serialize tool calls as
+            # DSML inside `content` even when schemas were supplied. Enable the
+            # compatibility parser only for a non-empty tool set so ordinary
+            # assistant text is never interpreted as an action by a tool-less
+            # request.
+            dsml_parser = (
+                DSMLStreamParser()
+                if self.support_tools
+                and available_tools is not NOT_GIVEN
+                and bool(available_tools)
+                else None
+            )
             log_llm_request(
                 provider="openai_compatible",
                 model=self.model,
@@ -132,6 +150,18 @@ class AsyncLLM(StatelessLLMInterface):
                     )
 
                     if has_tool_calls:
+                        native_tool_calls_seen = True
+                        pending_dsml_calls = None
+                        if dsml_parser is not None:
+                            visible, dsml_calls = dsml_parser.finish()
+                            if visible:
+                                yield visible
+                            if dsml_calls:
+                                logger.info(
+                                    "Discarding DSML compatibility calls because "
+                                    "the provider also returned native tool calls"
+                                )
+                            dsml_parser = None
                         logger.debug(
                             f"Tool calls detected in chunk: {chunk.choices[0].delta.tool_calls}"
                         )
@@ -197,7 +227,23 @@ class AsyncLLM(StatelessLLMInterface):
                     continue
                 elif chunk.choices[0].delta.content is None:
                     chunk.choices[0].delta.content = ""
-                yield chunk.choices[0].delta.content
+                content = chunk.choices[0].delta.content
+                if dsml_parser is None:
+                    yield content
+                else:
+                    visible, dsml_calls = dsml_parser.feed(content)
+                    if visible:
+                        yield visible
+                    if dsml_calls:
+                        logger.info(
+                            "Detected DSML text tool calls: "
+                            + ", ".join(call.function.name for call in dsml_calls)
+                        )
+                        # Keep consuming the provider stream. Some endpoints
+                        # emit both DSML and native tool_calls; native protocol
+                        # data is authoritative and must not execute twice.
+                        pending_dsml_calls = dsml_calls
+                        dsml_parser = None
 
             # If stream ends while still in a tool call, make sure to yield the tool call
             if in_tool_call and accumulated_tool_calls:
@@ -210,6 +256,22 @@ class AsyncLLM(StatelessLLMInterface):
                 ]
 
                 yield complete_tool_calls
+                native_tool_calls_seen = True
+                pending_dsml_calls = None
+
+            if dsml_parser is not None:
+                visible, dsml_calls = dsml_parser.finish()
+                if visible:
+                    yield visible
+                if dsml_calls:
+                    pending_dsml_calls = dsml_calls
+
+            if pending_dsml_calls and not native_tool_calls_seen:
+                logger.info(
+                    "Converted final DSML text to native tool calls: "
+                    + ", ".join(call.function.name for call in pending_dsml_calls)
+                )
+                yield pending_dsml_calls
 
         except APIConnectionError as e:
             logger.error(

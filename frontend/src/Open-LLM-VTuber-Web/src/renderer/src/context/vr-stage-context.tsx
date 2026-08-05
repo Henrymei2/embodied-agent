@@ -79,7 +79,7 @@ const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => (
   Math.hypot(a.x - b.x, a.y - b.y)
 );
 
-const endpointError = (stage: VrStageDocument, x: number, y: number) => {
+export const endpointError = (stage: VrStageDocument, x: number, y: number) => {
   const avatar = stage.nodes.find((node) => node.id === "avatar");
   if (!avatar) return "VR scene has no avatar.";
   const radius = Math.max(avatar.width, avatar.depth) / 2;
@@ -92,6 +92,32 @@ const endpointError = (stage: VrStageDocument, x: number, y: number) => {
   ));
   return collision ? `Agent endpoint is inside ${collision.label || collision.id}.` : null;
 };
+
+export const parseVrMovePath = (args: Record<string, unknown>) => {
+  const path = Array.isArray(args.waypoints)
+    ? args.waypoints.filter((item): item is { x: number; y: number } => Boolean(
+      item && typeof item === "object" &&
+      finite((item as { x?: unknown }).x) && finite((item as { y?: unknown }).y),
+    ))
+    : [];
+  if (!path.length && finite(args.x) && finite(args.y)) path.push({ x: args.x, y: args.y });
+  return path;
+};
+
+export const successfulVrMoveResult = (
+  requestId: string | undefined,
+  state: VrStageDocument,
+  elapsed: number,
+  position: { x: number; y: number },
+): VrFrontendActionResult => ({
+  request_id: requestId,
+  action: "move_to",
+  ok: true,
+  state,
+  arrived: true,
+  duration_ms: elapsed,
+  position,
+});
 
 const mergePatch = (stage: VrStageDocument, patch: Record<string, unknown>): VrStageDocument => {
   const nodePatches = Array.isArray(patch.nodes) ? patch.nodes as Partial<VrStageNode>[] : [];
@@ -169,10 +195,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
         : { request_id, action, ok: false, error: `Unknown object: ${String(args.name)}` };
     }
     if (action === "move_to") {
-      const path = Array.isArray(args.waypoints)
-        ? args.waypoints.filter((item): item is { x: number; y: number } => Boolean(item && typeof item === "object" && finite((item as { x?: unknown }).x) && finite((item as { y?: unknown }).y)))
-        : [];
-      if (!path.length && finite(args.x) && finite(args.y)) path.push({ x: args.x, y: args.y });
+      const path = parseVrMovePath(args);
       if (!path.length) return { request_id, action, ok: false, error: "move_to requires a destination." };
       let elapsed = 0;
       for (const point of path) {
@@ -189,7 +212,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
         await new Promise<void>((resolve) => window.setTimeout(resolve, duration));
       }
       const finalPoint = path[path.length - 1];
-      return { request_id, action, ok: true, state: stageRef.current || current, arrived: true, duration_ms: elapsed, position: finalPoint };
+      return successfulVrMoveResult(request_id, stageRef.current || current, elapsed, finalPoint);
     }
     if (action === "list_objects") {
       const avatar = current.nodes.find((node) => node.id === "avatar");

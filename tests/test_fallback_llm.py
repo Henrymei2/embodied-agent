@@ -29,6 +29,9 @@ class Live:
         for token in ("Real ", "model ", "answer."):
             yield token
 
+    def get_tool_mode(self):
+        return "OpenAI"
+
 
 class DiesMidStream:
     async def chat_completion(self, messages, system=None, tools=None):
@@ -59,6 +62,10 @@ async def test_system_prompt_and_tools_reach_the_real_model():
         pass
     assert primary.saw_system == "be brief"
     assert primary.saw_tools == [{"name": "t"}]
+
+
+def test_fallback_preserves_primary_tool_protocol():
+    assert FallbackLLM(Live()).get_tool_mode() == "OpenAI"
 
 
 async def test_an_unreachable_model_still_answers_and_marks_itself_degraded():

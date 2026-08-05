@@ -4,9 +4,11 @@ import pytest
 
 from src.open_llm_vtuber.agent.agents.basic_memory_agent import BasicMemoryAgent
 from src.open_llm_vtuber.agent.output_types import SentenceOutput
+from src.open_llm_vtuber.agent.input_types import BatchInput, TextData, TextSource
 from src.open_llm_vtuber.agent.stateless_llm.stateless_llm_interface import (
     StatelessLLMInterface,
 )
+from src.open_llm_vtuber.agent.stateless_llm.fallback_llm import FallbackLLM
 from src.open_llm_vtuber.agent.transformers import (
     actions_extractor,
     display_processor,
@@ -57,6 +59,9 @@ class _ToolThenTextLLM:
             ]
         else:
             yield "It is sunny."
+
+    def get_tool_mode(self):
+        return "OpenAI"
 
 
 class _FakeToolExecutor:
@@ -228,3 +233,35 @@ async def test_openai_tool_loop_continues_to_normal_text_after_tool_result():
 
     assert outputs == ["It is sunny."]
     assert agent._llm.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_wrapped_openai_model_still_runs_tool_loop():
+    primary = _ToolThenTextLLM()
+    agent = BasicMemoryAgent(
+        llm=FallbackLLM(primary),
+        system="base",
+        use_mcpp=True,
+        tts_preprocessor_config=_tts_preprocessor_config(),
+        faster_first_response=False,
+        tool_manager=ToolManager(
+            formatted_tools_openai=[
+                {"type": "function", "function": {"name": "lookup", "parameters": {}}}
+            ]
+        ),
+        tool_executor=_FakeToolExecutor(),
+    )
+
+    outputs = await _collect_async(
+        agent.chat(
+            BatchInput(
+                texts=[TextData(TextSource.INPUT, "Weather?", "User")],
+                metadata={"skip_memory": True},
+            )
+        )
+    )
+
+    assert primary.calls == 2
+    assert [item.tts_text for item in outputs if isinstance(item, SentenceOutput)] == [
+        "It is sunny."
+    ]

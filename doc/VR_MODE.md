@@ -38,6 +38,12 @@ an `immersive-vr` session with a `local-floor` reference space. The frontend
 then connects `/client-ws?renderer_mode=vr`. Selecting normal mode connects the
 unchanged client without that query parameter.
 
+The same Enter immersive VR gesture also starts a tiny local silent WAV on the
+shared media element before either activation-gated request yields. Later TTS
+segments reuse that element, which preserves Quest Browser's playback grant.
+Audio unlock failure does not prevent room entry, but remains visible in the
+headset ribbon until playback succeeds or the user exits and enters VR again.
+
 If WebXR is absent or `immersive-vr` is unsupported, the application connects
 in normal mode as it does today. Ending the XR session closes the VR WebSocket,
 disposes the Three.js renderer and textures, and returns to the full desktop
@@ -57,6 +63,10 @@ VR mode keeps:
 - the current subtitle, connection state, and agent-activity summary;
 - the animated agent and every normal-mode furniture object;
 - object pointing and the existing furniture data/decision surfaces.
+
+The audio queue distinguishes autoplay rejection, an empty payload, decode
+failure, and an ordinary playback failure. Every failure completes its queue
+item and playback handshake so one bad segment cannot strand later speech.
 
 Subtitle, connection, activity, microphone, and transient error messages use a
 compact, high-resolution camera-relative ribbon below the center of view. It
@@ -133,12 +143,13 @@ reports both in reference-space coordinates; parenting controllers at the scene
 root while moving only the camera rig leaves the ray behind at its initial
 world position and makes interaction disagree with locomotion.
 
-Selecting furniture toggles its panel and sends the existing
-`{"type":"object-interaction","object_id":"..."}` message, subject to the
-existing three-second duplicate-click cooldown. A panel is positioned above
-or beside its furniture, faces the headset around the vertical axis, and
-closes when the furniture or its Close control is selected again. Only one
-panel may be open.
+Selecting furniture with the right trigger is a local UI action: it toggles the
+furniture panel and does not send an `object-interaction` conversation trigger
+to the agent. Furniture without a configured `uiWindow` still opens a generic
+panel naming the object and stating that no additional data is available. A
+panel is positioned above or beside its furniture, faces the headset around
+the vertical axis, and closes when the furniture or its Close control is
+selected again. Only one panel may be open.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,

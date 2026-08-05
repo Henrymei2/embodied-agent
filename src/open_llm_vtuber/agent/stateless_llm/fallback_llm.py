@@ -101,12 +101,16 @@ class FallbackLLM(StatelessLLMInterface):
 
     # -- interface -----------------------------------------------------------
 
+    def get_tool_mode(self):
+        """Preserve the primary model's native tool protocol through wrapping."""
+        return self._primary.get_tool_mode()
+
     async def chat_completion(
         self,
         messages: List[Dict[str, Any]],
         system: str = None,
         tools: List[Dict[str, Any]] = None,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[Any]:
         started = False
         try:
             async for token in self._primary.chat_completion(

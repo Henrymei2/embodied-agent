@@ -89,61 +89,18 @@ export const useAudioTask = () => {
       }
     }
 
-    try {
-      // Process audio if available
-      if (audioBase64) {
-        const audioDataUrl = `data:audio/wav;base64,${audioBase64}`;
-        const audio = new Audio(audioDataUrl);
-        
-        audioManager.setCurrentAudio(audio);
-        let isFinished = false;
-
-        const cleanup = () => {
-          audioManager.clearCurrentAudio(audio);
-          if (!isFinished) {
-            isFinished = true;
-            resolve();
-          }
-        };
-
-        audio.addEventListener('canplaythrough', () => {
-          // Check for interruption before playback
-          if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
-            console.warn('Audio playback canceled due to interruption or audio was stopped');
-            cleanup();
-            return;
-          }
-
-          console.log('Starting audio playback');
-          audio.play().catch((err) => {
-            console.error("Audio play error:", err);
-            cleanup();
-          });
-        });
-
-        audio.addEventListener('ended', () => {
-          console.log("Audio playback completed");
-          cleanup();
-        });
-
-        audio.addEventListener('error', (error) => {
-          console.error("Audio playback error:", error);
-          cleanup();
-        });
-
-        audio.load();
-      } else {
-        resolve();
-      }
-    } catch (error) {
-      console.error('Audio playback setup error:', error);
+    if (!audioBase64) {
+      resolve();
+      return;
+    }
+    void audioManager.playBase64Wav(audioBase64).catch((error) => {
+      console.error('Audio playback error:', error);
       toaster.create({
-        title: `${t('error.audioPlayback')}: ${error}`,
+        title: `${t('error.audioPlayback')}`,
         type: "error",
         duration: 2000,
       });
-      resolve();
-    }
+    }).finally(resolve);
   });
 
   // Handle backend synthesis completion

@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Callable, TypedDict
 from fastapi import WebSocket, WebSocketDisconnect
 import asyncio
 import json
+import math
 import time
 from enum import Enum
 import numpy as np
@@ -877,7 +878,11 @@ class WebSocketHandler:
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
         """Handle a frontend_action_result reply, completing a pending move_to/etc."""
-        from .frontend_bridge import owns_pending_request, resolve_action_result
+        from .frontend_bridge import (
+            owns_pending_request,
+            pending_request_action,
+            resolve_action_result,
+        )
 
         request_id = data.get("request_id")
         if not isinstance(request_id, str) or not request_id:
@@ -897,6 +902,35 @@ class WebSocketHandler:
         result = raw_result
         ok = bool(result.get("ok", False))
         error = result.get("error")
+        pending_action = pending_request_action(request_id, client_uid)
+        if ok and pending_action == "move_to":
+            position = result.get("position")
+            def finite_number(value: object) -> bool:
+                return (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and math.isfinite(value)
+                )
+
+            valid_position = (
+                isinstance(position, dict)
+                and finite_number(position.get("x"))
+                and finite_number(position.get("y"))
+            )
+            valid_duration = finite_number(result.get("duration_ms"))
+            if (
+                result.get("arrived") is not True
+                or not valid_position
+                or not valid_duration
+                or not isinstance(result.get("state"), dict)
+            ):
+                ok = False
+                error = "move_to result is missing verified arrival data"
+                result = {**result, "ok": False, "error": error}
+        logger.info(
+            "frontend action result received "
+            f"request={request_id} client={client_uid} ok={ok}"
+        )
         if (
             ok
             and owns_pending_request(request_id, client_uid)
@@ -933,6 +967,11 @@ class WebSocketHandler:
                                 ),
                             }
                         )
+                    )
+                else:
+                    logger.info(
+                        "frontend action state persisted "
+                        f"request={request_id} mode={getattr(context, 'scene_mode', 'normal')}"
                     )
         if not ok and result.get("ok") is not False:
             result = {**result, "ok": False, "error": error}

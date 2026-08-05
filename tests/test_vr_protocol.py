@@ -95,7 +95,14 @@ async def test_vr_frontend_result_is_authoritatively_saved_only_to_vr(
         client_uid,
         {
             "request_id": request["request_id"],
-            "result": {"ok": True, "state": stage, "mode": "normal"},
+            "result": {
+                "ok": True,
+                "state": stage,
+                "mode": "normal",
+                "arrived": True,
+                "duration_ms": 250,
+                "position": {"x": 75, "y": avatar["y"]},
+            },
         },
     )
 
@@ -106,4 +113,3 @@ async def test_vr_frontend_result_is_authoritatively_saved_only_to_vr(
     assert load_vr_stage_state(conf_uid)["nodes"][-1]["x"] == 75
     assert load_stage_state(conf_uid)["nodes"][-1]["x"] != 75
     frontend_bridge.unregister_client_sender(client_uid)
-

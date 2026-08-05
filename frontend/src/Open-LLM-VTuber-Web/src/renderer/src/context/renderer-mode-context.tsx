@@ -1,6 +1,7 @@
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from "react";
+import { audioManager } from "@/utils/audio-manager";
 
 export type RendererMode = "detecting" | "choosing" | "normal" | "vr-starting" | "vr";
 
@@ -15,6 +16,20 @@ interface RendererModeValue {
 }
 
 const RendererModeContext = createContext<RendererModeValue | null>(null);
+
+export async function requestImmersiveSession(
+  xr: Pick<XRSystem, "requestSession">,
+  unlockAudio: () => Promise<void>,
+) {
+  // Invoke both activation-gated APIs before Promise.all yields control.
+  const audioUnlockPromise = unlockAudio().catch(() => undefined);
+  const sessionPromise = xr.requestSession("immersive-vr", {
+    requiredFeatures: ["local-floor"],
+    optionalFeatures: ["bounded-floor", "hand-tracking"],
+  });
+  const [session] = await Promise.all([sessionPromise, audioUnlockPromise]);
+  return session;
+}
 
 export function RendererModeProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<RendererMode>(window.api ? "normal" : "detecting");
@@ -50,10 +65,12 @@ export function RendererModeProvider({ children }: { children: React.ReactNode }
     setMode("vr-starting");
     try {
       if (!navigator.xr) throw new Error("WebXR is unavailable in this browser.");
-      const session = await navigator.xr.requestSession("immersive-vr", {
-        requiredFeatures: ["local-floor"],
-        optionalFeatures: ["bounded-floor", "hand-tracking"],
-      });
+      // Both calls must begin before the click handler yields. Quest Browser
+      // otherwise treats later TTS playback as autoplay and silently rejects it.
+      const session = await requestImmersiveSession(
+        navigator.xr,
+        () => audioManager.unlock(),
+      );
       session.addEventListener("end", () => {
         setXrSession(null);
         setMode("normal");
@@ -92,4 +109,3 @@ export function useRendererMode() {
   if (!value) throw new Error("useRendererMode must be used inside RendererModeProvider");
   return value;
 }
-

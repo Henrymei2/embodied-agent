@@ -182,6 +182,39 @@ async def test_malformed_frontend_result_fails_pending_action_safely():
 
 
 @pytest.mark.asyncio
+async def test_move_result_requires_verified_arrival_shape():
+    sent = asyncio.Event()
+    request: dict = {}
+
+    async def send(message: str) -> None:
+        request.update(json.loads(message))
+        sent.set()
+
+    frontend_bridge.register_client_sender("client", send, "character", "vr")
+    task = asyncio.create_task(
+        frontend_bridge.request_frontend_action(
+            "move_to", {}, client_uid="client", timeout=1
+        )
+    )
+    await asyncio.wait_for(sent.wait(), timeout=1)
+
+    handler = WebSocketHandler(default_context_cache=None)
+    await handler._handle_frontend_action_result(
+        SimpleNamespace(),
+        "client",
+        {
+            "request_id": request["request_id"],
+            "result": {"ok": True, "state": get_default_stage("character")},
+        },
+    )
+
+    ok, result, error = await task
+    assert ok is False
+    assert result["ok"] is False
+    assert error == "move_to result is missing verified arrival data"
+
+
+@pytest.mark.asyncio
 async def test_character_binding_updates_after_config_switch():
     async def send(message: str) -> None:
         payload = json.loads(message)
@@ -314,7 +347,13 @@ async def test_accepted_frontend_state_is_persisted_for_owning_client(
         client_uid,
         {
             "request_id": request["request_id"],
-            "result": {"ok": True, "state": stage},
+            "result": {
+                "ok": True,
+                "state": stage,
+                "arrived": True,
+                "duration_ms": 250,
+                "position": {"x": avatar["x"], "y": avatar["y"]},
+            },
         },
     )
 

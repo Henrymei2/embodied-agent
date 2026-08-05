@@ -8,6 +8,7 @@ import { useVAD } from "@/context/vad-context";
 import { useSubtitle } from "@/context/subtitle-context";
 import { useAgentActivity } from "@/context/agent-activity-context";
 import { useWebSocket } from "@/context/websocket-context";
+import { audioManager } from "@/utils/audio-manager";
 import {
   floorToScene,
   furnitureCenterSceneY,
@@ -31,7 +32,6 @@ const DEAD_ZONE = 0.2;
 const SNAP_THRESHOLD = 0.7;
 const SNAP_REARM = 0.3;
 const SNAP_RADIANS = THREE.MathUtils.degToRad(30);
-const CLICK_COOLDOWN_MS = 3000;
 
 interface VrRuntime {
   scene: THREE.Scene;
@@ -48,7 +48,6 @@ interface VrRuntime {
   turnArmed: boolean;
   xPressed: boolean;
   lastFrame: number;
-  clickTimes: Map<string, number>;
   collisionNodes: VrStageNode[];
   panelGeneration: number;
   textureWarnings: Set<string>;
@@ -282,8 +281,7 @@ export default function VrStage() {
   const micRef = useRef(micOn);
   const { subtitleText } = useSubtitle();
   const { activity } = useAgentActivity();
-  const { sendMessage, baseUrl, wsState } = useWebSocket();
-  const sendMessageRef = useRef(sendMessage);
+  const { baseUrl, wsState } = useWebSocket();
   const baseUrlRef = useRef(baseUrl);
   const startMicRef = useRef(startMic);
   const stopMicRef = useRef(stopMic);
@@ -291,11 +289,11 @@ export default function VrStage() {
   const warningTimerRef = useRef<number | null>(null);
   const [micStatus, setMicStatus] = useState<string | null>(null);
   const [vrWarning, setVrWarning] = useState<string | null>(null);
+  const [audioWarning, setAudioWarning] = useState<string | null>(null);
   const initialMicOnRef = useRef(micOn);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { micRef.current = micOn; }, [micOn]);
-  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
   useEffect(() => { baseUrlRef.current = baseUrl; }, [baseUrl]);
   useEffect(() => { startMicRef.current = startMic; }, [startMic]);
   useEffect(() => { stopMicRef.current = stopMic; }, [stopMic]);
@@ -308,6 +306,10 @@ export default function VrStage() {
     if (micStatusTimerRef.current !== null) window.clearTimeout(micStatusTimerRef.current);
     if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
   }, []);
+
+  useEffect(() => audioManager.subscribe((state) => {
+    setAudioWarning(state.state === "error" ? state.message : null);
+  }), []);
 
   useEffect(() => {
     if (!hostRef.current || !xrSession) return undefined;
@@ -381,7 +383,6 @@ export default function VrStage() {
       scene, renderer, camera, rig, furniture, avatar: null, panel: null,
       raycaster: new THREE.Raycaster(), controllers, hud, hudTexture,
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
-      clickTimes: new Map<string, number>(),
       collisionNodes: [],
       panelGeneration: 0,
       textureWarnings: new Set<string>(),
@@ -405,16 +406,15 @@ export default function VrStage() {
     };
 
     const selectFurniture = async (node: VrStageNode) => {
-      const now = performance.now();
-      if (now - (runtime.clickTimes.get(node.id) || 0) >= CLICK_COOLDOWN_MS) {
-        runtime.clickTimes.set(node.id, now);
-        sendMessageRef.current({ type: "object-interaction", object_id: node.id });
-      }
       const closingCurrent = runtime.panel?.userData.nodeId === node.id;
       closePanel();
-      if (closingCurrent || !node.uiWindow) return;
+      if (closingCurrent) return;
+      const windowConfig: NonNullable<VrStageNode["uiWindow"]> = node.uiWindow || {
+        title: node.label || node.id,
+        body: "No additional information is available for this furniture.",
+      };
       const generation = runtime.panelGeneration;
-      const lines = [node.uiWindow.title, node.uiWindow.body || "", "Loading…"];
+      const lines = [windowConfig.title, windowConfig.body || "", "Loading…"];
       const panelTexture = canvasTexture(lines, 768, 300);
       const panel = new THREE.Mesh(
         new THREE.PlaneGeometry(1.5, 0.59),
@@ -439,7 +439,7 @@ export default function VrStage() {
       scene.add(panel);
       runtime.panel = panel;
 
-      const route = node.uiWindow.provider ? providerRoutes[node.uiWindow.provider] : undefined;
+      const route = windowConfig.provider ? providerRoutes[windowConfig.provider] : undefined;
       let liveData: Record<string, unknown> | null = null;
       if (route) {
         try {
@@ -447,7 +447,7 @@ export default function VrStage() {
           if (response.ok) {
             liveData = await response.json() as Record<string, unknown>;
             lines.splice(2, 0, ...summaryLines(liveData));
-            if (node.uiWindow.provider === "google_calendar_status" && liveData.connected !== true) {
+            if (windowConfig.provider === "google_calendar_status" && liveData.connected !== true) {
               lines.splice(2, 0, "Exit VR to connect Google");
             }
           }
@@ -459,7 +459,7 @@ export default function VrStage() {
       lines.splice(lines.indexOf("Loading…"), 1, "Select the furniture again to close");
       setPanelLines(panel, lines);
       const pending = Array.isArray(liveData?.pending) ? liveData.pending[0] as Record<string, unknown> | undefined : undefined;
-      const collection = node.uiWindow.provider === "plan_status" ? "plans" : node.uiWindow.provider === "skill_status" ? "skills" : null;
+      const collection = windowConfig.provider === "plan_status" ? "plans" : windowConfig.provider === "skill_status" ? "skills" : null;
       const decisionId = collection === "plans" ? pending?.plan_id : pending?.slug;
       if (collection && typeof decisionId === "string") {
         (["approved", "declined"] as const).forEach((decision, index) => {
@@ -819,7 +819,7 @@ export default function VrStage() {
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const activityText = activity.phase === "idle" ? "" : activity.phase.replace(/-/g, " ");
-    const shouldShow = Boolean(subtitleText.trim() || activityText || micStatus || vrWarning || wsState !== "OPEN");
+    const shouldShow = Boolean(subtitleText.trim() || activityText || micStatus || vrWarning || audioWarning || wsState !== "OPEN");
     runtime.hud.visible = shouldShow;
     if (!shouldShow) return;
     const status = [
@@ -827,13 +827,14 @@ export default function VrStage() {
       activityText,
       micStatus,
       vrWarning,
+      audioWarning,
     ].filter(Boolean).join(" · ");
-    const caption = subtitleText.trim() || vrWarning || micStatus || activityText || "Reconnecting to your companion";
+    const caption = audioWarning || subtitleText.trim() || vrWarning || micStatus || activityText || "Reconnecting to your companion";
     const next = captionTexture(caption, status);
     (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
     runtime.hudTexture.dispose();
     runtime.hudTexture = next;
-  }, [subtitleText, activity, micStatus, vrWarning, wsState]);
+  }, [subtitleText, activity, micStatus, vrWarning, audioWarning, wsState]);
 
   return (
     <>

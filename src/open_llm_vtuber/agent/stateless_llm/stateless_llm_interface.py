@@ -1,5 +1,5 @@
 import abc
-from typing import AsyncIterator, List, Dict, Any
+from typing import AsyncIterator, List, Dict, Any, Literal
 
 
 class StatelessLLMInterface(metaclass=abc.ABCMeta):
@@ -17,6 +17,15 @@ class StatelessLLMInterface(metaclass=abc.ABCMeta):
     memory, system prompts, and other features.
 
     """
+
+    def get_tool_mode(self) -> Literal["OpenAI", "Claude"] | None:
+        """Describe the native tool protocol implemented by this model.
+
+        Wrappers should delegate this capability to the model they wrap. Keeping
+        it on the interface avoids brittle ``isinstance`` checks that stop
+        working as soon as resilience, tracing, or routing decorators are added.
+        """
+        return None
 
     @abc.abstractmethod
     async def chat_completion(

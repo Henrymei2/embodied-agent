@@ -835,12 +835,17 @@ class BasicMemoryAgent(AgentInterface):
 
             if self._use_mcpp and self._tool_manager:
                 tools = None
+                declared_tool_mode = self._llm.get_tool_mode()
 
-                if isinstance(self._llm, ClaudeAsyncLLM):
+                if declared_tool_mode == "Claude" or isinstance(
+                    self._llm, ClaudeAsyncLLM
+                ):
                     tool_mode = "Claude"
                     tools = self._tool_manager.get_formatted_tools("Claude")
                     llm_supports_native_tools = True
-                elif isinstance(self._llm, OpenAICompatibleAsyncLLM):
+                elif declared_tool_mode == "OpenAI" or isinstance(
+                    self._llm, OpenAICompatibleAsyncLLM
+                ):
                     tool_mode = "OpenAI"
                     tools = self._tool_manager.get_formatted_tools("OpenAI")
                     llm_supports_native_tools = True
@@ -855,7 +860,8 @@ class BasicMemoryAgent(AgentInterface):
                     )
                 elif llm_supports_native_tools:
                     logger.info(
-                        f"Using {len(tools)} formatted tools for {tool_mode} mode."
+                        f"Using {len(tools)} formatted tools for {tool_mode} mode "
+                        f"through {type(self._llm).__name__}."
                     )
 
             if self._use_mcpp and tool_mode == "Claude" and tools:

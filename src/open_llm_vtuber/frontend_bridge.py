@@ -37,6 +37,7 @@ class _ConnectedClient:
 @dataclass(frozen=True)
 class _PendingRequest:
     client_uid: str
+    action: str
     future: asyncio.Future
 
 
@@ -127,6 +128,14 @@ def owns_pending_request(request_id: str, client_uid: str) -> bool:
     return pending is not None and pending.client_uid == client_uid
 
 
+def pending_request_action(request_id: str, client_uid: str) -> str | None:
+    """Return the action only to the client that owns the pending request."""
+    pending = _pending_requests.get(request_id)
+    if pending is None or pending.client_uid != client_uid:
+        return None
+    return pending.action
+
+
 def _select_client(
     client_uid: str | None,
     conf_uid: str | None,
@@ -168,6 +177,7 @@ async def _send_action_request(
     future: asyncio.Future = asyncio.get_running_loop().create_future()
     _pending_requests[request_id] = _PendingRequest(
         client_uid=selected_client_uid,
+        action=action,
         future=future,
     )
 
@@ -181,17 +191,33 @@ async def _send_action_request(
     )
 
     send_text = _clients[selected_client_uid].send_text
+    logger.info(
+        "frontend_bridge: dispatching action "
+        f"{action} request={request_id} client={selected_client_uid}"
+    )
     try:
         await send_text(message)
     except Exception as exc:  # noqa: BLE001
         _pending_requests.pop(request_id, None)
+        logger.warning(
+            "frontend_bridge: action dispatch failed "
+            f"action={action} request={request_id}"
+        )
         return False, {}, f"failed to send action request: {exc}"
 
     try:
         ok, result, error = await asyncio.wait_for(future, timeout=timeout)
+        logger.info(
+            "frontend_bridge: action completed "
+            f"action={action} request={request_id} ok={ok}"
+        )
         return ok, result, error
     except asyncio.TimeoutError:
         _pending_requests.pop(request_id, None)
+        logger.warning(
+            "frontend_bridge: action timed out "
+            f"action={action} request={request_id} timeout={timeout}s"
+        )
         return False, {}, f"frontend did not respond within {timeout}s"
 
 
