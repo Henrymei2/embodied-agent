@@ -47,14 +47,6 @@ class CharacterConfig(I18nMixin):
         "avatar": Description(en="Avatar image path for the character"),
     }
 
-    @field_validator("persona_prompt")
-    def check_default_persona_prompt(cls, v):
-        if not v:
-            raise ValueError(
-                "Persona_prompt cannot be empty. Please provide a persona prompt."
-            )
-        return v
-
     @field_validator("character_name")
     def set_default_character_name(cls, v, values):
         if not v and "conf_name" in values:
