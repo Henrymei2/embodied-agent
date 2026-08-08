@@ -96,6 +96,7 @@ def test_calendar_crud_targets_primary_and_maps_fields(calendar):
     )["events"]
     assert listed[0]["event_id"] == "event-1"
     assert listed[1]["all_day"] is True
+    assert _decode(calendar.get_calendar_event("event-1"))["event_id"] == "event-1"
 
     created = _decode(
         calendar.add_calendar_event(

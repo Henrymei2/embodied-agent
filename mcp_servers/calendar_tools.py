@@ -150,6 +150,23 @@ def list_calendar_events(
 
 
 @mcp.tool()
+def get_calendar_event(event_id: str) -> str:
+    """Read one primary-calendar event by its stable Google event ID."""
+    try:
+        event_id = _validate_text(event_id, "event_id", 1024)
+        event = (
+            _get_calendar_service()
+            .calendar()
+            .events()
+            .get(calendarId="primary", eventId=event_id)
+            .execute()
+        )
+        return json.dumps(_serialize_google_event(event), ensure_ascii=False)
+    except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
+        return _error(exc)
+
+
+@mcp.tool()
 def add_calendar_event(title: str, start: str, end: str, notes: str = "") -> str:
     """Create a timed event on the primary Google Calendar."""
     try:

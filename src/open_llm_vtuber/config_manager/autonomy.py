@@ -1,9 +1,40 @@
 # config_manager/autonomy.py
 from loguru import logger
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import ClassVar, Dict, Literal
 
 from .i18n import I18nMixin, Description
+
+
+class PollingProducerConfig(BaseModel):
+    enabled: bool = False
+    poll_seconds: float = Field(5.0, ge=1.0, le=3600.0)
+
+
+class WorkspaceProducerConfig(PollingProducerConfig):
+    watch_path: str = "demo-inbox"
+    settle_seconds: float = Field(1.0, ge=0.1, le=60.0)
+
+    @field_validator("watch_path")
+    @classmethod
+    def validate_watch_path(cls, value: str) -> str:
+        from pathlib import Path
+
+        cleaned = str(value).strip()
+        path = Path(cleaned)
+        if not cleaned or path.is_absolute() or ".." in path.parts:
+            raise ValueError("watch_path must be a relative workspace path")
+        if any(part in {"", "."} for part in path.parts):
+            raise ValueError("watch_path must be a normalized relative path")
+        return path.as_posix()
+
+
+class EventProducersConfig(BaseModel):
+    gmail: PollingProducerConfig = Field(default_factory=PollingProducerConfig)
+    google_calendar: PollingProducerConfig = Field(
+        default_factory=PollingProducerConfig
+    )
+    workspace: WorkspaceProducerConfig = Field(default_factory=WorkspaceProducerConfig)
 
 
 class AutonomyConfig(I18nMixin):
@@ -53,6 +84,7 @@ class AutonomyConfig(I18nMixin):
     execution_failure_limit: int = Field(3, ge=1, le=20)
     trace_max_bytes: int = Field(10_000_000, ge=100_000, le=1_000_000_000)
     chain_report_hours: int = Field(168, ge=1, le=8760)
+    event_producers: EventProducersConfig = Field(default_factory=EventProducersConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -167,5 +199,8 @@ class AutonomyConfig(I18nMixin):
         ),
         "chain_report_hours": Description(
             en="Default long-horizon autonomy report window"
+        ),
+        "event_producers": Description(
+            en="Opt-in Gmail, Google Calendar, and workspace event producers"
         ),
     }

@@ -1,5 +1,5 @@
 import { Badge, Box, Button, Spinner, Text } from '@chakra-ui/react';
-import { FiPause, FiPlay, FiRefreshCw, FiSquare, FiTrash2 } from 'react-icons/fi';
+import { FiPause, FiPlay, FiRefreshCw, FiSquare, FiTrash2, FiZap } from 'react-icons/fi';
 import {
   DrawerRoot, DrawerTrigger, DrawerContent, DrawerHeader, DrawerTitle,
   DrawerBody, DrawerFooter, DrawerActionTrigger, DrawerBackdrop, DrawerCloseTrigger,
@@ -46,7 +46,7 @@ function Entry({ entry, action }: {
 }
 
 export default function AgendaDrawer({ children }: { children: React.ReactNode }) {
-  const { snapshot, loading, error, refresh, action } = useAgenda();
+  const { snapshot, events, fixtures, loading, error, refresh, action, triggerFixture } = useAgenda();
   const entries = snapshot?.entries || [];
   const capabilityCalls = Object.values(snapshot?.health.quota.capability_calls || {})
     .reduce((total, calls) => total + calls, 0);
@@ -114,6 +114,40 @@ export default function AgendaDrawer({ children }: { children: React.ReactNode }
                   {snapshot.runtime.last_error || snapshot.health.planner.last_error}
                 </Text>
               )}
+              {Object.entries(snapshot.event_producers).map(([name, health]) => (
+                <Text key={name} {...sidebarStyles.schedulerDrawer.prompt}>
+                  {name.replace('_', ' ')} producer: {health.status}
+                  {health.consecutive_failures > 0 ? ` · ${health.consecutive_failures} failure(s)` : ''}
+                </Text>
+              ))}
+            </Box>
+          )}
+          <Box {...sidebarStyles.schedulerDrawer.eventItem} marginBottom={3}>
+            <Text {...sidebarStyles.schedulerDrawer.eventTitle}>Simulated demo triggers</Text>
+            <Text {...sidebarStyles.schedulerDrawer.prompt} marginBottom={2}>
+              These publish the production event shape and are always labeled simulated.
+            </Text>
+            <Box display="flex" gap={2} flexWrap="wrap">
+              {fixtures.map((fixture) => (
+                <Button key={fixture.id} size="xs" onClick={() => void triggerFixture(fixture.id)}>
+                  <FiZap />{fixture.label}
+                </Button>
+              ))}
+            </Box>
+          </Box>
+          {events.length > 0 && (
+            <Box marginBottom={3}>
+              <Text {...sidebarStyles.schedulerDrawer.eventTitle} marginBottom={2}>Recent external events</Text>
+              {events.map((event) => (
+                <Box key={event.id} {...sidebarStyles.schedulerDrawer.eventItem} marginBottom={2}>
+                  <Box display="flex" gap={2} alignItems="center" flexWrap="wrap">
+                    <Badge {...sidebarStyles.schedulerDrawer.kindBadge}>{event.kind}</Badge>
+                    {event.trigger_reference?.simulated && <Badge colorPalette="orange">Simulated</Badge>}
+                    <Badge {...sidebarStyles.schedulerDrawer.kindBadge}>{event.status}</Badge>
+                  </Box>
+                  <Text {...sidebarStyles.schedulerDrawer.prompt}>{event.summary}</Text>
+                </Box>
+              ))}
             </Box>
           )}
           {loading && !snapshot && <Spinner />}

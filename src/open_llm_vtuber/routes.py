@@ -647,6 +647,22 @@ def init_agenda_routes() -> APIRouter:
                 {"error": f"resumable plan store is unavailable: {exc}"},
                 status_code=503,
             )
+        from .autonomy.event_producers import get_event_producer_manager
+
+        producer_manager = get_event_producer_manager()
+        payload["event_producers"] = (
+            producer_manager.snapshot()
+            if producer_manager is not None
+            else {
+                name: {
+                    "status": "disabled",
+                    "last_success_at": None,
+                    "last_error": None,
+                    "consecutive_failures": 0,
+                }
+                for name in ("gmail", "google_calendar", "workspace")
+            }
+        )
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
     @router.post("/pause")
@@ -692,8 +708,112 @@ def init_agenda_routes() -> APIRouter:
             for event in reversed(state.inbox)
             if not status or event.status == status
         ][:limit]
+        from .autonomy.triggers import trigger_from_event
+
         return JSONResponse(
-            {"events": [asdict(event) for event in events]},
+            {
+                "events": [
+                    {
+                        **asdict(event),
+                        "trigger_reference": trigger_from_event(event),
+                    }
+                    for event in events
+                ]
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    fixtures = {
+        "new-unread-email": {
+            "label": "New unread email",
+            "source": "gmail",
+            "resource_type": "message",
+            "resource_id": "simulated-gmail-message",
+            "change_type": "unread",
+        },
+        "calendar-time-changed": {
+            "label": "Calendar time changed",
+            "source": "google_calendar",
+            "resource_type": "calendar_event",
+            "resource_id": "simulated-calendar-event",
+            "change_type": "updated",
+        },
+        "workspace-file-ready": {
+            "label": "Workspace file ready",
+            "source": "workspace",
+            "resource_type": "file",
+            "resource_id": "demo-inbox/simulated-ready-file",
+            "change_type": "created",
+        },
+    }
+
+    @router.get("/demo-fixtures")
+    async def agenda_demo_fixtures():
+        return JSONResponse(
+            {
+                "fixtures": [
+                    {"id": fixture_id, "label": item["label"]}
+                    for fixture_id, item in fixtures.items()
+                ]
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.post("/demo-fixtures/{fixture_id}")
+    async def publish_agenda_demo_fixture(
+        fixture_id: str,
+        payload: dict = Body(default={}),
+    ):
+        fixture = fixtures.get(fixture_id)
+        if fixture is None:
+            return JSONResponse({"error": "unknown demo fixture"}, status_code=404)
+        request_id = payload.get("request_id") if isinstance(payload, dict) else None
+        if not isinstance(request_id, str) or not request_id.strip():
+            request_id = uuid4().hex
+        if (
+            len(request_id) > 128
+            or not request_id.isascii()
+            or any(
+                not (char.isalnum() or char in {"-", "_", ".", ":"})
+                for char in request_id
+            )
+        ):
+            return JSONResponse({"error": "invalid request_id"}, status_code=400)
+
+        from .autonomy.runtime import get_workspace_runtime
+        from .autonomy.triggers import (
+            TriggerEnvelope,
+            TriggerReference,
+            publish_trigger,
+        )
+
+        store = get_agenda_store()
+        runtime = get_workspace_runtime(store.root)
+        settings = runtime.active_settings if runtime is not None else None
+        try:
+            result = await run_in_threadpool(
+                publish_trigger,
+                store,
+                TriggerEnvelope(
+                    TriggerReference(
+                        source=fixture["source"],
+                        resource_type=fixture["resource_type"],
+                        resource_id=fixture["resource_id"],
+                        revision=request_id.strip(),
+                        change_type=fixture["change_type"],
+                        simulated=True,
+                    )
+                ),
+                backlog_limit=(settings.event_backlog_limit if settings else 500),
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(
+            {
+                "event_id": result.event.id,
+                "deduplicated": result.deduplicated,
+                "trigger_reference": result.event.payload["trigger"],
+            },
             headers={"Cache-Control": "no-store"},
         )
 
@@ -750,6 +870,65 @@ def init_agenda_routes() -> APIRouter:
         except (TypeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return JSONResponse(asdict(event), headers={"Cache-Control": "no-store"})
+
+    @router.post("/triggers")
+    async def publish_typed_agenda_trigger(payload: dict = Body(...)):
+        if not isinstance(payload, dict) or set(payload) != {
+            "schema_version",
+            "trigger",
+        }:
+            return JSONResponse(
+                {"error": "typed trigger body has invalid fields"}, status_code=400
+            )
+        trigger = payload.get("trigger")
+        required = {
+            "source",
+            "resource_type",
+            "resource_id",
+            "revision",
+            "change_type",
+            "simulated",
+        }
+        if not isinstance(trigger, dict) or set(trigger) != required:
+            return JSONResponse(
+                {"error": "trigger reference has invalid fields"}, status_code=400
+            )
+        if trigger.get("simulated") is not False:
+            return JSONResponse(
+                {"error": "simulated triggers must use a demo fixture"},
+                status_code=400,
+            )
+
+        from .autonomy.runtime import get_workspace_runtime
+        from .autonomy.triggers import (
+            TriggerEnvelope,
+            TriggerReference,
+            publish_trigger,
+        )
+
+        store = get_agenda_store()
+        runtime = get_workspace_runtime(store.root)
+        settings = runtime.active_settings if runtime is not None else None
+        try:
+            result = await run_in_threadpool(
+                publish_trigger,
+                store,
+                TriggerEnvelope(
+                    schema_version=payload["schema_version"],
+                    reference=TriggerReference(**trigger),
+                ),
+                backlog_limit=(settings.event_backlog_limit if settings else 500),
+            )
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return JSONResponse(
+            {
+                "event_id": result.event.id,
+                "deduplicated": result.deduplicated,
+                "trigger_reference": result.event.payload["trigger"],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.post("/events/{event_id}/retry")
     async def retry_agenda_event(event_id: str):

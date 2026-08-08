@@ -1,5 +1,7 @@
 """Configuration tests for agenda-driven autonomy."""
 
+import pytest
+
 from src.open_llm_vtuber.autonomy import AutonomySettings
 from src.open_llm_vtuber.config_manager.autonomy import AutonomyConfig
 from src.open_llm_vtuber.config_manager.main import Config
@@ -65,3 +67,15 @@ def test_nested_autonomy_config_wins_over_deprecated_root_value():
     assert migrated["system_config"]["autonomy_config"]["presence_mode"] == (
         "enforced"
     )
+
+
+def test_event_producers_are_opt_in_and_workspace_path_is_confined():
+    config = AutonomyConfig()
+    assert config.event_producers.gmail.enabled is False
+    assert config.event_producers.google_calendar.enabled is False
+    assert config.event_producers.workspace.enabled is False
+
+    with pytest.raises(ValueError, match="relative workspace path"):
+        AutonomyConfig.model_validate(
+            {"event_producers": {"workspace": {"watch_path": "../outside"}}}
+        )

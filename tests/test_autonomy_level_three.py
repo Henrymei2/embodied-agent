@@ -504,12 +504,62 @@ def test_level_three_http_surface_publishes_and_reports(tmp_path, monkeypatch):
     replay = client.post("/api/agenda/events", json=payload)
     snapshot = client.get("/api/agenda")
     report = client.get("/api/agenda/report", params={"hours": 24})
+    fixtures = client.get("/api/agenda/demo-fixtures")
+    simulated = client.post(
+        "/api/agenda/demo-fixtures/workspace-file-ready",
+        json={"request_id": "fixture-request-1"},
+    )
+    simulated_replay = client.post(
+        "/api/agenda/demo-fixtures/workspace-file-ready",
+        json={"request_id": "fixture-request-1"},
+    )
+    event_list = client.get("/api/agenda/events")
+    typed_production = client.post(
+        "/api/agenda/triggers",
+        json={
+            "schema_version": 1,
+            "trigger": {
+                "source": "gmail",
+                "resource_type": "message",
+                "resource_id": "message-production-1",
+                "revision": "message-production-1",
+                "change_type": "unread",
+                "simulated": False,
+            },
+        },
+    )
+    rejected_fake_production = client.post(
+        "/api/agenda/triggers",
+        json={
+            "schema_version": 1,
+            "trigger": {
+                "source": "gmail",
+                "resource_type": "message",
+                "resource_id": "pretend-message",
+                "revision": "pretend-message",
+                "change_type": "unread",
+                "simulated": True,
+            },
+        },
+    )
 
     assert published.status_code == 200
     assert replay.json()["id"] == published.json()["id"]
     assert snapshot.json()["health"]["events"]["pending"] == 1
     assert snapshot.json()["runtime"]["lease_status"] == "standby"
     assert report.json()["horizon_hours"] == 24
+    assert len(fixtures.json()["fixtures"]) == 3
+    assert simulated.json()["trigger_reference"]["simulated"] is True
+    assert simulated_replay.json()["deduplicated"] is True
+    typed = next(
+        event
+        for event in event_list.json()["events"]
+        if event["trigger_reference"] is not None
+    )
+    assert typed["trigger_reference"]["source"] == "workspace"
+    assert typed_production.status_code == 200
+    assert typed_production.json()["trigger_reference"]["simulated"] is False
+    assert rejected_fake_production.status_code == 400
 
 
 def test_idempotent_event_replay_soak_stays_constant_size(tmp_path):

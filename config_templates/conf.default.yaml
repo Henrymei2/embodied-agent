@@ -84,6 +84,21 @@ system_config:
     execution_failure_limit: 3
     trace_max_bytes: 10000000
     chain_report_hours: 168
+    # External event producers are opt-in. Gmail and Calendar persist incremental
+    # cursors. The workspace path must be relative to the agent workspace and is
+    # re-baselined on every server start, so existing files do not fire events.
+    event_producers:
+      gmail:
+        enabled: false
+        poll_seconds: 5
+      google_calendar:
+        enabled: false
+        poll_seconds: 5
+      workspace:
+        enabled: false
+        watch_path: 'demo-inbox'
+        poll_seconds: 2
+        settle_seconds: 1
 
 # configuration for the default character
 character_config:

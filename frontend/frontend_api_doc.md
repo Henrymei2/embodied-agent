@@ -345,8 +345,38 @@ gate, and visible avatar stay consistent across restarts.
 ## Global agenda
 
 `GET /api/agenda` returns the authoritative snapshot with `paused`, `active`,
-`entries`, and `updated_at`. Control routes pause/resume the chain, abandon or
-resume entries, remove/reorder queued entries, and request reconsideration.
+`entries`, `updated_at`, and `event_producers`. Producer health is keyed by
+`gmail`, `google_calendar`, and `workspace`; each item reports whether it is
+disabled, running, or degraded without exposing external response content.
+Control routes pause/resume the chain, abandon or resume entries,
+remove/reorder queued entries, and request reconsideration.
 The server emits `agenda-snapshot`, `agenda-step-updated`, `agenda-paused`, and
 `agenda-resumed` WebSocket messages. Treat snapshots as authoritative after a
 reconnect.
+
+`GET /api/agenda/events` returns the durable external-event inbox. Events made
+by a production producer include a `trigger_reference` with `source`,
+`resource_type`, `resource_id`, `revision`, `change_type`, and `simulated`.
+The summary is selected by the server and never contains Gmail, Calendar, or
+workspace file content. The older `POST /api/agenda/events` endpoint remains
+available for compatible local integrations.
+
+Trusted local integrations can use `POST /api/agenda/triggers` with exactly the
+versioned trigger-reference fields described above. The server derives the
+summary, evidence reference, and idempotency identity. This production endpoint
+requires `simulated: false`; simulated events must use a named fixture so they
+cannot be mistaken for an observed external change.
+
+`GET /api/agenda/demo-fixtures` lists the fixed offline demo presets. Publish a
+preset with `POST /api/agenda/demo-fixtures/{fixture_id}` and an optional JSON
+body containing a `request_id`. The request ID makes retries idempotent; omit it
+to create a new revision. Fixture events use the production trigger schema and
+always carry `simulated: true`.
+
+External producers are configured under
+`system_config.autonomy_config.event_producers`. They are disabled by default.
+Gmail and Calendar establish an incremental cursor before publishing changes,
+so pre-existing items do not appear as new. The workspace producer accepts only
+a relative path inside the agent workspace and rebuilds its baseline each time
+the server starts. Restart the server before each demo after arranging the
+watched folder, then create, modify, or delete a file to generate an event.

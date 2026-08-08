@@ -205,10 +205,30 @@ class WebSocketServer:
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI):
         await self._start_headless_autonomy()
+        await self._start_event_producers()
         try:
             yield
         finally:
+            await self._stop_event_producers()
             await self._stop_headless_autonomy()
+
+    async def _start_event_producers(self) -> None:
+        from .autonomy.agenda import get_agenda_store
+        from .autonomy.event_producers import start_event_producers
+        from .workspace import ensure_workspace
+
+        autonomy_config = self.config.system_config.autonomy_config
+        await start_event_producers(
+            workspace_root=ensure_workspace().root,
+            store=get_agenda_store(),
+            google_service=self.google_integration,
+            config=autonomy_config.event_producers,
+        )
+
+    async def _stop_event_producers(self) -> None:
+        from .autonomy.event_producers import stop_event_producers
+
+        await stop_event_producers()
 
     async def _start_headless_autonomy(self) -> None:
         """Start the safe server-lifetime owner after context initialization."""
