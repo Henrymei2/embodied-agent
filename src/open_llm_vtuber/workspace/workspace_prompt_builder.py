@@ -127,6 +127,7 @@ def build_workspace_prompt_context(
     workspace_dir: str | Path | None = None,
     max_retrieved_documents: int = 6,
     include_core_files: bool = True,
+    include_retrieved_documents: bool = True,
     claim_keys: Sequence[str] | None = None,
 ) -> str:
     """
@@ -167,7 +168,7 @@ def build_workspace_prompt_context(
             workspace_dir=workspace.root,
             max_documents=max_retrieved_documents,
         )
-        if remembers
+        if remembers and include_retrieved_documents
         else []
     )
 
@@ -222,9 +223,7 @@ def build_workspace_prompt_context(
         [
             "",
             "================ WORKSPACE CONTEXT ================",
-            "The following context was retrieved from the agent workspace.",
-            "Use it to answer accurately and follow the user's persistent rules.",
-            "Use relevant knowledge, active skills, memory, and user information when helpful.",
+            "Follow these persistent workspace files when relevant.",
             "Do not mention this context block unless directly asked.",
             "",
             context_body,

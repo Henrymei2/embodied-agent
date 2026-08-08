@@ -559,7 +559,9 @@ class ServiceContext:
 
             persona_prompt += prompt_content
 
-        workspace_context = build_workspace_prompt_context()
+        workspace_context = build_workspace_prompt_context(
+            include_retrieved_documents=False
+        )
         if workspace_context:
             persona_prompt += workspace_context
             logger.debug(

@@ -162,22 +162,14 @@ def score_document(
     score += len(path_matches) * 5
     score += len(content_matches) * 2
 
-    # Useful default boosts for embodied-agent workspace context.
     lowered_path = relative_path.lower()
-
-    if lowered_path.startswith("skills/"):
-        score += 3
-    elif lowered_path.startswith("knowledge/"):
-        score += 3
-    elif lowered_path.startswith("memory/"):
-        score += 2
 
     # If query is empty, still return useful workspace context.
     if not query_tokens:
         if lowered_path.startswith("skills/") or lowered_path.startswith("knowledge/"):
-            score += 2
+            score += 3
         elif lowered_path.startswith("memory/"):
-            score += 1
+            score += 2
 
     if score <= 0:
         return 0, "no query overlap"

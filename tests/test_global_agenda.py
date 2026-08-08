@@ -61,6 +61,32 @@ async def test_structured_planner_normalizes_object_completion_condition():
 
 
 @pytest.mark.asyncio
+async def test_structured_planner_allows_capability_health_checks():
+    async def complete(_prompt):
+        return """{
+            "kind": "pursuit",
+            "title": "Check the timer capability",
+            "description": "Run a bounded read-only timer health check.",
+            "evidence_refs": ["observation:idle"],
+            "completion_condition": "The timer API responds without error.",
+            "time_budget_seconds": 60,
+            "required_capabilities": ["list_timers"]
+        }"""
+
+    context = AgendaContext(
+        payload={},
+        evidence_refs={"observation:idle"},
+        capabilities={"list_timers"},
+        object_names={"hourglass"},
+    )
+
+    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+
+    assert entry.title == "Check the timer capability"
+    assert entry.required_capabilities == ["list_timers"]
+
+
+@pytest.mark.asyncio
 async def test_structured_planner_classifies_empty_reconsideration_response():
     async def complete(_prompt):
         return ""
@@ -156,37 +182,22 @@ def test_terminal_entries_cannot_be_reactivated(tmp_path):
         store.transition(entry.id, "active")
 
 
-def test_compaction_writes_memory_before_deleting(tmp_path):
+def test_pruning_deletes_terminal_entries_without_writing_memory(tmp_path):
     store = AgendaStore(tmp_path)
     entry = pursuit()
     store.add(entry)
     store.transition(entry.id, "completed", progress_summary="Saved a useful note.")
-    written = []
-
-    assert (
-        store.compact_terminal_history(
-            lambda digest: written.append(digest) or True,
-            retention_entries=0,
-        )
-        == 1
-    )
-    assert "Saved a useful note" in written[0]
+    assert store.prune_terminal_history(retention_entries=0) == 1
     assert store.load().entries == []
 
 
-def test_compaction_keeps_entries_when_memory_write_fails(tmp_path):
+def test_pruning_keeps_recent_terminal_entries(tmp_path):
     store = AgendaStore(tmp_path)
     entry = pursuit()
     store.add(entry)
     store.transition(entry.id, "completed")
 
-    assert (
-        store.compact_terminal_history(
-            lambda _digest: False,
-            retention_entries=0,
-        )
-        == 0
-    )
+    assert store.prune_terminal_history(retention_entries=1) == 0
     assert store.load().entries[0].id == entry.id
 
 

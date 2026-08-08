@@ -20,11 +20,13 @@ import {
   pressedEdge,
   questLocomotionStick,
   rescaleThumbstick,
+  selectVrRayHit,
   selectViewerSpawn,
   snapTurnStep,
   clampCaptionText,
   viewerForwardFromPose,
   viewerPoseCamera,
+  VR_RAY_MAX_DISTANCE,
 } from "@/utils/vr-helpers";
 
 const SCALE = 0.01;
@@ -392,7 +394,7 @@ export default function VrStage() {
 
     const runtime: VrRuntime = {
       scene, renderer, camera, rig, furniture, transientRoot, avatar: null, panel: null,
-      raycaster: new THREE.Raycaster(), controllers, hud, hudTexture,
+      raycaster: new THREE.Raycaster(undefined, undefined, 0, VR_RAY_MAX_DISTANCE), controllers, hud, hudTexture,
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
       collisionNodes: [],
       panelGeneration: 0,
@@ -513,16 +515,21 @@ export default function VrStage() {
       const transientObjects: THREE.Object3D[] = [];
       runtime.scene.traverse((object) => { if (object.userData.transient) transientObjects.push(object); });
       const hits = runtime.raycaster.intersectObjects([...(runtime.panel ? [runtime.panel] : []), furniture, ...transientObjects], true);
-      const panelAction = hits.map((hit) => hit.object.userData.panelAction as PanelAction | undefined).find(Boolean);
+      const headset = viewerPoseCamera(runtime.renderer.xr.getCamera());
+      const headsetPosition = headset.getWorldPosition(new THREE.Vector3());
+      const headsetForward = headset.getWorldDirection(new THREE.Vector3());
+      const hit = selectVrRayHit(hits, headsetPosition, headsetForward);
+      if (!hit) return;
+      const panelAction = hit.object.userData.panelAction as PanelAction | undefined;
       if (panelAction) {
         void activatePanelAction(panelAction);
         return;
       }
-      if (hits.some((hit) => hit.object.userData.panelClose === true)) {
+      if (hit.object.userData.panelClose === true) {
         closePanel();
         return;
       }
-      const transientHit = hits.map((hit) => hit.object.userData.transient as VrTransientEntity | undefined).find(Boolean);
+      const transientHit = hit.object.userData.transient as VrTransientEntity | undefined;
       if (transientHit?.kind === "panel") {
         removeTransient(transientHit.id);
         emitPhysicalEvent({ kind: "entity_dismissed", entity_id: transientHit.id });
@@ -534,7 +541,7 @@ export default function VrStage() {
         updateTransient({ ...transientHit, page });
         return;
       }
-      const node = hits.map((hit) => hit.object.userData.node as VrStageNode | undefined).find(Boolean);
+      const node = hit.object.userData.node as VrStageNode | undefined;
       if (node) void selectFurniture(node);
     };
     const handleConnected = (event: THREE.Event & { target: THREE.Object3D; data: XRInputSource }) => {

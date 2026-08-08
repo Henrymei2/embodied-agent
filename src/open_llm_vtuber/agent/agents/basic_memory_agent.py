@@ -9,7 +9,6 @@ from typing import (
     Optional,
 )
 import json
-from ...workspace import build_workspace_prompt_context
 from loguru import logger
 from .agent_interface import AgentInterface
 from ..output_types import SentenceOutput, DisplayText
@@ -31,16 +30,6 @@ from ...mcpp.json_detector import StreamJSONDetector
 from ...mcpp.types import ToolCallObject
 from ...mcpp.tool_executor import ToolExecutor
 from ...memory import MemoryManager
-
-
-TTS_OUTPUT_GUIDANCE = """\
-## Text-to-Speech Output Guidance
-
-Your normal assistant response will be displayed and spoken aloud through text-to-speech.
-Keep responses concise, conversational, and easy to understand when heard.
-Prefer short sentences and plain prose. Avoid unnecessary Markdown, symbol-heavy formatting, and narration of routine steps.
-Always answer the user's request completely. Use necessary detail, lists, code, or exact text when the task requires them.
-"""
 
 
 class BasicMemoryAgent(AgentInterface):
@@ -209,12 +198,6 @@ class BasicMemoryAgent(AgentInterface):
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Memory: failed recording tool action: {exc}")
 
-    def _build_tts_output_guidance(self, base_system_prompt: str) -> str:
-        """Append speech-friendly response guidance to the system prompt once."""
-        if "## Text-to-Speech Output Guidance" in base_system_prompt:
-            return base_system_prompt
-        return f"{base_system_prompt}\n\n{TTS_OUTPUT_GUIDANCE}"
-
     def _set_llm(self, llm: StatelessLLMInterface):
         """Set the LLM for chat completion."""
         self._llm = llm
@@ -227,7 +210,7 @@ class BasicMemoryAgent(AgentInterface):
         if self.interrupt_method == "user":
             system = f"{system}\n\nIf you received `[interrupted by user]` signal, you were interrupted."
 
-        self._system = self._build_tts_output_guidance(system)
+        self._system = system
 
     def _build_prompt_mode_system_prompt(self, base_system_prompt: str) -> str:
         """Build prompt-mode tool instructions from the MCP prompt template."""
@@ -273,11 +256,9 @@ class BasicMemoryAgent(AgentInterface):
             f"{memory_context}"
         )
 
-    def _build_system_prompt_with_workspace_context(
+    def _build_system_prompt_with_tool_context(
         self,
-        messages: List[Dict[str, Any]],
         base_system_prompt: str,
-        include_core_files: bool = False,
     ) -> str:
         tool_manager = getattr(self, "_tool_manager", None)
         if tool_manager:
@@ -285,27 +266,7 @@ class BasicMemoryAgent(AgentInterface):
             if tool_access_prompt:
                 base_system_prompt = f"{base_system_prompt}\n\n{tool_access_prompt}"
 
-        latest_user_message = ""
-
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                latest_user_message = str(message.get("content", ""))
-                break
-
-        workspace_context = build_workspace_prompt_context(
-            user_message=latest_user_message,
-            include_core_files=include_core_files,
-        )
-
-        if not workspace_context:
-            return base_system_prompt
-
-        logger.debug(
-            f"Injected query-specific workspace context. "
-            f"Length: {len(workspace_context)}"
-        )
-
-        return f"{base_system_prompt}\n\n{workspace_context}"
+        return base_system_prompt
 
     def _add_message(
         self,
@@ -498,9 +459,8 @@ class BasicMemoryAgent(AgentInterface):
                 if getattr(self, "_tool_manager", None)
                 else tools
             )
-            current_system_prompt = self._build_system_prompt_with_workspace_context(
-                messages,
-                base_system,
+            current_system_prompt = self._build_system_prompt_with_tool_context(
+                base_system
             )
 
             stream = self._llm.chat_completion(
@@ -635,9 +595,8 @@ class BasicMemoryAgent(AgentInterface):
                     else tools
                 )
 
-            current_system_prompt = self._build_system_prompt_with_workspace_context(
-                messages,
-                current_system_prompt,
+            current_system_prompt = self._build_system_prompt_with_tool_context(
+                current_system_prompt
             )
 
             stream = self._llm.chat_completion(
@@ -891,11 +850,8 @@ class BasicMemoryAgent(AgentInterface):
             else:
                 logger.info("Starting simple chat completion.")
                 base_system = self._active_system or self._system
-                current_system_prompt = (
-                    self._build_system_prompt_with_workspace_context(
-                        messages,
-                        base_system,
-                    )
+                current_system_prompt = self._build_system_prompt_with_tool_context(
+                    base_system
                 )
                 token_stream = self._llm.chat_completion(
                     messages, current_system_prompt
@@ -927,7 +883,6 @@ class BasicMemoryAgent(AgentInterface):
         if not self._memory_manager:
             return
         try:
-            self._memory_manager.note_session_start()
             await self._memory_manager.startup_compaction()
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Memory: startup compaction failed: {exc}")

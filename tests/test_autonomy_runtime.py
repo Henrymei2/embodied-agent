@@ -12,6 +12,7 @@ from src.open_llm_vtuber.agent.output_types import (
 )
 from src.open_llm_vtuber.autonomy.agenda import create_entry
 from src.open_llm_vtuber.autonomy.driver import (
+    _agenda_step_metadata,
     _agenda_step_text,
     _publish_completion,
 )
@@ -156,6 +157,17 @@ def test_agenda_step_extracts_text_from_agent_turn_result():
     )
 
     assert _agenda_step_text(result) == "Step completed with tools."
+
+
+def test_agenda_step_stays_out_of_user_memory():
+    metadata = _agenda_step_metadata(
+        SimpleNamespace(id="agenda-entry"),
+        SimpleNamespace(step_id="agenda-step"),
+    )
+
+    assert metadata["autonomous"] is True
+    assert metadata["skip_history"] is True
+    assert metadata["skip_memory"] is True
 
 
 def test_agenda_step_propagates_agent_turn_failure():

@@ -64,7 +64,6 @@ SERVER_PROXIMITY_REQUIREMENTS: Dict[str, str] = {
 # separation the default room keeps between any two gated objects, so standing
 # at one can never unlock another's tools.
 PROXIMITY_THRESHOLD = REACH_CEILING
-TOOL_DESCRIPTION_LIMIT = 140
 
 
 class ToolManager:
@@ -144,11 +143,12 @@ class ToolManager:
         return None
 
     def build_tool_access_prompt(self) -> str:
-        """Describe every configured tool, including currently hidden tools."""
+        """Summarize where currently hidden tool groups can be unlocked."""
         physical_prompt = ""
         if self.scene_mode == "vr" and self.conf_uid:
             try:
                 from ..physical_context import consume_physical_prompt
+
                 physical_prompt = consume_physical_prompt(self.conf_uid)
             except Exception as exc:  # noqa: BLE001 - context must not break chat
                 logger.warning(f"TM: Could not build VR physical context: {exc}")
@@ -157,42 +157,37 @@ class ToolManager:
             return physical_prompt
 
         reachable_objects = set(self.get_reachable_objects())
-        entries = []
-        for tool_name, tool in sorted(
-            self.tools.items(),
-            key=lambda item: (item[1].related_server, item[0]),
-        ):
-            description = " ".join(
-                str(tool.description or "No description available.").split()
-            )
-            if len(description) > TOOL_DESCRIPTION_LIMIT:
-                description = (
-                    description[: TOOL_DESCRIPTION_LIMIT - 1].rsplit(" ", 1)[0] + "…"
-                )
-
+        hidden_groups: Dict[str, Dict[str, int]] = {}
+        for tool_name, tool in self.tools.items():
             required_object = self.get_required_object(tool_name)
-            if required_object is None:
-                access = "anywhere; available now"
-            elif required_object in reachable_objects:
-                access = f"near {required_object}; available now"
-            else:
-                access = f"near {required_object}; currently unavailable"
+            if required_object is None or required_object in reachable_objects:
+                continue
+            servers = hidden_groups.setdefault(required_object, {})
+            servers[tool.related_server] = servers.get(tool.related_server, 0) + 1
 
+        entries = []
+        for object_name, servers in sorted(hidden_groups.items()):
+            tool_count = sum(servers.values())
             entries.append(
-                f"- `{tool_name}` ({tool.related_server}): {description} "
-                f"Access: {access}."
+                f"- `{object_name}`: {', '.join(sorted(servers))} "
+                f"({tool_count} hidden tool{'s' if tool_count != 1 else ''})."
             )
+
+        if not entries:
+            return physical_prompt
 
         access_prompt = (
-            "## Tool Access Map\n\n"
-            "The tools supplied to you right now are only the tools accessible at "
-            "your current position. Additional configured tools may be hidden until "
-            "you move near their related object. Use scene/navigation tools to move "
-            "there proactively when a hidden tool would help complete the user's "
-            "request; after moving, the newly accessible tools will be supplied.\n\n"
+            "## Tool Locations\n\n"
+            "Only currently accessible tool schemas are supplied. The groups below "
+            "are hidden at your current position; move near the corresponding object "
+            "when one would help, and its schemas will become available.\n\n"
             + "\n".join(entries)
         )
-        return f"{access_prompt}\n\n{physical_prompt}" if physical_prompt else access_prompt
+        return (
+            f"{access_prompt}\n\n{physical_prompt}"
+            if physical_prompt
+            else access_prompt
+        )
 
     def get_formatted_tools(
         self,

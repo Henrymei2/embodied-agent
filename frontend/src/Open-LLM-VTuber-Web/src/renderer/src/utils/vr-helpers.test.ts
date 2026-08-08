@@ -13,6 +13,7 @@ import {
   pressedEdge,
   questLocomotionStick,
   rescaleThumbstick,
+  selectVrRayHit,
   selectDockingPoint,
   selectViewerSpawn,
   snapTurnStep,
@@ -86,6 +87,40 @@ describe("VR spatial helpers", () => {
 });
 
 describe("Quest controller helpers", () => {
+  const hit = (distance: number, x: number, z: number, kind: string) => ({
+    distance,
+    point: { x, y: 1, z },
+    kind,
+  });
+
+  it("accepts only nearest hits in the headset's forward hemisphere", () => {
+    const viewer = { x: 0, y: 1.6, z: 0 };
+    const forward = { x: 0, y: -0.4, z: -1 };
+
+    expect(selectVrRayHit([hit(2, 0, -2, "front")], viewer, forward)?.kind).toBe("front");
+    expect(selectVrRayHit([hit(2, 0, 2, "behind")], viewer, forward)).toBeNull();
+    expect(selectVrRayHit([hit(2, 2, 0, "side")], viewer, forward)?.kind).toBe("side");
+  });
+
+  it("limits selection to three metres", () => {
+    const viewer = { x: 0, y: 1.6, z: 0 };
+    const forward = { x: 0, y: 0, z: -1 };
+
+    expect(selectVrRayHit([hit(3, 0, -3, "edge")], viewer, forward)?.kind).toBe("edge");
+    expect(selectVrRayHit([hit(3.001, 0, -3.001, "far")], viewer, forward)).toBeNull();
+  });
+
+  it("never skips a nearer physical surface for a farther interaction", () => {
+    const viewer = { x: 0, y: 1.6, z: 0 };
+    const forward = { x: 0, y: 0, z: -1 };
+    const occluder = hit(1, 0, -1, "occluder");
+    const furniture = hit(2, 0, -2, "furniture");
+    const panelAction = hit(2.5, 0, -2.5, "panel-action");
+
+    expect(selectVrRayHit([panelAction, furniture, occluder], viewer, forward)?.kind).toBe("occluder");
+    expect(selectVrRayHit([panelAction, furniture], viewer, forward)?.kind).toBe("furniture");
+  });
+
   it("reads live headset pose from an eye camera instead of the outer XR rig", () => {
     const eye = new THREE.PerspectiveCamera();
     const xrCamera = new THREE.ArrayCamera([eye]);

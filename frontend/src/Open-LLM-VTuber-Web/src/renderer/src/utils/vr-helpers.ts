@@ -18,6 +18,19 @@ export interface QuaternionLike {
   w: number;
 }
 
+export interface Vector3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface VrRayHitLike {
+  distance: number;
+  point: Vector3Like;
+}
+
+export const VR_RAY_MAX_DISTANCE = 3;
+
 export interface HandedInputSource {
   handedness: string;
   gamepad?: Gamepad | null;
@@ -73,6 +86,35 @@ export function viewerForwardFromPose(
   return magnitude
     ? { x: forward.x / magnitude, z: forward.z / magnitude }
     : { x: 0, z: 0 };
+}
+
+/**
+ * Resolve the nearest physical ray hit and reject it when it falls outside the
+ * headset's forward horizontal hemisphere. Only the nearest surface is ever
+ * returned so callers cannot skip an occluder to activate something behind it.
+ */
+export function selectVrRayHit<T extends VrRayHitLike>(
+  hits: readonly T[],
+  viewerPosition: Vector3Like,
+  viewerForward: Vector3Like,
+  maxDistance = VR_RAY_MAX_DISTANCE,
+): T | null {
+  if (!hits.length || !Number.isFinite(maxDistance) || maxDistance < 0) return null;
+  const nearest = hits.reduce((closest, hit) => (
+    hit.distance < closest.distance ? hit : closest
+  ));
+  if (!Number.isFinite(nearest.distance) || nearest.distance < 0 || nearest.distance > maxDistance) return null;
+
+  const forwardMagnitude = Math.hypot(viewerForward.x, viewerForward.z);
+  if (!forwardMagnitude) return null;
+  const targetX = nearest.point.x - viewerPosition.x;
+  const targetZ = nearest.point.z - viewerPosition.z;
+  const horizontalDot = (
+    targetX * viewerForward.x + targetZ * viewerForward.z
+  ) / forwardMagnitude;
+
+  // A zero dot product is the exact side boundary and remains selectable.
+  return horizontalDot >= -Number.EPSILON ? nearest : null;
 }
 
 /** Normalize WebXR's xr-standard primary stick into semantic room axes.

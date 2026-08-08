@@ -94,7 +94,7 @@ def test_workspace_rule_template_has_tts_guidance(tmp_path):
 
     assert TTS_OUTPUT_RULES in rule_text
     assert "reserved `speak` tool" not in rule_text
-    assert "Always answer the user's request completely." in rule_text
+    assert "Always answer the user's request completely." not in rule_text
 
 
 def test_legacy_workspace_rule_is_migrated_without_losing_custom_content(tmp_path):
@@ -154,16 +154,13 @@ def test_agent_tool_catalogs_are_not_augmented_with_speak():
     assert [tool["name"] for tool in agent._formatted_tools_claude] == ["lookup"]
 
 
-def test_system_prompt_has_concise_but_complete_tts_guidance():
+def test_system_prompt_does_not_append_duplicate_tts_guidance():
     agent = BasicMemoryAgent.__new__(BasicMemoryAgent)
     agent.interrupt_method = "system"
 
     agent.set_system("base")
 
-    assert "## Text-to-Speech Output Guidance" in agent._system
-    assert "Keep responses concise, conversational" in agent._system
-    assert "Always answer the user's request completely" in agent._system
-    assert "built-in tool named `speak`" not in agent._system
+    assert agent._system == "base"
 
 
 def test_system_prompt_advertises_tools_hidden_by_location(monkeypatch):
@@ -183,16 +180,12 @@ def test_system_prompt_advertises_tools_hidden_by_location(monkeypatch):
         system="base",
         tool_manager=manager,
     )
-    monkeypatch.setattr(
-        "src.open_llm_vtuber.agent.agents.basic_memory_agent.build_workspace_prompt_context",
-        lambda **_kwargs: "",
-    )
+    prompt = agent._build_system_prompt_with_tool_context(agent._system)
 
-    prompt = agent._build_system_prompt_with_workspace_context([], agent._system)
-
-    assert "Additional configured tools may be hidden" in prompt
-    assert "`browser_navigate` (playwright): Open a web page." in prompt
-    assert "Access: near computer; currently unavailable" in prompt
+    assert "Only currently accessible tool schemas are supplied" in prompt
+    assert "`computer`: playwright (1 hidden tool)." in prompt
+    assert "Open a web page" not in prompt
+    assert "browser_navigate" not in prompt
 
 
 @pytest.mark.asyncio
@@ -222,7 +215,7 @@ async def test_openai_tool_loop_continues_to_normal_text_after_tool_result():
     agent._memory = []
     agent._memory_manager = None
     agent.prompt_mode_flag = False
-    agent._build_system_prompt_with_workspace_context = lambda messages, system: system
+    agent._build_system_prompt_with_tool_context = lambda system: system
 
     outputs = await _collect_async(
         agent._openai_tool_interaction_loop(

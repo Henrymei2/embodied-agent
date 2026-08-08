@@ -28,7 +28,7 @@ def test_concise_prompt_contains_spoken_response_contract() -> None:
 
     assert "Default to one or two short sentences" in prompt
     assert "Summarize collections by topic and significance" in prompt
-    assert "You have one email about the project" in prompt
+    assert "You have one email about the project" not in prompt
     assert "Preserve safety-critical information, warnings, deadlines" in prompt
     assert "Never use Markdown syntax in a user-facing response" in prompt
     assert "computer-connected writing or UI tool" in prompt
@@ -40,19 +40,17 @@ async def test_system_prompt_construction_appends_concise_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = ServiceContext.__new__(ServiceContext)
-    context.system_config = SimpleNamespace(
-        tool_prompts={PROMPT_NAME: PROMPT_NAME}
-    )
+    context.system_config = SimpleNamespace(tool_prompts={PROMPT_NAME: PROMPT_NAME})
     monkeypatch.setattr(
         "src.open_llm_vtuber.service_context.build_workspace_prompt_context",
-        lambda: "",
+        lambda **_kwargs: "",
     )
 
     system_prompt = await context.construct_system_prompt("Persona.")
 
     assert system_prompt.startswith("Persona.")
     assert "Never use Markdown syntax in a user-facing response" in system_prompt
-    assert "You have one email about the project" in system_prompt
+    assert "You have one email about the project" not in system_prompt
 
 
 def test_new_workspace_rules_match_concise_contract() -> None:

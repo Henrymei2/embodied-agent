@@ -107,7 +107,6 @@ class AgendaExecutive:
         self._settling_task: Optional[asyncio.Task] = None
         self._settling_interrupted = False
         self._settled_hold_key: Optional[str] = None
-        self._memory_digest_writer: Optional[Callable[[str], bool]] = None
         self._report_result = report_result
 
     async def run(self) -> None:
@@ -140,12 +139,10 @@ class AgendaExecutive:
             await self.broadcast_snapshot()
             while True:
                 try:
-                    if self._memory_digest_writer is not None:
-                        self.store.compact_terminal_history(
-                            self._memory_digest_writer,
-                            retention_hours=self.settings.terminal_history_hours,
-                            retention_entries=self.settings.terminal_history_entries,
-                        )
+                    self.store.prune_terminal_history(
+                        retention_hours=self.settings.terminal_history_hours,
+                        retention_entries=self.settings.terminal_history_entries,
+                    )
                     progressed = await self._advance()
                     if progressed:
                         # Completing, queueing, or generating an entry must lead
@@ -281,9 +278,6 @@ class AgendaExecutive:
         if self.connected_client:
             self.store.expedite_pending_reports()
         self.wake()
-
-    def set_memory_digest_writer(self, writer: Callable[[str], bool]) -> None:
-        self._memory_digest_writer = writer
 
     async def broadcast_snapshot(self) -> None:
         await self.emit(

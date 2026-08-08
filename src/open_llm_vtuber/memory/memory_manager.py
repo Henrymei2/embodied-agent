@@ -139,11 +139,6 @@ class MemoryManager:
         self._context: List[ContextEntry] = []
         self._lock = asyncio.Lock()
 
-        # Soft-evolution: persistent familiarity/mood companion state.
-        from .evolution import EvolutionState
-
-        self._evolution = EvolutionState.load(self._workspace.root)
-
     # ------------------------------------------------------------------ #
     # Layer 1: contextual memory
     # ------------------------------------------------------------------ #
@@ -151,17 +146,6 @@ class MemoryManager:
         """Record a user message in the current context."""
         if text and text.strip():
             self._context.append(ContextEntry("user", text.strip()))
-            # Each user turn nudges the companion's familiarity and mood.
-            self._evolution.record_interaction(text.strip())
-
-    @property
-    def evolution(self):
-        """The persistent soft-evolution companion state."""
-        return self._evolution
-
-    def note_session_start(self) -> None:
-        """Mark the start of a session (bumps session count, decays idle mood)."""
-        self._evolution.note_session_start()
 
     def add_assistant_message(self, text: str) -> None:
         """Record an assistant message in the current context."""
@@ -172,31 +156,6 @@ class MemoryManager:
         """Record an embodied action the agent took (e.g. 'moved to calendar')."""
         if action and action.strip():
             self._context.append(ContextEntry("action", action.strip()))
-
-    def note_daily(self, text: str) -> bool:
-        """Append a timestamped observation directly to today's daily memory.
-
-        Used for passive observations (such as a screen-context task change)
-        that belong in the day's record but are not conversation turns. Skips a
-        write when it would repeat the most recent such note, so an alternating
-        or flapping signal cannot fill the file. Returns whether a line was
-        written.
-        """
-        cleaned = (text or "").strip()
-        if not cleaned:
-            return False
-
-        existing = self._read_if_exists(self._daily_path(now_local().date()))
-        for previous in reversed(existing.splitlines()):
-            stripped = previous.strip()
-            if stripped.startswith("- ["):
-                # Compare only the payload after the "- [HH:MM] " prefix.
-                if stripped.split("] ", 1)[-1] == cleaned:
-                    return False
-                break
-
-        self._append_daily(f"- [{now_local():%H:%M}] {cleaned}\n")
-        return True
 
     @property
     def context(self) -> List[ContextEntry]:
@@ -399,7 +358,7 @@ class MemoryManager:
             if not line:
                 continue
             key = self._normalize_fact(line)
-            if not key or key in seen:
+            if not key or any(self._facts_equivalent(key, item) for item in seen):
                 continue
             seen.add(key)
             new_bullets.append(f"- {line}")
@@ -423,6 +382,32 @@ class MemoryManager:
         """Normalize a fact line for duplicate detection (lowercase alnum only)."""
         stripped = line.strip().lstrip("-*# ").strip()
         return re.sub(r"[^a-z0-9]+", " ", stripped.lower()).strip()
+
+    @staticmethod
+    def _facts_equivalent(left: str, right: str) -> bool:
+        """Treat small wording variants of the same user fact as duplicates."""
+        if left == right:
+            return True
+
+        boilerplate = {
+            "a",
+            "as",
+            "calls",
+            "is",
+            "refers",
+            "s",
+            "the",
+            "to",
+            "user",
+        }
+        left_tokens = set(left.split()) - boilerplate
+        right_tokens = set(right.split()) - boilerplate
+        if min(len(left_tokens), len(right_tokens)) < 2:
+            return False
+        if left_tokens <= right_tokens or right_tokens <= left_tokens:
+            return True
+        overlap = len(left_tokens & right_tokens)
+        return overlap / len(left_tokens | right_tokens) >= 0.8
 
     async def startup_compaction(self) -> int:
         """Promote any past, un-promoted daily memory into long-term memory.
@@ -504,18 +489,12 @@ class MemoryManager:
     def build_memory_context(self, max_context_chars: int = 4000) -> str:
         """Assemble a memory block for injection into the agent's prompt.
 
-        Combines long-term memory (MEMORY.md), today's daily memory, and the
-        current contextual buffer.
+        Combines today's daily memory and the current contextual buffer.
+
+        Durable memory and user facts already appear once in the base workspace
+        prompt, so repeating them here wastes context and can create conflicts.
         """
         sections: List[str] = []
-
-        evolution_block = self._evolution.render().strip()
-        if evolution_block:
-            sections.append(evolution_block)
-
-        longterm = self._read_if_exists(self._workspace.memory_file).strip()
-        if longterm:
-            sections.append(f"# Long-term memory\n{longterm}")
 
         today_path = self._daily_path(now_local().date())
         today = self._read_if_exists(today_path)

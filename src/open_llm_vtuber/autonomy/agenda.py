@@ -1459,14 +1459,13 @@ class AgendaStore:
 
         return self.mutate(operation)
 
-    def compact_terminal_history(
+    def prune_terminal_history(
         self,
-        write_digest: Callable[[str], bool],
         *,
         retention_hours: int = 24,
         retention_entries: int = 30,
     ) -> int:
-        """Write semantic digests to memory before pruning terminal entries."""
+        """Prune old terminal entries without routing routine work into memory."""
         state = self.load()
         terminal = sorted(
             (
@@ -1490,18 +1489,6 @@ class AgendaStore:
             or datetime.fromisoformat(entry.ended_at or entry.created_at) < cutoff
         ]
         if not expired:
-            return 0
-        lines = ["Agenda history digest:"]
-        for entry in reversed(expired):
-            relationship = f"; parent={entry.parent_id}" if entry.parent_id else ""
-            progress = (
-                f"; outcome={entry.progress_summary}" if entry.progress_summary else ""
-            )
-            lines.append(
-                f"- [{entry.status}] {entry.title}: {entry.description}"
-                f"{progress}{relationship}; evidence={','.join(entry.motivation.evidence_refs)}"
-            )
-        if not write_digest("\n".join(lines)):
             return 0
         expired_ids = {entry.id for entry in expired}
 

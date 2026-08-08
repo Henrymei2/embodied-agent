@@ -29,7 +29,6 @@ TTS_OUTPUT_RULES = """## Agent Output Rules
 - If the user requests code, a table, exact formatting, or document-style content, do not speak or print that payload in the conversational response. Use an available computer-connected writing or UI tool to put the exact content on the user's computer.
 - Ask for a destination only when none can be inferred. If the computer tool is unavailable or spatially locked, briefly say so and ask the user to make it available. After writing, give only a short plain-language confirmation.
 - Structured MCP or native tool-call payloads are machine protocol rather than user-facing speech and are exempt from the no-Markdown rule.
-- Always answer the user's request completely.
 - Concision must never make an answer incomplete or misleading."""
 
 ROOT_FILES = {

@@ -85,6 +85,26 @@ def test_markdown_contains_all_request_families_and_native_shapes():
     assert "## Duplication index" in report
 
 
+def test_prompt_snapshot_has_no_removed_runtime_layers(tmp_path: Path):
+    (tmp_path / "MEMORY.md").write_text("important fact", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("user fact", encoding="utf-8")
+    (tmp_path / "AGENT.md").write_text("agent rule", encoding="utf-8")
+    (tmp_path / "RULE.md").write_text("persistent rule", encoding="utf-8")
+    (tmp_path / "memory").mkdir()
+    (tmp_path / "memory" / f"{exporter.date.today().isoformat()}.md").write_text(
+        "today only", encoding="utf-8"
+    )
+
+    core = exporter._workspace_context(tmp_path)
+    active = exporter._memory_context(tmp_path, [])
+
+    assert core.count("important fact") == 1
+    assert "today only" not in core
+    assert "today only" in active
+    assert "important fact" not in active
+    assert "Companion state" not in core + active
+
+
 def test_memory_prompt_constants_preserve_runtime_text():
     assert exporter.TOPIC_CHANGE_SYSTEM_PROMPT == (
         "You decide whether a conversation has changed topic. "

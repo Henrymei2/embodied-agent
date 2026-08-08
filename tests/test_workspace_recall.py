@@ -8,6 +8,9 @@ from src.open_llm_vtuber.workspace.workspace_retriever import (
     retrieve_workspace_documents,
     split_into_chunks,
 )
+from src.open_llm_vtuber.workspace.workspace_prompt_builder import (
+    build_workspace_prompt_context,
+)
 
 
 @pytest.fixture
@@ -65,6 +68,19 @@ def test_keyword_recall_misses_a_paraphrase(workspace):
     )
 
     assert results == []
+
+
+def test_core_prompt_can_disable_all_document_retrieval(workspace):
+    block = build_workspace_prompt_context(
+        "coffee",
+        workspace_dir=workspace,
+        include_retrieved_documents=False,
+    )
+
+    assert "## AGENT" in block
+    assert "coffee black" not in block
+    assert "RELEVANT KNOWLEDGE" not in block
+    assert "RELEVANT MEMORIES" not in block
 
 
 def test_semantic_recall_finds_the_paraphrased_memory(workspace, semantic):

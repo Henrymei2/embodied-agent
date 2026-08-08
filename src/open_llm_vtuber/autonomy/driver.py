@@ -43,6 +43,18 @@ def _agenda_step_instruction(entry, checkpoint) -> str:
     )
 
 
+def _agenda_step_metadata(entry, checkpoint) -> dict:
+    """Keep autonomous execution out of user memory while retaining its trace."""
+    return {
+        "agenda_entry_id": entry.id,
+        "agenda_step_id": checkpoint.step_id,
+        "autonomous": True,
+        "report": False,
+        "skip_history": True,
+        "skip_memory": True,
+    }
+
+
 async def _publish_completion(
     *,
     send,
@@ -149,14 +161,7 @@ async def agenda_loop(
                 websocket_send=send,
                 client_uid=client_uid,
                 user_input=instruction,
-                metadata={
-                    "agenda_entry_id": entry.id,
-                    "agenda_step_id": checkpoint.step_id,
-                    "autonomous": True,
-                    "report": False,
-                    "skip_history": True,
-                    "skip_memory": False,
-                },
+                metadata=_agenda_step_metadata(entry, checkpoint),
             )
 
         priority = PRIORITY_SCHEDULED if entry.kind == "scheduled" else PRIORITY_PASSIVE
@@ -253,9 +258,6 @@ async def agenda_loop(
         ),
         relocate_idle=relocate_idle if connected_client else None,
     )
-    memory_manager = getattr(context.agent_engine, "_memory_manager", None)
-    if memory_manager is not None:
-        executive.set_memory_digest_writer(memory_manager.note_daily)
     register_executive(client_uid, executive)
     logger.info(
         f"agenda: loop started for {client_uid} "

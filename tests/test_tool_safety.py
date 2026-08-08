@@ -236,7 +236,7 @@ def test_skill_tools_require_the_tool_rack(monkeypatch, tmp_path):
     assert manager.authorize_tool("draft_skill")[0] is True
 
 
-def test_tool_access_prompt_lists_all_tools_and_locations(monkeypatch, tmp_path):
+def test_tool_access_prompt_lists_only_hidden_tool_groups(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     stage = get_default_stage("character")
     assert save_stage_state("character", stage)[0]
@@ -263,18 +263,18 @@ def test_tool_access_prompt_lists_all_tools_and_locations(monkeypatch, tmp_path)
 
     prompt = manager.build_tool_access_prompt()
 
-    assert "`move_to` (scene): Move the avatar" in prompt
-    assert "Access: anywhere; available now" in prompt
-    assert "`browser_navigate` (playwright): Open a web page" in prompt
-    assert "Access: near computer; currently unavailable" in prompt
-    assert "`list_calendar_events` (calendar): List events" in prompt
-    assert "Access: near calendar;" in prompt
+    assert "`computer`: playwright (1 hidden tool)." in prompt
+    assert "`calendar`: calendar (1 hidden tool)." in prompt
+    assert "move_to" not in prompt
+    assert "browser_navigate" not in prompt
+    assert "list_calendar_events" not in prompt
+    assert "Move the avatar" not in prompt
 
     _move_avatar(stage, "computer")
     assert save_stage_state("character", stage)[0]
-    assert "Access: near computer; available now" in (
-        manager.build_tool_access_prompt()
-    )
+    moved_prompt = manager.build_tool_access_prompt()
+    assert "`computer`" not in moved_prompt
+    assert "`calendar`: calendar (1 hidden tool)." in moved_prompt
 
 
 class FakeMCPClient:

@@ -1024,26 +1024,22 @@ class WebSocketHandler:
     async def _handle_screen_context(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
     ) -> None:
-        """Accept a coarse screen-context push and record task changes.
+        """Accept a coarse screen-context push for live autonomy decisions.
 
         Only short labels (foreground app, window/document title, idle time) are
-        accepted; raw screen contents are rejected by the validator. When the
-        task changes, one line is appended to daily memory so the agent's later
-        decisions can reason over what the user has been doing.
+        accepted; raw screen contents are rejected by the validator. This
+        transient observation is not copied into the user's memory files.
         """
         from .autonomy.screen_context import update_screen_context
 
         try:
-            context, task_changed = update_screen_context(client_uid, data)
+            update_screen_context(client_uid, data)
         except ValueError as exc:
             logger.warning(f"Rejected invalid screen context from {client_uid}: {exc}")
             await websocket.send_text(
                 json.dumps({"type": "error", "message": str(exc)})
             )
             return
-
-        if task_changed:
-            self._record_screen_context_to_memory(client_uid, context.summary())
 
     async def _handle_vr_user_pose(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
@@ -1094,21 +1090,6 @@ class WebSocketHandler:
             "accepted": len(accepted),
             "stage": load_scene_state(context.character_config.conf_uid, "vr") if any(event.kind == "prop_relocated" for event in accepted) else None,
         })
-
-    def _record_screen_context_to_memory(self, client_uid: str, summary: str) -> None:
-        """Append a screen-context task change to daily memory, best-effort."""
-        from .client_registry import get_client_context
-
-        context = get_client_context(client_uid)
-        memory_manager = getattr(
-            getattr(context, "agent_engine", None), "_memory_manager", None
-        )
-        if memory_manager is None:
-            return
-        try:
-            memory_manager.note_daily(f"Screen context: {summary}")
-        except Exception as exc:  # noqa: BLE001 - observation logging is optional
-            logger.error(f"Failed recording screen context to memory: {exc}")
 
     async def _handle_autonomy_feedback(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

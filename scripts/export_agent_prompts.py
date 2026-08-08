@@ -26,9 +26,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from prompts import prompt_loader  # noqa: E402
-from src.open_llm_vtuber.agent.agents.basic_memory_agent import (  # noqa: E402
-    TTS_OUTPUT_GUIDANCE,
-)
 from src.open_llm_vtuber.autonomy.agenda import AgendaStore  # noqa: E402
 from src.open_llm_vtuber.autonomy.agenda_context import (  # noqa: E402
     AgendaContext,
@@ -40,7 +37,6 @@ from src.open_llm_vtuber.autonomy.agenda_planner import (  # noqa: E402
 from src.open_llm_vtuber.autonomy.idle_relocation import (  # noqa: E402
     idle_scene_snapshot,
 )
-from src.open_llm_vtuber.memory.evolution import EvolutionState  # noqa: E402
 from src.open_llm_vtuber.memory.memory_manager import (  # noqa: E402
     CONTEXT_SUMMARY_SYSTEM_PROMPT,
     LONGTERM_COMPACTION_SYSTEM_PROMPT,
@@ -49,26 +45,14 @@ from src.open_llm_vtuber.memory.memory_manager import (  # noqa: E402
     USER_FACT_EXTRACTION_SYSTEM_PROMPT,
 )
 from src.open_llm_vtuber.mcpp.tool_adapter import ToolAdapter  # noqa: E402
-from src.open_llm_vtuber.mcpp.tool_manager import (  # noqa: E402
-    TOOL_DESCRIPTION_LIMIT,
-    ToolManager,
-)
+from src.open_llm_vtuber.mcpp.tool_manager import ToolManager  # noqa: E402
 from src.open_llm_vtuber.mcpp.types import FormattedTool  # noqa: E402
 from src.open_llm_vtuber.physical_context import (  # noqa: E402
     EMBODIED_PRESENTATION_POLICY,
 )
 from src.open_llm_vtuber.utils.timezone import now_local  # noqa: E402
 from src.open_llm_vtuber.workspace.workspace_prompt_builder import (  # noqa: E402
-    format_retrieved_document,
     format_section,
-    split_retrieved_documents,
-)
-from src.open_llm_vtuber.workspace.workspace_retriever import (  # noqa: E402
-    RetrievedWorkspaceDocument,
-    read_text_file_safely,
-    score_document,
-    split_into_chunks,
-    tokenize,
 )
 
 DEFAULT_OUTPUT = PROJECT_ROOT / "tmp" / "agent-prompts" / "current.md"
@@ -144,79 +128,15 @@ def _latest_history(conf_uid: str) -> tuple[Path | None, list[dict[str, Any]]]:
     return None, []
 
 
-def _keyword_documents(workspace: Path, query: str, limit: int = 6):
-    """Read-only approximation of retrieval; deliberately disables embeddings."""
-    query_tokens = tokenize(query)
-    candidates: list[RetrievedWorkspaceDocument] = []
-    paths: list[Path] = []
-    for directory_name in ("knowledge", "skills", "memory"):
-        directory = workspace / directory_name
-        if not directory.is_dir():
-            continue
-        for path in directory.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in {
-                ".md",
-                ".txt",
-                ".json",
-                ".yaml",
-                ".yml",
-                ".py",
-            }:
-                continue
-            resolved = path.resolve()
-            try:
-                relative = resolved.relative_to(workspace.resolve())
-            except ValueError:
-                continue
-            if (
-                len(relative.parts) > 2
-                and relative.parts[0] == "skills"
-                and relative.parts[1] in {"drafts", "retired"}
-            ):
-                continue
-            paths.append(resolved)
-    for path in paths:
-        content = read_text_file_safely(path, max_chars=40_000)
-        if not content.strip():
-            continue
-        relative = str(path.relative_to(workspace))
-        chunks = split_into_chunks(content) or [content]
-        best: RetrievedWorkspaceDocument | None = None
-        for chunk in chunks:
-            score, reason = score_document(query_tokens, relative, chunk)
-            if score <= 0:
-                continue
-            current = RetrievedWorkspaceDocument(relative, chunk[:2_000], score, reason)
-            if best is None or current.score > best.score:
-                best = current
-        if best:
-            candidates.append(best)
-    return sorted(candidates, key=lambda item: (-item.score, item.relative_path))[
-        :limit
-    ]
-
-
-def _workspace_context(workspace: Path, query: str = "", core: bool = True) -> str:
+def _workspace_context(workspace: Path) -> str:
     sections: list[str] = []
-    if core:
-        for title, filename in (
-            ("AGENT", "AGENT.md"),
-            ("RULES", "RULE.md"),
-            ("MEMORY", "MEMORY.md"),
-            ("USER INFORMATION", "USER.md"),
-        ):
-            sections.append(format_section(title, _read(workspace / filename, 4_000)))
-    grouped = split_retrieved_documents(_keyword_documents(workspace, query))
-    for title, documents in grouped.items():
-        if documents:
-            sections.append(
-                format_section(
-                    title,
-                    "\n\n---\n\n".join(
-                        format_retrieved_document(item) for item in documents
-                    ),
-                )
-            )
+    for title, filename in (
+        ("AGENT", "AGENT.md"),
+        ("RULES", "RULE.md"),
+        ("MEMORY", "MEMORY.md"),
+        ("USER INFORMATION", "USER.md"),
+    ):
+        sections.append(format_section(title, _read(workspace / filename, 4_000)))
     body = "\n\n---\n\n".join(item for item in sections if item.strip())
     if not body:
         return ""
@@ -224,9 +144,7 @@ def _workspace_context(workspace: Path, query: str = "", core: bool = True) -> s
         [
             "",
             "================ WORKSPACE CONTEXT ================",
-            "The following context was retrieved from the agent workspace.",
-            "Use it to answer accurately and follow the user's persistent rules.",
-            "Use relevant knowledge, active skills, memory, and user information when helpful.",
+            "Follow these persistent workspace files when relevant.",
             "Do not mention this context block unless directly asked.",
             "",
             body,
@@ -238,12 +156,6 @@ def _workspace_context(workspace: Path, query: str = "", core: bool = True) -> s
 
 def _memory_context(workspace: Path, history: list[dict[str, Any]]) -> str:
     sections: list[str] = []
-    evolution = EvolutionState.load(workspace).render().strip()
-    if evolution:
-        sections.append(evolution)
-    longterm = _read(workspace / "MEMORY.md").strip()
-    if longterm:
-        sections.append(f"# Long-term memory\n{longterm}")
     today = _read(workspace / "memory" / f"{date.today().isoformat()}.md").strip()
     if today:
         sections.append(f"# Today's memory\n{today}")
@@ -287,36 +199,27 @@ async def _load_tools(
 
 def _tool_access_prompt(manager: ToolManager) -> str:
     reachable = set(manager.get_reachable_objects())
-    entries = []
-    for name, tool in sorted(
-        manager.tools.items(), key=lambda item: (item[1].related_server, item[0])
-    ):
-        description = " ".join(
-            str(tool.description or "No description available.").split()
-        )
-        if len(description) > TOOL_DESCRIPTION_LIMIT:
-            description = (
-                description[: TOOL_DESCRIPTION_LIMIT - 1].rsplit(" ", 1)[0] + "…"
-            )
+    hidden_groups: dict[str, dict[str, int]] = {}
+    for name, tool in manager.tools.items():
         required = manager.get_required_object(name)
-        if required is None:
-            access = "anywhere; available now"
-        elif required in reachable:
-            access = f"near {required}; available now"
-        else:
-            access = f"near {required}; currently unavailable"
+        if required is None or required in reachable:
+            continue
+        servers = hidden_groups.setdefault(required, {})
+        servers[tool.related_server] = servers.get(tool.related_server, 0) + 1
+    entries = []
+    for object_name, servers in sorted(hidden_groups.items()):
+        count = sum(servers.values())
         entries.append(
-            f"- `{name}` ({tool.related_server}): {description} Access: {access}."
+            f"- `{object_name}`: {', '.join(sorted(servers))} "
+            f"({count} hidden tool{'s' if count != 1 else ''})."
         )
     if not entries:
         return EMBODIED_PRESENTATION_POLICY
     return (
-        "## Tool Access Map\n\n"
-        "The tools supplied to you right now are only the tools accessible at "
-        "your current position. Additional configured tools may be hidden until "
-        "you move near their related object. Use scene/navigation tools to move "
-        "there proactively when a hidden tool would help complete the user's "
-        "request; after moving, the newly accessible tools will be supplied.\n\n"
+        "## Tool Locations\n\n"
+        "Only currently accessible tool schemas are supplied. The groups below "
+        "are hidden at your current position; move near the corresponding object "
+        "when one would help, and its schemas will become available.\n\n"
         + "\n".join(entries)
         + "\n\n"
         + EMBODIED_PRESENTATION_POLICY
@@ -332,13 +235,12 @@ def _build_main_request(
     character = config["character_config"]
     conf_uid = str(character["conf_uid"])
     history_path, messages = _latest_history(conf_uid)
-    latest_user = next(
-        (str(item["content"]) for item in reversed(messages) if item["role"] == "user"),
-        "",
-    )
     segments: list[tuple[str, str, str]] = []
-    persona = str(character.get("persona_prompt") or "You are a helpful assistant.")
-    segments.append(("persona", "conf.yaml:character_config.persona_prompt", persona))
+    persona = str(character.get("persona_prompt") or "")
+    if persona:
+        segments.append(
+            ("persona", "conf.yaml:character_config.persona_prompt", persona)
+        )
     base = persona
     for name, filename in config["system_config"].get("tool_prompts", {}).items():
         if name in SKIPPED_UTILITY_PROMPTS:
@@ -346,16 +248,12 @@ def _build_main_request(
         content = prompt_loader.load_util(filename)
         segments.append((name, f"prompts/utils/{filename}.txt", content))
         base += content
-    core = _workspace_context(workspace, core=True)
+    core = _workspace_context(workspace)
     segments.append(("workspace_core", str(workspace), core))
     base += core
     interrupt = "If you received `[interrupted by user]` signal, you were interrupted."
     segments.append(("interrupt", "BasicMemoryAgent.set_system", interrupt))
     base = f"{base}\n\n{interrupt}"
-    segments.append(
-        ("tts_guidance", "BasicMemoryAgent.TTS_OUTPUT_GUIDANCE", TTS_OUTPUT_GUIDANCE)
-    )
-    base = f"{base}\n\n{TTS_OUTPUT_GUIDANCE}"
     memory = _memory_context(workspace, messages)
     memory_wrapper = (
         "Use the following memory as background context. It may be incomplete or "
@@ -373,16 +271,10 @@ def _build_main_request(
     access = _tool_access_prompt(manager)
     segments.append(("tool_access", "ToolManager (non-consuming snapshot)", access))
     base = f"{base}\n\n{access}"
-    retrieved = _workspace_context(workspace, latest_user, core=False)
-    segments.append(
-        ("query_workspace", "keyword-only offline reconstruction", retrieved)
-    )
-    base = f"{base}\n\n{retrieved}" if retrieved else base
     tools = manager.get_formatted_tools("OpenAI")
     limits = (
-        f"Reconstructed from {history_path or 'no history'}. Semantic retrieval was "
-        "replaced with deterministic keyword retrieval. Transient VR observations "
-        "were not consumed."
+        f"Reconstructed from {history_path or 'no history'}. Transient VR "
+        "observations were not consumed."
     )
     if unavailable:
         limits += " Offline schemas unavailable for: " + ", ".join(unavailable) + "."

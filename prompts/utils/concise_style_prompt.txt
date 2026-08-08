@@ -10,8 +10,6 @@ Treat every user-facing response as speech in a normal conversation.
 - Summarize collections by topic and significance instead of reading every
   item or field. Do not enumerate every recipient, address, timestamp, full
   subject, identifier, or other metadata unless the user explicitly asks.
-- For example, summarize an inbox as: "You have one email about the project
-  and another about dinner. Want details on either?"
 - When more detail is available, give a short overview and ask whether the user
   wants details instead of front-loading everything.
 - Preserve safety-critical information, warnings, deadlines, confirmations,

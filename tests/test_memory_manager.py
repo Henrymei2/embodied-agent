@@ -57,37 +57,6 @@ async def test_empty_messages_are_ignored(workspace):
     assert mm.context == []
 
 
-def test_note_daily_writes_timestamped_line_to_today(workspace):
-    mm = MemoryManager(workspace_dir=workspace)
-
-    assert mm.note_daily("Screen context: VS Code — memory_manager.py") is True
-
-    daily = (workspace / "memory" / f"{date.today().isoformat()}.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Screen context: VS Code — memory_manager.py" in daily
-    assert daily.count("- [") == 1
-
-
-def test_note_daily_skips_a_repeat_of_the_latest_note(workspace):
-    mm = MemoryManager(workspace_dir=workspace)
-    mm.note_daily("Screen context: Terminal — pytest")
-
-    # An immediate repeat is dropped; a different note is kept.
-    assert mm.note_daily("Screen context: Terminal — pytest") is False
-    assert mm.note_daily("Screen context: Chrome — docs") is True
-
-    daily = (workspace / "memory" / f"{date.today().isoformat()}.md").read_text(
-        encoding="utf-8"
-    )
-    assert daily.count("- [") == 2
-
-
-def test_note_daily_ignores_blank_text(workspace):
-    mm = MemoryManager(workspace_dir=workspace)
-    assert mm.note_daily("   ") is False
-
-
 # --------------------------------------------------------------------------- #
 # Contextual -> Daily compaction
 # --------------------------------------------------------------------------- #
@@ -209,6 +178,24 @@ async def test_user_facts_deduplicated(workspace):
     assert "User likes tea" in user_md  # new fact added
 
 
+def test_user_fact_wording_variants_are_deduplicated(workspace):
+    mm = MemoryManager(workspace_dir=workspace)
+    mm._workspace.user_file.write_text(
+        "# USER.md\n\n"
+        "- Name: Mei\n"
+        "- Preferred name: Mei\n"
+        "- Mei refers to the writing desk as the planning desk.\n",
+        "utf-8",
+    )
+
+    added = mm._append_user_facts(
+        "- User's preferred name is Mei\n"
+        "- User calls the writing desk the planning desk\n"
+    )
+
+    assert added == 0
+
+
 async def test_user_facts_skipped_when_none(workspace):
     llm = FakeLLM(responses={"about the user": "NONE"})
     mm = MemoryManager(llm_complete=llm, workspace_dir=workspace)
@@ -290,15 +277,20 @@ async def test_longterm_compaction_noop_when_small(workspace):
 # --------------------------------------------------------------------------- #
 # Context assembly for prompts
 # --------------------------------------------------------------------------- #
-async def test_build_memory_context_combines_layers(workspace):
+async def test_build_memory_context_combines_today_and_current_context(workspace):
     mm = MemoryManager(workspace_dir=workspace)
     mm._workspace.memory_file.write_text("- long term fact", "utf-8")
     today = mm._daily_path(date.today())
     today.write_text(mm._daily_header(date.today()) + "- today entry\n", "utf-8")
+    yesterday = date.fromordinal(date.today().toordinal() - 1)
+    mm._daily_path(yesterday).write_text(
+        mm._daily_header(yesterday) + "- yesterday entry\n", "utf-8"
+    )
     mm.add_user_message("current question")
 
     block = mm.build_memory_context()
 
-    assert "Long-term memory" in block and "long term fact" in block
+    assert "Long-term memory" not in block and "long term fact" not in block
     assert "Today's memory" in block and "today entry" in block
+    assert "yesterday entry" not in block
     assert "Current conversation context" in block and "current question" in block
