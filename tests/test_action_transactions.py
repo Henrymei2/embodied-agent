@@ -271,6 +271,92 @@ async def test_spatial_denial_is_a_terminal_policy_attempt_not_an_early_bypass(
     assert failed == {"spatial"}
 
 
+async def test_move_to_commits_without_presence_when_saved_scene_verifies(tmp_path):
+    async def verifier(_descriptor, profile, arguments, _result):
+        assert profile.capability == "move_to"
+        assert arguments == {"target": "calendar"}
+        return {
+            "verified": True,
+            "kind": "persisted_frontend_state",
+            "evidence_digest": "a" * 64,
+        }
+
+    coordinator = _coordinator(tmp_path, verifier=verifier)
+
+    async def invoke():
+        return {
+            "metadata": {},
+            "content_items": [{"type": "text", "text": "OK: arrived"}],
+        }
+
+    result = await coordinator.execute(
+        server_name="scene",
+        capability="move_to",
+        tool_id="move-calendar",
+        arguments={"target": "calendar"},
+        invoke=invoke,
+    )
+
+    assert result.is_error is False
+    assert result.metadata["action_transaction"]["state"] == "succeeded"
+
+
+async def test_move_to_is_unresolved_when_saved_scene_does_not_verify(tmp_path):
+    async def verifier(_descriptor, _profile, _arguments, _result):
+        return {
+            "verified": False,
+            "kind": "persisted_frontend_state",
+            "evidence_digest": "b" * 64,
+        }
+
+    coordinator = _coordinator(tmp_path, verifier=verifier)
+
+    async def invoke():
+        return {
+            "metadata": {},
+            "content_items": [{"type": "text", "text": "OK: arrived"}],
+        }
+
+    result = await coordinator.execute(
+        server_name="scene",
+        capability="move_to",
+        tool_id="move-calendar",
+        arguments={"target": "calendar"},
+        invoke=invoke,
+    )
+
+    assert result.is_error is True
+    assert result.metadata["action_transaction"]["state"] == "unresolved"
+
+
+async def test_optional_frontend_verifier_does_not_shadow_local_verification(
+    tmp_path,
+):
+    async def frontend_only_verifier(_descriptor, _profile, _arguments, _result):
+        return None
+
+    coordinator = _coordinator(tmp_path, verifier=frontend_only_verifier)
+    target = tmp_path / "verified.txt"
+
+    async def invoke():
+        target.write_text("saved", encoding="utf-8")
+        return {
+            "metadata": {},
+            "content_items": [{"type": "text", "text": "OK: wrote file"}],
+        }
+
+    result = await coordinator.execute(
+        server_name="bash",
+        capability="write_file",
+        tool_id="write-verified",
+        arguments={"path": "verified.txt", "content": "saved"},
+        invoke=invoke,
+    )
+
+    assert result.is_error is False
+    assert result.metadata["action_transaction"]["state"] == "succeeded"
+
+
 async def test_failed_verification_can_be_compensated_with_bounded_evidence(tmp_path):
     compensation_calls = 0
 

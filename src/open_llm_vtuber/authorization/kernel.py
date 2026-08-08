@@ -139,10 +139,12 @@ class AuthorizationKernel:
         privacy_allowed = PRIVACY_CLASSES.index(
             descriptor.privacy_class
         ) <= PRIVACY_CLASSES.index(context.privacy_ceiling)
-        presence_required = descriptor.side_effect_class in {
-            "communication",
-            "physical",
-        }
+        # Presence is an attention/consent boundary for work directed at the
+        # user. Silent embodied actions (walking, sitting, standing) remain
+        # physical and high-risk for confidence/authority purposes, but they
+        # must not become impossible merely because the renderer is hidden or
+        # its coarse presence heartbeat is stale.
+        presence_required = descriptor.side_effect_class == "communication"
         confidence_check = self._confidence_check(descriptor)
 
         checks = (

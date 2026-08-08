@@ -218,6 +218,45 @@ def test_local_mutation_requires_a_trusted_session_grant():
     assert allowed.may_commit is True
 
 
+def test_silent_physical_action_does_not_require_live_presence():
+    descriptor = _descriptor(
+        capability="move_to",
+        target_ref="calendar",
+        arguments={"target": "calendar"},
+        side_effect_class="physical",
+        reversibility="reversible",
+        required_user_authority="session",
+        spatial_requirement=None,
+        external_destination=None,
+    )
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(
+            descriptor,
+            granted_capabilities=frozenset({"move_to"}),
+            session_authorities=frozenset({"move_to"}),
+            reachable_spatial_targets=frozenset(),
+            allowed_external_destinations=frozenset(),
+            confirmation=None,
+            presence_allowed=False,
+        ),
+    )
+
+    assert decision.may_commit is True
+    assert "presence" not in _failed_checks(decision)
+
+
+def test_user_communication_still_requires_live_presence():
+    descriptor = _descriptor()
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(descriptor, presence_allowed=False),
+    )
+
+    assert decision.may_commit is False
+    assert "presence" in _failed_checks(decision)
+
+
 def test_descriptor_rejects_mutated_schema_and_external_ambiguity():
     descriptor = _descriptor()
     with pytest.raises(AuthorizationValidationError, match="schema"):

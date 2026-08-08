@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from loguru import logger
+
 from .contracts import (
     ActionDescriptor,
     AuthorizationContext,
@@ -180,11 +182,13 @@ class ActionTransactionCoordinator:
                 transaction["transaction_id"]
             )
             confirmation = None
+        presence_allowed, presence_summary = self._presence_snapshot()
         context = self._context(
             descriptor,
             confirmation=confirmation,
             reviewed=capability in ACTION_PROFILES,
             evaluated_at=evaluation_time,
+            presence_allowed=presence_allowed,
         )
         decision = self.kernel.evaluate(descriptor, context)
         attempt = self.journal.begin_attempt(
@@ -201,6 +205,15 @@ class ActionTransactionCoordinator:
                 check.reason_code for check in decision.checks if not check.passed
             ]
             reason = failed[0] if failed else "policy_denied"
+            logger.warning(
+                "authorization denied capability={} failed_checks={} "
+                "presence_fresh={} user_present={} focus_mode={}",
+                capability,
+                failed,
+                presence_summary["fresh"],
+                presence_summary["user_present"],
+                presence_summary["focus_mode"],
+            )
             self.journal.finish_attempt(
                 transaction["transaction_id"],
                 attempt_id=attempt_id,
@@ -343,6 +356,11 @@ class ActionTransactionCoordinator:
                 outcome="succeeded",
                 reason_code="postcondition_verified",
             )
+            logger.info(
+                "authorization transaction succeeded capability={} action={}",
+                capability,
+                descriptor.action_id,
+            )
             return self._annotate(parsed, transaction["transaction_id"], "succeeded")
 
         if profile.reversibility == "compensatable" and self.compensator is not None:
@@ -411,18 +429,10 @@ class ActionTransactionCoordinator:
         confirmation: UserConfirmation | None,
         reviewed: bool,
         evaluated_at: str,
+        presence_allowed: bool,
     ) -> AuthorizationContext:
         reachable = frozenset(self.tool_manager.get_reachable_objects())
-        presence_allowed = False
-        try:
-            from ..autonomy.observation import get_client_presence
 
-            presence = get_client_presence(self.client_uid)
-            presence_allowed = (
-                presence.fresh and presence.user_present and not presence.focus_mode
-            )
-        except Exception:
-            pass
         destination_allowed = bool(
             confirmation is not None
             and confirmation.descriptor_digest == descriptor.digest
@@ -450,6 +460,24 @@ class ActionTransactionCoordinator:
             evaluated_at=evaluated_at,
         )
 
+    def _presence_snapshot(self) -> tuple[bool, dict[str, bool]]:
+        summary = {"fresh": False, "user_present": False, "focus_mode": False}
+        try:
+            from ..autonomy.observation import get_client_presence
+
+            presence = get_client_presence(self.client_uid)
+            summary = {
+                "fresh": presence.fresh,
+                "user_present": presence.user_present,
+                "focus_mode": presence.focus_mode,
+            }
+            allowed = (
+                presence.fresh and presence.user_present and not presence.focus_mode
+            )
+        except Exception:
+            allowed = False
+        return allowed, summary
+
     async def _verify(
         self,
         descriptor: ActionDescriptor,
@@ -458,7 +486,11 @@ class ActionTransactionCoordinator:
         result: dict[str, Any],
     ) -> dict[str, Any] | None:
         if self.verifier is not None:
-            return await self.verifier(descriptor, profile, arguments, result)
+            verification = await self.verifier(
+                descriptor, profile, arguments, result
+            )
+            if verification is not None:
+                return verification
         if profile.verification == "local_path":
             return self._verify_local_path(profile, arguments, result)
         evidence = result.get("metadata", {}).get("authorization_evidence")

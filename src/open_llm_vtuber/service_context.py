@@ -17,6 +17,7 @@ from .mcpp.mcp_client import MCPClient
 from .mcpp.tool_executor import ToolExecutor
 from .mcpp.tool_adapter import ToolAdapter
 from .authorization.transaction import ActionTransactionCoordinator
+from .authorization.frontend_verifier import build_frontend_action_verifier
 
 from .asr.asr_factory import ASRFactory
 from .tts.fallback_tts import build_tts_engine
@@ -197,6 +198,12 @@ class ServiceContext:
                     workspace_root=workspace_root,
                     client_uid=self.client_uid or "anonymous",
                     tool_manager=self.tool_manager,
+                    verifier=build_frontend_action_verifier(
+                        conf_uid
+                        or getattr(self.character_config, "conf_uid", None)
+                        or "",
+                        self.scene_mode,
+                    ),
                 )
                 self.tool_executor = ToolExecutor(
                     self.mcp_client,

@@ -40,7 +40,7 @@ Every decision records checks for:
 - minimum confidence for consequential work;
 - user authority;
 - spatial reachability;
-- Presence permission;
+- Presence permission for user-directed communication;
 - quota;
 - privacy ceiling;
 - external destination; and
@@ -77,6 +77,14 @@ navigation and drafting do not cause approval fatigue. External,
 communication, irreversible, and unknown effects require short-lived exact
 confirmation at the writing desk's trusted user-only route. Expired authority
 returns to pending.
+
+Presence is an attention boundary, not a renderer-visibility switch. It remains
+fail-closed for communication directed at the user, while silent avatar actions
+such as walking, sitting, and standing may proceed when the page is hidden, the
+coarse heartbeat is stale, or focus mode is active. Those actions remain
+physical: they still require a reviewed session grant, pass the physical-risk
+confidence threshold, consume quota, and must be verified against the scene
+state persisted from the frontend's action result.
 
 Local file effects use direct postcondition checks. Other adapters must return
 structured evidence bound to the descriptor digest or provide a verifier.
