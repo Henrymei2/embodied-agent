@@ -313,7 +313,8 @@ def _project(
     moment = observed_at or _now_iso()
 
     scene_nodes = [node for node in nodes if isinstance(node, dict)]
-    labels, ambiguous, withheld = _resolve_labels(scene_nodes)
+    labels, ambiguous, withheld_ids = _resolve_labels(scene_nodes)
+    withheld = set(withheld_ids)
     entities: list[SemanticEntity] = []
     reaches: dict[str, float] = {}
     for node in scene_nodes:
@@ -335,6 +336,11 @@ def _project(
         reaches[entity.entity_id] = _reach_of(
             node, entity.bounds.width, entity.bounds.depth
         )
+        # VR props are manipulable scene contents, never capability anchors.
+        # They remain in the semantic world for collision and spatial reasoning,
+        # but moving one beside the avatar must not unlock an object-bound tool.
+        if renderer == "vr" and node.get("type") == "prop":
+            withheld.add(entity.entity_id)
 
     if not entities:
         raise ProjectionError("scene document projected to an empty world")
@@ -379,7 +385,7 @@ def _project(
         floor_is_metric=renderer == "vr",
         reaches=reaches,
         ambiguous_labels=ambiguous,
-        withheld_ids=withheld,
+        withheld_ids=frozenset(withheld),
     )
 
 

@@ -26,6 +26,7 @@ PROXIMITY_REQUIREMENTS: Dict[str, str] = {
     # The room is redrawn at the design board, not from wherever the agent stands.
     "describe_room": "design board",
     "place_object": "design board",
+    "place_prop": "design board",
     "move_object": "design board",
     "remove_object": "design board",
     # The library server serves two objects: browsing happens at the shelf,
@@ -144,8 +145,16 @@ class ToolManager:
 
     def build_tool_access_prompt(self) -> str:
         """Describe every configured tool, including currently hidden tools."""
+        physical_prompt = ""
+        if self.scene_mode == "vr" and self.conf_uid:
+            try:
+                from ..physical_context import consume_physical_prompt
+                physical_prompt = consume_physical_prompt(self.conf_uid)
+            except Exception as exc:  # noqa: BLE001 - context must not break chat
+                logger.warning(f"TM: Could not build VR physical context: {exc}")
+
         if not self.tools:
-            return ""
+            return physical_prompt
 
         reachable_objects = set(self.get_reachable_objects())
         entries = []
@@ -174,7 +183,7 @@ class ToolManager:
                 f"Access: {access}."
             )
 
-        return (
+        access_prompt = (
             "## Tool Access Map\n\n"
             "The tools supplied to you right now are only the tools accessible at "
             "your current position. Additional configured tools may be hidden until "
@@ -183,6 +192,7 @@ class ToolManager:
             "request; after moving, the newly accessible tools will be supplied.\n\n"
             + "\n".join(entries)
         )
+        return f"{access_prompt}\n\n{physical_prompt}" if physical_prompt else access_prompt
 
     def get_formatted_tools(
         self,

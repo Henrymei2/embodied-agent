@@ -74,8 +74,9 @@ is limited to three lines, truncates safely, and disappears while idle so it
 cannot obscure the companion. Only the latest subtitle and current activity
 are visible; VR mode has no full chat history.
 
-VR mode excludes the normal sidebar and footer, text entry, direct furniture
-grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.
+VR mode excludes the normal sidebar and footer, text entry, direct fixed-
+furniture grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.
+Grabbable `prop` nodes and session-only panels/cards use the squeeze control.
 
 ### 2.3 Quest Touch Plus controls
 
@@ -92,6 +93,7 @@ object in place.
 | Right thumbstick axis 2 | 30-degree snap turn |
 | Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
 | Right primary trigger / `select` | Select furniture or an in-world panel control |
+| Right `squeezestart` / `squeezeend` | Grab or release a prop/card/panel within 20 cm |
 
 Quest 3 is the only supported controller profile. A left controller without
 `buttons[4]`, or either controller without axes 2/3, must produce a visible
@@ -228,10 +230,10 @@ state or arrival semantics.
 The VR document is a separate schema, not stage v10:
 
 ```ts
-type VrNodeType = "furniture" | "avatar";
+type VrNodeType = "furniture" | "avatar" | "prop";
 
 interface VrStageDocument {
-  version: 1;
+  version: 2;
   mode: "vr";
   room: {
     width: number;
@@ -271,8 +273,10 @@ interface VrStageNode {
   spritesheet?: StageSpritesheet;
   uiWindow?: FurnitureWindowConfig;
   pose?: "standing" | "sitting";
-  interaction?: { on_click?: boolean };
+  interaction?: { on_click?: boolean; grabbable?: boolean };
   reach?: number;
+  yaw?: number;
+  support_id?: "floor" | string;
 }
 ```
 
@@ -299,7 +303,8 @@ live synchronization, or shared position field.
 
 Backend and frontend validators enforce the same rules:
 
-- `version === 1`, `mode === "vr"`, and no more than 80 nodes;
+- `version === 2`, `mode === "vr"`, and no more than 80 nodes; stored v1 rooms
+  are migrated losslessly on load;
 - finite positive room dimensions, `units_per_meter`, reach ceiling, and move
   speed, with the existing upper bounds where applicable;
 - unique safe IDs and unique effective labels under whitespace normalization
@@ -312,8 +317,11 @@ Backend and frontend validators enforce the same rules:
 - `reach` is positive and no greater than `world.reach_ceiling`;
 - colors, textures, state textures, interactions, windows, poses, labels, and
   spritesheets use the current allowlists and length limits;
-- no node rotation, scripts, arbitrary HTML, extra window providers, or
-  unknown material fields.
+- props are explicitly grabbable, have horizontal `yaw`, rest on the floor or
+  a furniture support with a 2 cm footprint margin, and cannot carry `reach`
+  or `uiWindow` capability anchors;
+- no furniture/avatar rotation, scripts, arbitrary HTML, extra window
+  providers, or unknown material fields.
 
 Furniture is allowed to overlap because the existing room editor does not
 promise collision-free layouts. Movement docking handles overlaps by rejecting
@@ -470,7 +478,7 @@ Normal mode continues to receive:
 VR mode receives:
 
 ```json
-{"type": "vr-stage-state", "stage": {"version": 1, "mode": "vr"}}
+{"type": "vr-stage-state", "stage": {"version": 2, "mode": "vr"}}
 ```
 
 The VR provider alone handles `vr-stage-state`. When backend validation rejects
@@ -482,12 +490,38 @@ Frontend action names and request/result envelopes remain unchanged. VR
 floor-plane `{x, y}`. Mode-specific `stage_get_state`, `stage_set_state`,
 `stage_patch_state`, `stage_reset_state`, and `stage_list_capabilities` operate
 on `VrStageDocument` for the owning VR client. Capabilities must report
-`mode: "vr"` and schema version 1.
+`mode: "vr"` and schema version 2.
 
 The backend resolves a pending request to its registered owner, looks up that
 owner's stored mode, validates the returned state with that mode's validator,
 and persists to that mode's path. A `mode` field in the result is ignored; a VR
 document returned by a normal owner, or the reverse, fails validation.
+
+### 6.3 Physical affordances and observations
+
+VR exposes composable actions rather than an email-delivery state machine:
+listing physical entities, materializing a mailbox-gated email card, showing a
+panel, picking up, putting down, offering, dismissing, reading the fresh user
+pose, and moving near the user. Each action validates only its local physical
+preconditions. The embodied presentation policy asks the model to choose the
+least intrusive suitable channel; deterministic code does not choose that
+channel or assume that an offer was accepted.
+
+The right trigger retains ray selection. Right-hand `squeezestart` grabs a prop
+or transient within 20 cm and `squeezeend` releases it. Persistent props are
+authoritatively snapped to a furniture top within 12 cm or to the floor,
+uprighted while preserving yaw, and rolled back to the last server state when
+support or collision validation fails. Session-only `panel` and `email_card`
+entities are capped at three and disappear when the VR session ends.
+
+The client reports ground position, head height, yaw, and a monotonic sequence
+at no more than 2 Hz, immediately after a 25 cm move or 15-degree turn, plus a
+two-second heartbeat. Poses older than three seconds are not used for offers or
+approach. A bounded event ledger folds repeated prop moves and injects at most
+12 content-free sensor observations into the next serialized model request.
+These observations are explicitly non-instructional and cannot grant tool
+authority. Email bodies, panel text, and raw grab trajectories never enter the
+ledger or long-term audit log.
 
 ## 7. HTTPS and LAN deployment
 
@@ -624,6 +658,12 @@ On a physical Meta Quest 3 over trusted HTTPS:
    position can remain inside one.
 9. Confirm a simultaneous desktop/Quest connection is refused with the stated
    message and that reconnect succeeds after the other client closes.
+10. Grab and release a prop on the floor and on furniture; verify illegal
+    overlaps roll back, furniture carries supported props, and reconnect keeps
+    only the accepted final transform.
+11. Exercise email-card, panel, offer/take/ignore, and user-walk-away scenarios.
+    Judge whether the Agent's chosen channel fits privacy and attention rather
+    than requiring a particular tool sequence.
 
 ## 10. Non-goals and future work
 
@@ -633,12 +673,12 @@ and the current Quest Browser. It intentionally does not include:
 - downloaded 3D models, skeletal animation, inverse kinematics, or spatial audio;
 - a physics engine, navmesh, or obstacle-avoiding agent paths;
 - hand tracking, teleportation, passthrough, AR, multiplayer, or remote avatars;
-- direct grab/reposition controls, furniture rotation, or resizing;
+- direct fixed-furniture grab/reposition controls, furniture rotation, or resizing;
 - in-headset OAuth, the complete desktop UI, full chat history, or text entry;
 - migration from normal stage state or ongoing layout synchronization;
 - support guarantees for other WebXR headsets or controller profiles.
 
 Likely follow-up work is art-directed 3D assets, navmesh pathfinding, delayed
 world-anchored caption easing, controller-profile abstraction, direct
-furniture manipulation, and richer spatial UI. None of those may change the MVP's independent
+fixed-furniture manipulation, and richer spatial UI. None of those may change the MVP's independent
 persistence, authoritative mode routing, or dual proximity authorization.

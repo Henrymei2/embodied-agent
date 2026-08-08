@@ -196,6 +196,17 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
           }
         }
         break;
+      case 'vr-physical-result':
+        if (message.stage) {
+          const result = setVrStageFromServer(message.stage);
+          if (!result.ok) {
+            toaster.create({ title: result.error || 'Physical update was rejected', type: 'error', duration: 3000 });
+          }
+        }
+        if ((message as unknown as { ok?: boolean }).ok === false && (message as unknown as { error?: string }).error) {
+          toaster.create({ title: (message as unknown as { error: string }).error, type: 'warning', duration: 3000 });
+        }
+        break;
       case 'connection-error':
         toaster.create({
           title: message.message || 'This character is already in a VR session.',

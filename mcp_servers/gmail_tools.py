@@ -23,6 +23,7 @@ from src.open_llm_vtuber.google_integration import (
     GoogleIntegrationService,
     calendar_subprocess_settings,
 )
+from mcp_servers.bridge_client import get_scene_mode, post_frontend_action_result
 
 _MAX_RESULTS = 100
 _MAX_BODY = 100_000
@@ -185,6 +186,39 @@ def get_email(message_id: str) -> str:
             .execute()
         )
         return json.dumps(_serialize(message, True), ensure_ascii=False)
+    except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
+        return _error(exc)
+
+
+@mcp.tool()
+async def materialize_email(message_id: str) -> str:
+    """Materialize one Gmail message as a temporary, grabbable VR card.
+
+    This only creates the card at the mailbox. It does not pick it up, move the
+    agent, offer it, or assume that physical presentation is the right channel.
+    """
+    if get_scene_mode() != "vr":
+        return "Error: email cards are only available in VR mode"
+    try:
+        message = (
+            _messages()
+            .get(userId="me", id=_text(message_id, "message_id", 1024), format="full")
+            .execute()
+        )
+        rendered = _serialize(message, True)
+        ok, error, result = await post_frontend_action_result(
+            "materialize_email",
+            {
+                "message_id": rendered["message_id"],
+                "sender": str(rendered.get("from", ""))[:320],
+                "subject": str(rendered.get("subject", ""))[:200],
+                "summary": str(rendered.get("snippet", ""))[:280],
+                "body": str(rendered.get("body", ""))[:8000],
+            },
+        )
+        if not ok:
+            return f"Error: could not materialize email: {error}"
+        return str(result.get("summary") or "OK: created a temporary email card at the mailbox.")[:2000]
     except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
         return _error(exc)
 

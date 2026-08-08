@@ -109,6 +109,8 @@ class WebSocketHandler:
             "frontend_action_result": self._handle_frontend_action_result,
             "presence-context": self._handle_presence_context,
             "screen-context": self._handle_screen_context,
+            "vr-user-pose": self._handle_vr_user_pose,
+            "vr-physical-events": self._handle_vr_physical_events,
             "autonomy-feedback": self._handle_autonomy_feedback,
             "request-presence-state": self._handle_presence_state_request,
             "turn-timing": self._handle_turn_timing,
@@ -558,6 +560,7 @@ class WebSocketHandler:
         from .autonomy.presence import unregister_presence_ledger
         from .autonomy.screen_context import clear_screen_context
         from .conversations.llm_request_queue import remove_queue
+        from .physical_context import clear_physical_context
 
         cleanup_steps = [
             (
@@ -571,6 +574,7 @@ class WebSocketHandler:
             ),
             ("presence observation", clear_client_presence),
             ("screen context", clear_screen_context),
+            ("VR physical context", clear_physical_context),
             ("presence ledger", unregister_presence_ledger),
             ("request queue", remove_queue),
             ("message handler", message_handler.cleanup_client),
@@ -906,7 +910,7 @@ class WebSocketHandler:
         ok = bool(result.get("ok", False))
         error = result.get("error")
         pending_action = pending_request_action(request_id, client_uid)
-        if ok and pending_action == "move_to":
+        if ok and pending_action in {"move_to", "move_to_user"}:
             position = result.get("position")
             def finite_number(value: object) -> bool:
                 return (
@@ -1040,6 +1044,56 @@ class WebSocketHandler:
 
         if task_changed:
             self._record_screen_context_to_memory(client_uid, context.summary())
+
+    async def _handle_vr_user_pose(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Accept a bounded, ephemeral headset pose from the owning VR client."""
+        context = self.client_contexts.get(client_uid)
+        if context is None or getattr(context, "scene_mode", "normal") != "vr":
+            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": "VR pose is only accepted from a VR session."})
+            return
+        from .physical_context import update_user_pose
+        try:
+            pose = update_user_pose(client_uid, context.character_config.conf_uid, data.get("pose"))
+        except ValueError as exc:
+            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": str(exc)})
+            return
+        await websocket.send_json({"type": "vr-user-pose-ack", "sequence": pose.sequence})
+
+    async def _handle_vr_physical_events(
+        self, websocket: WebSocket, client_uid: str, data: WSMessage
+    ) -> None:
+        """Validate discrete VR observations and authoritatively save prop releases."""
+        context = self.client_contexts.get(client_uid)
+        if context is None or getattr(context, "scene_mode", "normal") != "vr":
+            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": "Physical events are only accepted from a VR session."})
+            return
+        from .physical_context import record_events
+        from .scene_state import load_scene_state
+        try:
+            accepted = record_events(
+                client_uid,
+                context.character_config.conf_uid,
+                data.get("sequence"),
+                data.get("events"),
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            await websocket.send_json({
+                "type": "vr-physical-result",
+                "ok": False,
+                "sequence": data.get("sequence"),
+                "error": str(exc),
+                "stage": load_scene_state(context.character_config.conf_uid, "vr"),
+            })
+            return
+        await websocket.send_json({
+            "type": "vr-physical-result",
+            "ok": True,
+            "sequence": data.get("sequence"),
+            "accepted": len(accepted),
+            "stage": load_scene_state(context.character_config.conf_uid, "vr") if any(event.kind == "prop_relocated" for event in accepted) else None,
+        })
 
     def _record_screen_context_to_memory(self, client_uid: str, summary: str) -> None:
         """Append a screen-context task change to daily memory, best-effort."""

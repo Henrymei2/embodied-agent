@@ -232,6 +232,37 @@ ACTION_PROFILES: dict[str, ActionProfile] = {
     "stand_up": _profile(
         "stand_up", "physical", "reversible", "frontend_ack"
     ),
+    "materialize_email": _profile(
+        "materialize_email", "physical", "reversible", "frontend_ack",
+        target_argument="message_id",
+    ),
+    "show_vr_panel": _profile(
+        "show_vr_panel", "physical", "reversible", "frontend_ack",
+        target_argument="title",
+    ),
+    "pick_up_entity": _profile(
+        "pick_up_entity", "physical", "reversible", "frontend_ack",
+        target_argument="entity_id",
+    ),
+    "put_down_entity": _profile(
+        "put_down_entity", "physical", "reversible", "frontend_ack",
+        target_argument="entity_id",
+    ),
+    "offer_entity": _profile(
+        "offer_entity", "physical", "reversible", "frontend_ack",
+        target_argument="entity_id",
+    ),
+    "dismiss_entity": _profile(
+        "dismiss_entity", "physical", "reversible", "frontend_ack",
+        target_argument="entity_id",
+    ),
+    "move_to_user": _profile(
+        "move_to_user", "physical", "reversible", "frontend_ack",
+    ),
+    "place_prop": _profile(
+        "place_prop", "local_state", "compensatable", "frontend_ack",
+        target_argument="name", compensation_capability="remove_object",
+    ),
     "place_object": _profile(
         "place_object", "local_state", "compensatable", "frontend_ack",
         target_argument="name", compensation_capability="remove_object",

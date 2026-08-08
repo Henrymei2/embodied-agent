@@ -43,7 +43,7 @@ describe("VR spatial helpers", () => {
   it("rejects malformed or duplicate-node VR documents", () => {
     const avatar = { id: "avatar", type: "avatar", x: 10, y: 10, width: 10, depth: 10, height: 20, elevation: 10, color: "#fff" };
     const valid = {
-      version: 1,
+      version: 2,
       mode: "vr",
       room: { width: 100, depth: 100, height: 100, floor_color: "#fff", wall_color: "#fff" },
       world: { units_per_meter: 100, reach_ceiling: 220, move_speed: 400 },

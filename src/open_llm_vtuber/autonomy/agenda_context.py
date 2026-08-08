@@ -66,6 +66,7 @@ def build_agenda_context(
 
     presence: dict[str, Any] = {}
     attention: dict[str, Any] = {}
+    physical_context = ""
     try:
         from .observation import build_observation
         from .presence import get_presence_ledger
@@ -87,6 +88,19 @@ def build_agenda_context(
             }
     except Exception:
         pass
+    try:
+        from ..physical_context import consume_physical_prompt
+        from ..client_registry import get_client_context
+
+        client_context = get_client_context(client_uid)
+        conf_uid = getattr(getattr(client_context, "character_config", None), "conf_uid", "")
+        physical_context = (
+            consume_physical_prompt(conf_uid)
+            if execution_mode == "live" and conf_uid
+            else ""
+        )
+    except Exception:
+        physical_context = ""
 
     return AgendaContext(
         payload={
@@ -113,6 +127,7 @@ def build_agenda_context(
             ],
             "presence": presence,
             "attention": attention,
+            "physical_context": physical_context,
             "continuity_health": {
                 "planner": asdict(state.planner_health),
                 "pending_reports": sum(

@@ -1,6 +1,6 @@
 """Persistent Meta Quest VR scene state.
 
-VR deliberately has its own v1 document and file.  The normal 2D stage remains
+VR deliberately has its own v2 document and file.  The normal 2D stage remains
 v9 and never migrates into, or is overwritten by, this store.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -37,8 +38,8 @@ from .world_model import (
     world_from_stage,
 )
 
-VR_STAGE_VERSION = 1
-VR_THEME_REVISION = "quest-room-v1"
+VR_STAGE_VERSION = 2
+VR_THEME_REVISION = "quest-room-v2"
 VR_STAGE_FILENAME = "vr_stage.json"
 AGENT_CLEARANCE = 10.0
 
@@ -518,6 +519,8 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
             "pose",
             "interaction",
             "reach",
+            "yaw",
+            "support_id",
         }
         for index, node in enumerate(nodes):
             if not isinstance(node, dict):
@@ -537,7 +540,7 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
                 if key not in allowed_keys:
                     errors.append(f"VR node {node_id} {key} is not allowed.")
             node_type = node.get("type")
-            if node_type not in {"furniture", "avatar"}:
+            if node_type not in {"furniture", "avatar", "prop"}:
                 errors.append(f"VR node {node_id} type is invalid.")
             if node_id == "avatar":
                 avatar_count += 1
@@ -549,6 +552,25 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
                 errors.append("Only the avatar id may use type avatar.")
             elif node.get("spritesheet") is not None:
                 errors.append(f"VR furniture {node_id} cannot have a spritesheet.")
+
+            interaction = node.get("interaction")
+            if node_type == "prop":
+                if not isinstance(interaction, dict) or interaction.get("grabbable") is not True:
+                    errors.append(f"VR prop {node_id} must be explicitly grabbable.")
+                elif any(key not in {"on_click", "grabbable"} for key in interaction):
+                    errors.append(f"VR prop {node_id} interaction is invalid.")
+                yaw = node.get("yaw", 0.0)
+                if not _is_number(yaw) or not -180.0 <= float(yaw) <= 180.0:
+                    errors.append(f"VR prop {node_id} yaw must be between -180 and 180.")
+                support_id = node.get("support_id")
+                if not isinstance(support_id, str) or not support_id or len(support_id) > 80:
+                    errors.append(f"VR prop {node_id} support_id is invalid.")
+                if node.get("reach") is not None or node.get("uiWindow") is not None:
+                    errors.append(f"VR prop {node_id} cannot grant tools or host a furniture window.")
+            else:
+                if isinstance(interaction, dict) and interaction.get("grabbable") is not None:
+                    errors.append(f"VR node {node_id} cannot be grabbable.")
+                _validate_interaction(interaction, node_id, errors)
 
             label = effective_label(node)
             if label:
@@ -594,7 +616,6 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
             _validate_state_textures(node.get("stateTextures"), node_id, errors)
             _validate_ui_window(node.get("uiWindow"), node_id, errors)
             _validate_spritesheet(node.get("spritesheet"), node_id, errors)
-            _validate_interaction(node.get("interaction"), node_id, errors)
             _validate_reach(node.get("reach"), node_id, ceiling, errors)
             if node.get("pose") not in (None, *AVATAR_POSES):
                 errors.append(f"VR node {node_id} pose is not supported.")
@@ -602,6 +623,52 @@ def validate_vr_stage(stage: Any) -> tuple[bool, list[str]]:
         errors.append("VR stage must contain exactly one avatar.")
     if not isinstance(stage.get("metadata"), dict):
         errors.append("VR stage metadata must be an object.")
+
+    if isinstance(nodes, list):
+        by_id = {
+            node.get("id"): node
+            for node in nodes
+            if isinstance(node, dict) and isinstance(node.get("id"), str)
+        }
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("type") != "prop":
+                continue
+            support_id = node.get("support_id")
+            support = by_id.get(support_id)
+            if support_id != "floor" and support is None:
+                errors.append(f"VR prop {node.get('id')} support does not exist.")
+                continue
+            if support is not None and support.get("type") != "furniture":
+                errors.append(f"VR prop {node.get('id')} support must be furniture.")
+                continue
+            numeric = all(
+                _is_number(node.get(key))
+                for key in ("x", "y", "width", "depth", "height", "elevation")
+            )
+            if not numeric:
+                continue
+            support_top = 0.0
+            if support is not None:
+                support_top = float(support["elevation"]) + float(support["height"]) / 2
+                yaw_radians = math.radians(float(node.get("yaw", 0)))
+                prop_half_x = (
+                    abs(math.cos(yaw_radians)) * float(node["width"])
+                    + abs(math.sin(yaw_radians)) * float(node["depth"])
+                ) / 2
+                prop_half_y = (
+                    abs(math.sin(yaw_radians)) * float(node["width"])
+                    + abs(math.cos(yaw_radians)) * float(node["depth"])
+                ) / 2
+                if (
+                    abs(float(node["x"]) - float(support["x"])) + prop_half_x
+                    > float(support["width"]) / 2 - 2
+                    or abs(float(node["y"]) - float(support["y"])) + prop_half_y
+                    > float(support["depth"]) / 2 - 2
+                ):
+                    errors.append(f"VR prop {node.get('id')} footprint exceeds its support.")
+            expected_elevation = support_top + float(node["height"]) / 2
+            if abs(float(node["elevation"]) - expected_elevation) > 1:
+                errors.append(f"VR prop {node.get('id')} is not resting on its support.")
 
     if isinstance(nodes, list) and avatar_count == 1 and not errors:
         avatar = next(node for node in nodes if node.get("id") == "avatar")
@@ -624,6 +691,10 @@ def load_vr_stage_state(conf_uid: str) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as handle:
             stage = json.load(handle)
+        if isinstance(stage, dict) and stage.get("version") == 1:
+            stage = copy.deepcopy(stage)
+            stage["version"] = VR_STAGE_VERSION
+            stage.setdefault("metadata", {})["updated_by"] = "vr_v1_to_v2_migration"
         valid, errors = validate_vr_stage(stage)
         if valid:
             return stage

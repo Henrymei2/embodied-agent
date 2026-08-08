@@ -72,6 +72,9 @@ _EVENT_FIELDS: dict[str, frozenset[str]] = {
     "tool_call": frozenset({"tool", "requires", "allowed"}),
     "autonomy_action": frozenset({"action", "direction", "status", "attention_cost"}),
     "autonomy_feedback": frozenset({"receipt_id", "feedback"}),
+    # Content-free audit trail for VR sensor observations. The digest is derived
+    # from identifiers and support transitions, never card or panel contents.
+    "vr_physical_event": frozenset({"kind", "digest"}),
 }
 _SAFE_EVENT = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 

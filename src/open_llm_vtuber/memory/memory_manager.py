@@ -53,6 +53,44 @@ _PROMOTED_MARKER = "<!-- promoted-to-longterm -->"
 
 LLMCompleteFn = Callable[..., Awaitable[str]]
 
+TOPIC_CHANGE_SYSTEM_PROMPT = (
+    "You decide whether a conversation has changed topic. "
+    "Answer with a single word: YES if the new user message starts a "
+    "clearly different topic from the prior conversation, otherwise NO."
+)
+
+CONTEXT_SUMMARY_SYSTEM_PROMPT = (
+    "You compress a short conversation (and the agent's actions) into a "
+    "few concise bullet points capturing what happened, what the user "
+    "wanted, decisions made, and anything worth remembering later. "
+    "Be terse. Output only the bullets."
+)
+
+LONGTERM_EXTRACTION_SYSTEM_PROMPT = (
+    "From the day's memory below, extract only durable, important facts "
+    "worth remembering long-term: stable user preferences, important "
+    "personal facts, ongoing goals, commitments, and significant shared "
+    "experiences. Ignore small talk and transient details. Output a "
+    "short bulleted list, or the single word NONE if nothing qualifies."
+)
+
+USER_FACT_EXTRACTION_SYSTEM_PROMPT = (
+    "From the day's memory below, extract only durable facts and stable "
+    "preferences ABOUT THE USER that are worth remembering: their name, "
+    "preferred name, timezone, likes/dislikes, habits, recurring needs, "
+    "and standing instructions. Ignore anything not specifically about "
+    "the user, and ignore one-off task details. Output a short bulleted "
+    "list of concise user facts, or the single word NONE if nothing "
+    "qualifies."
+)
+
+LONGTERM_COMPACTION_SYSTEM_PROMPT = (
+    "Rewrite the following long-term memory file to be more concise "
+    "without losing any important, durable information. Merge "
+    "duplicates, drop trivia, keep it well-organized in Markdown. "
+    "Output only the rewritten file content."
+)
+
 
 @dataclass
 class ContextEntry:
@@ -223,11 +261,7 @@ class MemoryManager:
         if not current:
             return False
 
-        system = (
-            "You decide whether a conversation has changed topic. "
-            "Answer with a single word: YES if the new user message starts a "
-            "clearly different topic from the prior conversation, otherwise NO."
-        )
+        system = TOPIC_CHANGE_SYSTEM_PROMPT
         prompt = (
             f"Prior conversation:\n{current}\n\n"
             f"New user message:\n{next_user_text}\n\n"
@@ -250,12 +284,7 @@ class MemoryManager:
         if self._llm_complete is None:
             return self._heuristic_summary(rendered)
 
-        system = (
-            "You compress a short conversation (and the agent's actions) into a "
-            "few concise bullet points capturing what happened, what the user "
-            "wanted, decisions made, and anything worth remembering later. "
-            "Be terse. Output only the bullets."
-        )
+        system = CONTEXT_SUMMARY_SYSTEM_PROMPT
         try:
             summary = await self._llm_complete(
                 [{"role": "user", "content": rendered}], system
@@ -318,13 +347,7 @@ class MemoryManager:
     async def _extract_longterm(self, daily_body: str, day: date) -> str:
         if self._llm_complete is None:
             return ""  # without an LLM we don't guess at importance
-        system = (
-            "From the day's memory below, extract only durable, important facts "
-            "worth remembering long-term: stable user preferences, important "
-            "personal facts, ongoing goals, commitments, and significant shared "
-            "experiences. Ignore small talk and transient details. Output a "
-            "short bulleted list, or the single word NONE if nothing qualifies."
-        )
+        system = LONGTERM_EXTRACTION_SYSTEM_PROMPT
         try:
             result = await self._llm_complete(
                 [{"role": "user", "content": daily_body}], system
@@ -341,15 +364,7 @@ class MemoryManager:
         """Extract durable facts/preferences specifically about the user."""
         if self._llm_complete is None:
             return ""  # without an LLM we don't guess
-        system = (
-            "From the day's memory below, extract only durable facts and stable "
-            "preferences ABOUT THE USER that are worth remembering: their name, "
-            "preferred name, timezone, likes/dislikes, habits, recurring needs, "
-            "and standing instructions. Ignore anything not specifically about "
-            "the user, and ignore one-off task details. Output a short bulleted "
-            "list of concise user facts, or the single word NONE if nothing "
-            "qualifies."
-        )
+        system = USER_FACT_EXTRACTION_SYSTEM_PROMPT
         try:
             result = await self._llm_complete(
                 [{"role": "user", "content": daily_body}], system
@@ -468,12 +483,7 @@ class MemoryManager:
         if self._llm_complete is None:
             return False  # don't risk lossy truncation without an LLM
 
-        system = (
-            "Rewrite the following long-term memory file to be more concise "
-            "without losing any important, durable information. Merge "
-            "duplicates, drop trivia, keep it well-organized in Markdown. "
-            "Output only the rewritten file content."
-        )
+        system = LONGTERM_COMPACTION_SYSTEM_PROMPT
         try:
             compacted = await self._llm_complete(
                 [{"role": "user", "content": content}], system

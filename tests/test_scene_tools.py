@@ -131,6 +131,43 @@ async def test_place_object_rejects_unsafe_assets_before_frontend(monkeypatch):
     assert result.startswith("Error: object was rejected:")
 
 
+async def test_place_prop_creates_a_vr_only_non_capability_entity(monkeypatch):
+    stage = get_default_vr_stage("character")
+    captured: dict = {}
+
+    async def post(action, args):
+        captured["action"] = action
+        captured["args"] = args
+        return True, None
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_load_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action", post)
+
+    assert await scene_tools.place_prop("blue_token", 450, 450) == (
+        "OK: placed grabbable prop blue_token."
+    )
+    node = captured["args"]["patch"]["nodes"][0]
+    assert node["type"] == "prop"
+    assert node["interaction"]["grabbable"] is True
+    assert node["support_id"] == "floor"
+    assert "reach" not in node
+
+
+async def test_physical_actions_remain_independent_frontend_affordances(monkeypatch):
+    captured: list[tuple[str, dict]] = []
+
+    async def post(action, args):
+        captured.append((action, args))
+        return True, None, {"summary": "Panel created."}
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", post)
+
+    assert await scene_tools.show_vr_panel("Plan", ["One", "Two"]) == "Panel created."
+    assert captured == [("show_vr_panel", {"title": "Plan", "blocks": ["One", "Two"]})]
+
+
 async def test_remove_object_protects_avatar(monkeypatch):
     stage = get_default_stage("character")
     monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)
@@ -173,6 +210,33 @@ async def test_move_object_patches_the_existing_node(monkeypatch):
     assert (node["id"], node["x"], node["y"]) == ("bookshelf", 300, 380)
     # The patch must carry the node's assets, not just its new position.
     assert node["texture"]["src"].endswith("bookshelf.png")
+
+
+async def test_vr_furniture_move_carries_supported_props_atomically(monkeypatch):
+    stage = get_default_vr_stage("character")
+    shelf = next(node for node in stage["nodes"] if node["id"] == "bookshelf")
+    prop = {
+        "id": "shelf_token", "type": "prop", "label": "shelf token",
+        "x": shelf["x"], "y": shelf["y"], "width": 10, "depth": 10,
+        "height": 10, "elevation": shelf["elevation"] + shelf["height"] / 2 + 5,
+        "yaw": 0, "support_id": "bookshelf", "color": "#7c3aed",
+        "interaction": {"on_click": True, "grabbable": True},
+    }
+    stage["nodes"].append(prop)
+    captured: dict = {}
+
+    async def post(_action, args):
+        captured.update(args)
+        return True, None
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_load_state", lambda _conf_uid: stage)
+    monkeypatch.setattr(scene_tools, "_post_frontend_action", post)
+
+    result = await scene_tools.move_object("bookshelf", shelf["x"] + 10, shelf["y"])
+    assert result.startswith("OK: moved bookshelf")
+    patched = {node["id"]: node for node in captured["patch"]["nodes"]}
+    assert patched["shelf_token"]["x"] == prop["x"] + 10
 
 
 async def test_move_object_rejects_positions_outside_the_canvas(monkeypatch):

@@ -350,6 +350,173 @@ async def place_object(
 
 
 @mcp.tool()
+async def place_prop(
+    name: str,
+    x: float,
+    y: float,
+    width: float = 24.0,
+    depth: float = 12.0,
+    height: float = 16.0,
+    color: str = "#7c3aed",
+) -> str:
+    """Place a persistent, user-grabbable VR prop at the design board."""
+    if _get_scene_mode() != "vr":
+        return "Error: physical props are only available in VR mode."
+    if not isinstance(name, str) or not _OBJECT_ID_RE.fullmatch(name):
+        return "Error: name must match [A-Za-z0-9_-] and contain 1-80 characters."
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        for value in (x, y, width, depth, height)
+    ):
+        return "Error: prop position and dimensions must be numeric."
+    stage = _load_state(_get_conf_uid())
+    if _find_node(stage.get("nodes", []), name) is not None:
+        return f"Error: an object named '{name}' already exists."
+    node = {
+        "id": name,
+        "type": "prop",
+        "label": name,
+        "x": float(x),
+        "y": float(y),
+        "width": float(width),
+        "depth": float(depth),
+        "height": float(height),
+        "elevation": float(height) / 2,
+        "yaw": 0.0,
+        "support_id": "floor",
+        "color": color,
+        "interaction": {"on_click": True, "grabbable": True},
+    }
+    valid, errors = _validate_state({**stage, "nodes": [*stage.get("nodes", []), node]})
+    if not valid:
+        return "Error: prop was rejected: " + "; ".join(errors)
+    ok, error = await _post_frontend_action(
+        "stage_patch_state",
+        {"patch": {"nodes": [node], "metadata": {"updated_by": "place_prop"}}},
+    )
+    return (
+        f"OK: placed grabbable prop {name}."
+        if ok
+        else f"Error: place_prop failed: {error}"
+    )
+
+
+async def _physical_action(action: str, args: dict[str, Any]) -> str:
+    if _get_scene_mode() != "vr":
+        return "Error: this physical affordance is only available in VR mode."
+    ok, error, result = await _post_frontend_action_result(action, args)
+    if not ok:
+        return f"Error: {action} failed: {error}"
+    summary = result.get("summary")
+    return (
+        str(summary)[:2000]
+        if isinstance(summary, str) and summary
+        else f"OK: {action} completed."
+    )
+
+
+@mcp.tool()
+async def list_physical_entities() -> str:
+    """List persistent props and session-only cards/panels in the VR room."""
+    return await _physical_action("list_physical_entities", {})
+
+
+@mcp.tool()
+async def show_vr_panel(title: str, blocks: list[Any]) -> str:
+    """Create a bounded, movable information panel in front of the VR user."""
+    if not isinstance(title, str) or not title.strip() or len(title) > 120:
+        return "Error: panel title must contain 1-120 characters."
+    if not isinstance(blocks, list) or not 1 <= len(blocks) <= 6:
+        return "Error: panel must contain 1-6 text, list, or key-value blocks."
+    total_text = 0
+    for block in blocks:
+        if isinstance(block, str):
+            total_text += len(block)
+            continue
+        if not isinstance(block, dict) or block.get("type") not in {
+            "text",
+            "list",
+            "key_value",
+        }:
+            return "Error: panel blocks must be text, list, or key_value structures."
+        allowed = {
+            "text": {"type", "text"},
+            "list": {"type", "items"},
+            "key_value": {"type", "items"},
+        }[str(block["type"])]
+        if set(block) - allowed:
+            return "Error: panel block contains unsupported fields."
+        value = block.get("text") if block["type"] == "text" else block.get("items")
+        if block["type"] == "text" and not isinstance(value, str):
+            return "Error: text blocks require a string text field."
+        if block["type"] == "list" and (
+            not isinstance(value, list)
+            or len(value) > 12
+            or any(not isinstance(item, str) for item in value)
+        ):
+            return "Error: list blocks require at most 12 string items."
+        if block["type"] == "key_value" and (
+            not isinstance(value, dict)
+            or len(value) > 12
+            or any(
+                not isinstance(key, str) or not isinstance(item, str)
+                for key, item in value.items()
+            )
+        ):
+            return "Error: key_value blocks require at most 12 string pairs."
+        total_text += (
+            len(value)
+            if isinstance(value, str)
+            else sum(len(str(key)) + len(item) for key, item in value.items())
+            if isinstance(value, dict)
+            else sum(len(item) for item in value)
+        )
+    if total_text > 4000:
+        return "Error: panel content cannot exceed 4000 characters."
+    return await _physical_action(
+        "show_vr_panel", {"title": title.strip(), "blocks": blocks}
+    )
+
+
+@mcp.tool()
+async def pick_up_entity(entity_id: str) -> str:
+    """Pick up one nearby grabbable physical entity with the agent's hand."""
+    return await _physical_action("pick_up_entity", {"entity_id": entity_id})
+
+
+@mcp.tool()
+async def put_down_entity(entity_id: str, target: str = "floor") -> str:
+    """Put an agent-held entity on a named support surface or the floor."""
+    return await _physical_action(
+        "put_down_entity", {"entity_id": entity_id, "target": target}
+    )
+
+
+@mcp.tool()
+async def offer_entity(entity_id: str) -> str:
+    """Offer an agent-held entity to the present VR user without assuming acceptance."""
+    return await _physical_action("offer_entity", {"entity_id": entity_id})
+
+
+@mcp.tool()
+async def dismiss_entity(entity_id: str) -> str:
+    """Dismiss a session-only VR card or panel."""
+    return await _physical_action("dismiss_entity", {"entity_id": entity_id})
+
+
+@mcp.tool()
+async def get_user_location() -> str:
+    """Get the current VR user's fresh location, facing, and nearby furniture."""
+    return await _physical_action("get_user_location", {})
+
+
+@mcp.tool()
+async def move_to_user() -> str:
+    """Move toward a safe conversational position near the current VR user."""
+    return await _physical_action("move_to_user", {})
+
+
+@mcp.tool()
 async def move_object(name: str, x: float, y: float) -> str:
     """Move an existing room object to a new position.
 
@@ -381,12 +548,20 @@ async def move_object(name: str, x: float, y: float) -> str:
     if not 0 <= x <= extent_width or not 0 <= y <= extent_height:
         return "Error: x and y must be inside the stage canvas."
 
+    dx, dy = float(x) - float(node["x"]), float(y) - float(node["y"])
     moved = {**node, "x": float(x), "y": float(y)}
+    supported_props = []
+    if mode == "vr" and node.get("type") == "furniture":
+        supported_props = [
+            {**item, "x": float(item["x"]) + dx, "y": float(item["y"]) + dy}
+            for item in stage.get("nodes", [])
+            if item.get("type") == "prop" and item.get("support_id") == node.get("id")
+        ]
+    replacements = {item["id"]: item for item in [moved, *supported_props]}
     candidate = {
         **stage,
         "nodes": [
-            moved if item.get("id") == node.get("id") else item
-            for item in stage.get("nodes", [])
+            replacements.get(item.get("id"), item) for item in stage.get("nodes", [])
         ],
     }
     valid, errors = _validate_state(candidate)
@@ -395,7 +570,12 @@ async def move_object(name: str, x: float, y: float) -> str:
 
     ok, error = await _post_frontend_action(
         "stage_patch_state",
-        {"patch": {"nodes": [moved], "metadata": {"updated_by": "move_object"}}},
+        {
+            "patch": {
+                "nodes": [moved, *supported_props],
+                "metadata": {"updated_by": "move_object"},
+            }
+        },
     )
     if not ok:
         return f"Error: move_object failed: {error}"
@@ -420,6 +600,16 @@ async def remove_object(name: str) -> str:
         return (
             f"Error: '{node_id}' is fixed furniture; removing it would strand the "
             "tools that are only available there."
+        )
+    supported = [
+        item.get("id")
+        for item in nodes
+        if item.get("type") == "prop" and item.get("support_id") == node_id
+    ]
+    if supported:
+        return (
+            f"Error: '{node_id}' supports props {', '.join(supported)}; "
+            "move those props before removing the furniture."
         )
 
     ok, error = await _post_frontend_action(

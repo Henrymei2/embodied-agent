@@ -23,7 +23,7 @@ def test_default_vr_stage_has_fixed_current_furniture_and_valid_geometry():
     }
     stage = get_default_vr_stage("character")
 
-    assert stage["version"] == 1
+    assert stage["version"] == 2
     assert stage["mode"] == "vr"
     assert stage["room"] == {
         "width": 960.0,
@@ -79,6 +79,48 @@ def test_missing_and_corrupt_vr_state_fall_back_without_importing_normal(
     vr_path = tmp_path / "stage_state" / "character" / VR_STAGE_FILENAME
     vr_path.write_text("not json", encoding="utf-8")
     assert load_vr_stage_state("character")["nodes"][-1]["x"] == 35
+
+
+def test_v1_vr_state_is_loaded_through_the_v2_migration(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    stage = get_default_vr_stage("character")
+    stage["version"] = 1
+    path = tmp_path / "stage_state" / "character" / VR_STAGE_FILENAME
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(stage), encoding="utf-8")
+
+    migrated = load_vr_stage_state("character")
+
+    assert migrated["version"] == 2
+    assert migrated["metadata"]["updated_by"] == "vr_v1_to_v2_migration"
+
+
+def test_grabbable_props_validate_but_never_unlock_capability_labels():
+    stage = get_default_vr_stage("character")
+    avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
+    prop = {
+        "id": "computer_token",
+        "type": "prop",
+        "label": "computer token",
+        "x": avatar["x"] + 50,
+        "y": avatar["y"],
+        "width": 20,
+        "depth": 20,
+        "height": 20,
+        "elevation": 10,
+        "yaw": 0,
+        "support_id": "floor",
+        "color": "#7c3aed",
+        "interaction": {"on_click": True, "grabbable": True},
+    }
+    stage["nodes"].append(prop)
+
+    assert validate_vr_stage(stage) == (True, [])
+
+    from src.open_llm_vtuber.semantic_projection import project_vr_stage
+
+    projection = project_vr_stage(stage)
+    assert "computer token" not in projection.reachable_labels()
 
 
 def test_docking_is_nearest_deterministic_and_rejects_duplicate_labels():

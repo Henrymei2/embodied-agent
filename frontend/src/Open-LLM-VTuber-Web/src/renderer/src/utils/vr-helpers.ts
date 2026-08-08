@@ -174,7 +174,7 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 export function validateVrStageShape(value: unknown) {
   if (!value || typeof value !== "object") return false;
   const stage = value as Record<string, unknown>;
-  if (stage.version !== 1 || stage.mode !== "vr" || !stage.room || !stage.world || !Array.isArray(stage.nodes) || stage.nodes.length > 80) return false;
+  if (stage.version !== 2 || stage.mode !== "vr" || !stage.room || !stage.world || !Array.isArray(stage.nodes) || stage.nodes.length > 80) return false;
   const room = stage.room as Record<string, unknown>;
   const world = stage.world as Record<string, unknown>;
   if (![room.width, room.depth, room.height].every(finite) ||
@@ -193,7 +193,11 @@ export function validateVrStageShape(value: unknown) {
     if (node.id === "avatar") {
       avatars += 1;
       if (node.type !== "avatar") return false;
-    } else if (node.type !== "furniture") return false;
+    } else if (node.type !== "furniture" && node.type !== "prop") return false;
+    if (node.type === "prop") {
+      const interaction = node.interaction as Record<string, unknown> | undefined;
+      if (interaction?.grabbable !== true || typeof node.support_id !== "string" || !finite(node.yaw)) return false;
+    } else if ((node.interaction as Record<string, unknown> | undefined)?.grabbable !== undefined) return false;
     const label = typeof node.label === "string" && node.label ? node.label : node.id;
     if (labels.has(label.toLocaleLowerCase())) return false;
     labels.add(label.toLocaleLowerCase());

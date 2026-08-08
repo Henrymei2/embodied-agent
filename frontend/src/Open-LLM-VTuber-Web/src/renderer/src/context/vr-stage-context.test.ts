@@ -7,7 +7,7 @@ import {
 } from "./vr-stage-context";
 
 const stage: VrStageDocument = {
-  version: 1,
+  version: 2,
   mode: "vr",
   room: { width: 500, depth: 500, height: 300, floor_color: "#fff", wall_color: "#fff" },
   world: { units_per_meter: 100, reach_ceiling: 220, move_speed: 400 },

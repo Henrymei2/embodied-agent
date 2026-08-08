@@ -62,6 +62,16 @@ including what that evidence cannot settle on its own.
   backend from the stored stage rather than from client text.
 - Stage state synchronizes on connection and persists after live
   frontend actions.
+- VR schema v2 adds persistent, near-grabbable props with authoritative floor
+  and furniture-top snapping. Props participate in navigation but are excluded
+  from capability authorization.
+- Session-only email cards and panels can be independently materialized,
+  carried, placed, offered, or dismissed. The Agent receives these as atomic
+  affordances and chooses its presentation channel; there is no prescribed
+  email-delivery sequence.
+- Fresh VR user pose and a bounded, content-free physical event summary inform
+  conversation and autonomy without treating observed movement as instruction,
+  confirmation, or authority.
 
 ### Spatial legibility (proximity gating)
 
