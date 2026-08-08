@@ -26,6 +26,10 @@ _PURSUIT_KIND_ALIASES = {
 }
 
 
+class PlannerResponseError(ValueError):
+    """The planner returned no usable structured response."""
+
+
 def normalize_generated_kind(value: Any) -> str:
     """Map generic model vocabulary onto the agenda's semantic entry kinds."""
     kind = str(value).strip().lower().replace("-", "_").replace(" ", "_")
@@ -40,14 +44,31 @@ def normalize_generated_kind(value: Any) -> str:
 
 
 def _json_object(text: str) -> dict[str, Any]:
+    text = text.strip()
+    if not text:
+        raise PlannerResponseError("planner returned an empty response")
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
     candidate = (
         fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
     )
-    value = json.loads(candidate)
+    if not candidate.strip() or "{" not in candidate or "}" not in candidate:
+        raise PlannerResponseError("planner returned malformed JSON")
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        raise PlannerResponseError("planner returned malformed JSON") from exc
     if not isinstance(value, dict):
-        raise ValueError("planner output must be a JSON object")
+        raise PlannerResponseError("planner output must be a JSON object")
     return value
+
+
+def _completion_condition(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("description", "")
+    condition = str(value).strip()[:1000]
+    if not condition:
+        raise PlannerResponseError("planner omitted the completion condition")
+    return condition
 
 
 @dataclass
@@ -101,8 +122,10 @@ class StructuredAgendaPlanner:
             'The "kind" field MUST be exactly "pursuit" or "idle"; never use '
             '"task", "plan", "intention", or another synonym. Never create a user '
             "or scheduled entry. Use only evidence_refs and required_capabilities "
-            "listed verbatim in the supplied context. Context:\n"
-            + json.dumps(context.payload, ensure_ascii=False)
+            "listed verbatim in the supplied context. When attention.mode is "
+            "observe_only, attention budget, snooze, focus, and stale presence are "
+            "diagnostic only and must not by themselves cause an idle proposal. "
+            "Context:\n" + json.dumps(context.payload, ensure_ascii=False)
         )
         raw = _json_object(await self.complete(prompt))
         return create_entry(
@@ -111,7 +134,7 @@ class StructuredAgendaPlanner:
             description=str(raw["description"])[:1000],
             origin="autonomous",
             evidence_refs=[str(value) for value in raw["evidence_refs"]],
-            completion_condition=str(raw["completion_condition"])[:1000],
+            completion_condition=_completion_condition(raw["completion_condition"]),
             time_budget_seconds=int(
                 raw.get("time_budget_seconds", self.default_pursuit_seconds)
             ),

@@ -125,9 +125,13 @@ class AgendaPlanBridge:
                 pass
         preconditions: list[str] = []
         if checkpoint.required_capability:
-            preconditions.append(f"capability:{checkpoint.required_capability}"[:200])
+            preconditions.append(
+                self.condition_reference("capability", checkpoint.required_capability)
+            )
         if checkpoint.required_object:
-            preconditions.append(f"object:{checkpoint.required_object}"[:200])
+            preconditions.append(
+                self.condition_reference("object", checkpoint.required_object)
+            )
         postcondition = f"agenda-result:{digest}"
         risk = entry.risk if entry.risk in {"low", "medium", "high"} else "high"
         step = build_plan_step(
@@ -159,10 +163,23 @@ class AgendaPlanBridge:
 
     @staticmethod
     def plan_id_for(entry_id: str, step_id: str) -> str:
-        digest = hashlib.sha256(
-            f"{entry_id}\x00{step_id}".encode("utf-8")
-        ).hexdigest()[:24]
+        digest = hashlib.sha256(f"{entry_id}\x00{step_id}".encode("utf-8")).hexdigest()[
+            :24
+        ]
         return f"agenda-plan:{digest}"
+
+    @staticmethod
+    def condition_reference(kind: str, value: str) -> str:
+        """Return a bounded opaque reference for a human-readable condition.
+
+        Furniture labels may contain spaces or non-ASCII characters, while the
+        durable plan schema intentionally accepts identifier-safe tokens only.
+        Persist a stable digest and keep the original value in the already
+        validated agenda checkpoint.
+        """
+
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+        return f"{kind}:{digest}"
 
     def restore_plan_reference(self, entry: AgendaEntry) -> ResumablePlan | None:
         """Relink a deterministic sidecar created just before a process crash."""
@@ -230,8 +247,24 @@ class AgendaPlanBridge:
         )
         result_summary = ""
         digest = plan.plan_id.split(":", 1)[-1]
+        capability_ref = (
+            self.condition_reference("capability", checkpoint.required_capability)
+            if checkpoint.required_capability
+            else None
+        )
+        object_ref = (
+            self.condition_reference("object", checkpoint.required_object)
+            if checkpoint.required_object
+            else None
+        )
 
         def condition_probe(reference: str) -> bool | None:
+            if reference == capability_ref:
+                return checkpoint.required_capability in capabilities
+            if reference == object_ref:
+                return checkpoint.required_object in object_names
+            # Plans created before opaque references were introduced remain
+            # resumable when their original labels were identifier-safe.
             if reference.startswith("capability:"):
                 return reference.split(":", 1)[1] in capabilities
             if reference.startswith("object:"):

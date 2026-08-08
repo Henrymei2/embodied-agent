@@ -95,7 +95,9 @@ function PresenceIndicator(): JSX.Element {
                   mt="1"
                   color={text.tertiary}
                 >
-                  {t("presence.subtitle")}
+                  {state.mode === "observe_only"
+                    ? t("presence.observeOnly")
+                    : t("presence.subtitle")}
                 </Text>
               </Box>
               <Button
@@ -209,6 +211,17 @@ function PresenceIndicator(): JSX.Element {
                         color={status.dangerFg}
                       >
                         {latestReceipt.error}
+                      </Text>
+                    )}
+                    {latestReceipt.override_reason && (
+                      <Text
+                        {...typography.caption}
+                        mt="1"
+                        color={status.warningFg}
+                      >
+                        {t("presence.overrideReason", {
+                          reason: latestReceipt.override_reason,
+                        })}
                       </Text>
                     )}
                     <HStack mt="3" gap="2">

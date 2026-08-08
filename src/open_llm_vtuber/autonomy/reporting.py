@@ -20,6 +20,10 @@ class ReportDelivery:
     counts_as_failure: bool = False
 
 
+class ReportClientUnavailable(RuntimeError):
+    """The durable report must wait for a live frontend owner."""
+
+
 @dataclass
 class AgendaReporter:
     client_uid: str
@@ -93,6 +97,10 @@ class AgendaReporter:
             # Cancellation transfers ownership back to the durable outbox.
             # Propagate it so shutdown and lease handoff cannot be swallowed.
             raise
+        except ReportClientUnavailable as exc:
+            self.presence.fail_action(receipt.receipt_id, str(exc))
+            await self._emit_receipt(receipt)
+            return ReportDelivery(False, str(exc), False)
         except Exception as exc:
             self.presence.fail_action(receipt.receipt_id, str(exc))
             await self._emit_receipt(receipt)

@@ -19,6 +19,12 @@ _READ_ONLY_PREFIXES = (
     "search_",
 )
 
+# Audited read-only capabilities whose names do not carry a conventional
+# read/list/get prefix. Unknown capabilities remain side-effecting by default.
+_READ_ONLY_CAPABILITIES = {
+    "browser_tabs",
+}
+
 # These capabilities can create consequential or hard-to-reverse effects.
 # Unknown tools fail safe as side-effecting, but only this narrower set requires
 # an approved plan before autonomous execution.
@@ -135,4 +141,6 @@ class StepPolicy:
         if checkpoint.kind != "invoke_tool":
             return False
         capability = checkpoint.required_capability or ""
-        return not capability.startswith(_READ_ONLY_PREFIXES)
+        return capability not in _READ_ONLY_CAPABILITIES and not capability.startswith(
+            _READ_ONLY_PREFIXES
+        )

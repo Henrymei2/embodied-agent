@@ -519,6 +519,13 @@ class WebSocketHandler:
         context = self.client_contexts.pop(client_uid, None)
         self.received_data_buffers.pop(client_uid, None)
         from .autonomy import detach_autonomy_client
+        from .client_registry import unregister_client
+        from .frontend_bridge import unregister_client_sender
+
+        # Mark the transport unavailable before cancelling autonomy. Cancellation
+        # finalizers may emit planning/idle updates and must observe disconnection.
+        unregister_client_sender(client_uid)
+        unregister_client(client_uid)
 
         try:
             await detach_autonomy_client(client_uid)
@@ -547,8 +554,6 @@ class WebSocketHandler:
 
         # Mirror handle_disconnect so a connection that fails mid-setup doesn't
         # leak the queue/worker, bridge sender, client registry, or context.
-        from .frontend_bridge import unregister_client_sender
-        from .client_registry import unregister_client
         from .autonomy.observation import clear_client_presence
         from .autonomy.presence import unregister_presence_ledger
         from .autonomy.screen_context import clear_screen_context
@@ -564,8 +569,6 @@ class WebSocketHandler:
                 "group map",
                 lambda uid: self.chat_group_manager.client_group_map.pop(uid, None),
             ),
-            ("frontend sender", unregister_client_sender),
-            ("client registry", unregister_client),
             ("presence observation", clear_client_presence),
             ("screen context", clear_screen_context),
             ("presence ledger", unregister_presence_ledger),

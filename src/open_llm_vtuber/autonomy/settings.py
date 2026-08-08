@@ -10,6 +10,7 @@ class AutonomySettings:
     """Immutable agenda, pacing, retention, and attention settings."""
 
     enabled: bool = True
+    presence_mode: str = "enforced"
     headless_enabled: bool = True
     lease_ttl_seconds: float = 30.0
     lease_renew_seconds: float = 10.0
@@ -50,6 +51,10 @@ class AutonomySettings:
     chain_report_hours: int = 168
 
     def __post_init__(self) -> None:
+        presence_mode = str(self.presence_mode).strip().lower()
+        if presence_mode not in {"enforced", "observe_only"}:
+            presence_mode = "enforced"
+        object.__setattr__(self, "presence_mode", presence_mode)
         lease_ttl_seconds = max(5.0, min(300.0, float(self.lease_ttl_seconds)))
         object.__setattr__(self, "lease_ttl_seconds", lease_ttl_seconds)
         object.__setattr__(
@@ -232,6 +237,7 @@ class AutonomySettings:
             return cls(enabled=permitted)
         return cls(
             enabled=bool(getattr(cfg, "enabled", True)) and permitted,
+            presence_mode=str(getattr(cfg, "presence_mode", "enforced")),
             headless_enabled=bool(getattr(cfg, "headless_enabled", True)),
             lease_ttl_seconds=float(getattr(cfg, "lease_ttl_seconds", 30)),
             lease_renew_seconds=float(getattr(cfg, "lease_renew_seconds", 10)),

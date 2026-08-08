@@ -211,6 +211,8 @@
   "presence": {
     "title": "Presence Contract",
     "subtitle": "Consent-aware autonomous behavior",
+    "observeOnly": "Observe only — Presence gates are recorded, not enforced",
+    "overrideReason": "Observed gate: {{reason}}",
     "openPanel": "Open presence controls",
     "disabled": "Presence off",
     "disabledDescription": "Enable autonomy in the server configuration to use attention budgets and action receipts.",

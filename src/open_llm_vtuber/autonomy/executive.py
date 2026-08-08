@@ -135,8 +135,7 @@ class AgendaExecutive:
                 )
             if any(reconciled_plans.values()):
                 logger.info(
-                    "agenda: reconciled resumable plan handoffs "
-                    f"{reconciled_plans}"
+                    f"agenda: reconciled resumable plan handoffs {reconciled_plans}"
                 )
             await self.broadcast_snapshot()
             while True:
@@ -261,10 +260,15 @@ class AgendaExecutive:
                 due = due.replace(tzinfo=now.tzinfo)
             timeout = min(timeout, max(0.1, (due - now).total_seconds()))
         for entry in state.entries:
-            deferred_until = entry.metadata.get("quota_deferred_until")
+            deferred_until = entry.metadata.get(
+                "reconsider_deferred_until"
+            ) or entry.metadata.get("quota_deferred_until")
             if entry.status != "suspended" or not deferred_until:
                 continue
-            due = datetime.fromisoformat(str(deferred_until))
+            try:
+                due = datetime.fromisoformat(str(deferred_until))
+            except (TypeError, ValueError):
+                continue
             if due.tzinfo is None:
                 due = due.replace(tzinfo=now.tzinfo)
             timeout = min(timeout, max(0.1, (due - now).total_seconds()))
@@ -507,7 +511,7 @@ class AgendaExecutive:
                 self.connected_client
                 or not bool(item.metadata.get("waiting_for_client"))
             )
-            and self._quota_defer_is_due(item, now)
+            and self._suspension_defer_is_due(item, now)
         ]
         if suspended:
             self._settled_hold_key = None
@@ -520,8 +524,11 @@ class AgendaExecutive:
             return False
         if any(
             item.status == "suspended"
-            and item.metadata.get("quota_deferred_until")
-            and not self._quota_defer_is_due(item, now)
+            and (
+                item.metadata.get("quota_deferred_until")
+                or item.metadata.get("reconsider_deferred_until")
+            )
+            and not self._suspension_defer_is_due(item, now)
             for item in state.entries
         ):
             return False
@@ -968,6 +975,17 @@ class AgendaExecutive:
                             self.settings.idle_max_seconds,
                         ),
                     )
+                else:
+                    # A remote planner and one tool-capable agent round trip must
+                    # both fit before the high-level deadline. Tiny model-proposed
+                    # budgets previously collapsed healthy actions to one second.
+                    proposal.budget.time_budget_seconds = min(
+                        self.settings.maximum_pursuit_seconds,
+                        max(
+                            proposal.budget.time_budget_seconds,
+                            self.settings.step_timeout_seconds * 2,
+                        ),
+                    )
                 proposal.status = (
                     "blocked_approval" if proposal.requires_approval else "queued"
                 )
@@ -1161,7 +1179,13 @@ class AgendaExecutive:
             execution_mode="live" if self.connected_client else "headless",
         )
         existing_plan = self.plan_bridge.restore_plan_reference(entry)
-        resuming = existing_plan is not None
+        recoverable_planned_checkpoint = bool(
+            existing_plan is None
+            and entry.checkpoint is not None
+            and entry.checkpoint.state == "planned"
+            and not entry.checkpoint.side_effecting
+        )
+        resuming = existing_plan is not None or recoverable_planned_checkpoint
         if resuming:
             checkpoint = entry.checkpoint
             if checkpoint is None:
@@ -1247,9 +1271,28 @@ class AgendaExecutive:
             self.settings.step_timeout_seconds,
         )
         if deadline:
-            remaining_budget = max(
-                1, int((datetime.fromisoformat(deadline) - utc_now()).total_seconds())
+            remaining_budget = int(
+                (datetime.fromisoformat(deadline) - utc_now()).total_seconds()
             )
+            if remaining_budget < self.settings.step_timeout_seconds:
+                reason = (
+                    "Execution window expired before tool dispatch; no action was "
+                    "started."
+                )
+                self.store.transition(
+                    entry.id,
+                    "failed",
+                    progress_summary=reason,
+                )
+                self.store.add_dead_letter(
+                    category="execution_window",
+                    reference_id=entry.id,
+                    reason=reason,
+                    attempts=1,
+                    data={"step_kind": checkpoint.kind},
+                )
+                await self.broadcast_snapshot()
+                return True
             checkpoint.timeout_seconds = min(
                 checkpoint.timeout_seconds,
                 remaining_budget,
@@ -1353,20 +1396,72 @@ class AgendaExecutive:
             for entry in state.entries
             if entry.status == "suspended"
             and entry.kind != "user"
-            and self._quota_defer_is_due(entry, utc_now())
+            and self._suspension_defer_is_due(entry, utc_now())
         ]
         if not candidates:
             return
         entry = candidates[-1]
+        deadline = entry.budget.deadline_at
+        if deadline:
+            try:
+                expired = utc_now() >= datetime.fromisoformat(deadline)
+            except (TypeError, ValueError):
+                expired = False
+            if expired:
+                uncertain = bool(
+                    entry.checkpoint and entry.checkpoint.state == "uncertain"
+                )
+                reason = (
+                    "Expired uncertain step requires operator reconciliation; it "
+                    "was not replayed."
+                    if uncertain
+                    else "Time budget expired while the entry was suspended."
+                )
+                self.store.transition(entry.id, "failed", progress_summary=reason)
+                if uncertain:
+                    self.store.add_dead_letter(
+                        category="activity_reconciliation",
+                        reference_id=entry.id,
+                        reason=reason,
+                        attempts=1,
+                        data={
+                            "step_kind": entry.checkpoint.kind,
+                            "step_id": entry.checkpoint.step_id,
+                        },
+                    )
+                await self.broadcast_snapshot()
+                return
         if entry.metadata.get("quota_deferred_until"):
             self.store.update_metadata(
                 entry.id,
                 quota_deferred_until=None,
                 quota_deferred_reason=None,
             )
+        if entry.metadata.get("reconsider_deferred_until"):
+            self.store.update_metadata(
+                entry.id,
+                reconsider_deferred_until=None,
+                reconsider_deferred_reason=None,
+            )
         if self.connected_client and entry.metadata.get("waiting_for_client"):
             self.store.update_metadata(entry.id, waiting_for_client=False)
         if entry.kind in {"idle", "scheduled"}:
+            self.store.transition(entry.id, "queued")
+            return
+        checkpoint = entry.checkpoint
+        if (
+            checkpoint is not None
+            and checkpoint.state == "planned"
+            and not checkpoint.side_effecting
+        ):
+            # No action has started (or its result is already durable), so this
+            # boundary is safe to resume without spending another LLM call.
+            self.store.update_metadata(
+                entry.id,
+                reconsider_failures=0,
+                reconsider_deferred_until=None,
+                reconsider_deferred_reason=None,
+            )
             self.store.transition(entry.id, "queued")
             return
         context = build_agenda_context(
@@ -1385,12 +1480,58 @@ class AgendaExecutive:
                 reason="reconsideration quota exhausted",
             )
             return
-        with self.tracer.span(
-            "agenda.planner.reconsider",
-            trace_id=entry.metadata.get("trace_id"),
-            attributes={"agenda.entry_id": entry.id},
-        ):
-            decision = await self.planner.reconsider(asdict(entry), context)
+        try:
+            with self.tracer.span(
+                "agenda.planner.reconsider",
+                trace_id=entry.metadata.get("trace_id"),
+                attributes={"agenda.entry_id": entry.id},
+            ):
+                decision = await self.planner.reconsider(asdict(entry), context)
+        except (asyncio.CancelledError, LeaseLostError):
+            raise
+        except Exception as exc:
+            failures = int(entry.metadata.get("reconsider_failures", 0)) + 1
+            reason = f"Reconsideration failed: {type(exc).__name__}."
+            if failures >= self.settings.planner_retry_limit:
+                self.store.update_metadata(entry.id, reconsider_failures=failures)
+                self.store.transition(entry.id, "failed", progress_summary=reason)
+                self.store.add_dead_letter(
+                    category="reconsideration",
+                    reference_id=entry.id,
+                    reason=reason,
+                    attempts=failures,
+                    data={"checkpoint_state": checkpoint.state if checkpoint else None},
+                )
+            else:
+                delay = max(
+                    5.0,
+                    self.settings.planner_retry_backoff_seconds * (2 ** (failures - 1)),
+                )
+                retry_at = (utc_now() + timedelta(seconds=delay)).isoformat()
+                self.store.update_metadata(
+                    entry.id,
+                    reconsider_failures=failures,
+                    reconsider_deferred_until=retry_at,
+                    reconsider_deferred_reason=reason,
+                )
+                self.store.transition(
+                    entry.id,
+                    "suspended",
+                    progress_summary=f"{reason} Retry deferred until {retry_at}.",
+                )
+            logger.warning(
+                "agenda: suspended entry reconsideration failed "
+                f"entry_id={entry.id} attempt={failures} "
+                f"error_type={type(exc).__name__}"
+            )
+            await self.broadcast_snapshot()
+            return
+        self.store.update_metadata(
+            entry.id,
+            reconsider_failures=0,
+            reconsider_deferred_until=None,
+            reconsider_deferred_reason=None,
+        )
         if decision == "abandon":
             await self.abandon(entry.id)
             return
@@ -1406,6 +1547,24 @@ class AgendaExecutive:
     @staticmethod
     def _quota_defer_is_due(entry: AgendaEntry, now: datetime) -> bool:
         value = entry.metadata.get("quota_deferred_until")
+        if not value:
+            return True
+        try:
+            due = datetime.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            return True
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=now.tzinfo)
+        return due <= now
+
+    @classmethod
+    def _suspension_defer_is_due(cls, entry: AgendaEntry, now: datetime) -> bool:
+        return cls._quota_defer_is_due(entry, now) and cls._metadata_time_is_due(
+            entry.metadata.get("reconsider_deferred_until"), now
+        )
+
+    @staticmethod
+    def _metadata_time_is_due(value: object, now: datetime) -> bool:
         if not value:
             return True
         try:

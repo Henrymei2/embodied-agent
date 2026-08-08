@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
@@ -12,6 +13,7 @@ from src.open_llm_vtuber.autonomy.agenda import (
     utc_now,
 )
 from src.open_llm_vtuber.autonomy.activity import ActivityExecutor
+from src.open_llm_vtuber.autonomy.driver import _agenda_step_instruction
 from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
 from src.open_llm_vtuber.autonomy.observation import (
     clear_client_presence,
@@ -194,6 +196,44 @@ def test_step_policy_derives_effects_and_requires_real_approval():
     assert shell.interruptible is False
 
 
+def test_browser_tabs_is_an_audited_read_only_capability():
+    policy = StepPolicy(
+        capabilities={"browser_tabs"},
+        object_names={"computer"},
+        capability_objects={"browser_tabs": "computer"},
+    )
+    checkpoint = ExecutionCheckpoint(
+        step_id="tabs",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="browser_tabs",
+    )
+
+    assert policy.validate(_pursuit(), checkpoint).accepted
+    assert checkpoint.required_object == "computer"
+    assert checkpoint.side_effecting is False
+    assert checkpoint.interruptible is True
+
+
+def test_agenda_execution_instruction_includes_tool_and_furniture():
+    checkpoint = ExecutionCheckpoint(
+        step_id="tabs",
+        kind="invoke_tool",
+        state="planned",
+        purpose="Inspect open tabs.",
+        required_object="computer",
+        required_capability="browser_tabs",
+        arguments={"window": "current"},
+    )
+
+    instruction = _agenda_step_instruction(_pursuit(), checkpoint)
+
+    assert '"kind": "invoke_tool"' in instruction
+    assert '"required_object": "computer"' in instruction
+    assert '"required_capability": "browser_tabs"' in instruction
+    assert '"window": "current"' in instruction
+
+
 @pytest.mark.asyncio
 async def test_idle_entry_waits_without_blocking_the_executive(tmp_path):
     store = AgendaStore(tmp_path)
@@ -361,6 +401,185 @@ async def test_planner_failures_are_capped_before_reconsideration(tmp_path):
     assert len(state.rejections) == 2
     assert state.entries[0].kind == "idle"
     assert state.entries[0].status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_short_generated_pursuit_gets_a_complete_execution_window(tmp_path):
+    (tmp_path / "MEMORY.md").write_text("A grounded item to check.", encoding="utf-8")
+
+    class Planner:
+        async def propose_intention(self, _context):
+            return _pursuit(
+                title="Short but grounded check",
+                evidence_refs=["memory:MEMORY.md"],
+                time_budget_seconds=30,
+                status="proposed",
+            )
+
+    store = AgendaStore(tmp_path)
+    settings = AutonomySettings(
+        step_timeout_seconds=120,
+        restart_recovery_grace_seconds=0,
+    )
+    executive = _executive(store, Planner(), settings=settings)
+
+    await executive._generate_successor()
+
+    entry = store.load().entries[0]
+    assert entry.status == "queued"
+    assert entry.budget.time_budget_seconds == 240
+
+
+@pytest.mark.asyncio
+async def test_insufficient_execution_window_fails_before_dispatch(tmp_path):
+    class Planner:
+        async def next_step(self, _entry, _context):
+            return ExecutionCheckpoint(
+                step_id="too-late",
+                kind="reflect",
+                state="planned",
+                timeout_seconds=1,
+            )
+
+    dispatched = False
+
+    async def run_step(_entry, _checkpoint):
+        nonlocal dispatched
+        dispatched = True
+        return "should not run"
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="queued", time_budget_seconds=60)
+    store.add(entry)
+    store.transition(entry.id, "active")
+    executive = _executive(store, Planner(), run_step=run_step)
+
+    assert await executive._advance_entry(store.load().entries[0]) is True
+
+    current = store.load().entries[0]
+    assert current.status == "failed"
+    assert "no action was started" in current.progress_summary
+    assert dispatched is False
+
+
+@pytest.mark.asyncio
+async def test_expired_uncertain_step_is_not_reconsidered_or_replayed(tmp_path):
+    class Planner:
+        reconsider_calls = 0
+
+        async def reconsider(self, _entry, _context):
+            self.reconsider_calls += 1
+            return "resume"
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    entry.budget.deadline_at = (utc_now() - timedelta(seconds=1)).isoformat()
+    entry.checkpoint = ExecutionCheckpoint(
+        step_id="uncertain-step",
+        kind="invoke_tool",
+        state="uncertain",
+        required_capability="read_file",
+        side_effecting=True,
+    )
+    store.add(entry)
+    planner = Planner()
+    executive = _executive(store, planner)
+
+    await executive._reconsider_suspended()
+
+    current = store.load().entries[0]
+    assert current.status == "failed"
+    assert "not replayed" in current.progress_summary
+    assert planner.reconsider_calls == 0
+    assert store.load().dead_letters[-1].category == "activity_reconciliation"
+
+
+@pytest.mark.asyncio
+async def test_safe_planned_step_resumes_without_reconsideration_llm(tmp_path):
+    class Planner:
+        reconsider_calls = 0
+
+        async def reconsider(self, _entry, _context):
+            self.reconsider_calls += 1
+            raise AssertionError("safe planned work should not call the planner")
+
+        async def next_step(self, _entry, _context):
+            raise AssertionError("the durable planned checkpoint should be reused")
+
+        async def evaluate_completion(self, _entry, _evidence):
+            return True, "Recovered planned read completed."
+
+    dispatched: list[str] = []
+
+    async def run_step(_entry, checkpoint):
+        dispatched.append(checkpoint.step_id)
+        return "read completed"
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended", time_budget_seconds=300)
+    entry.checkpoint = ExecutionCheckpoint(
+        step_id="planned-read",
+        kind="invoke_tool",
+        state="planned",
+        required_object="computer",
+        required_capability="read_file",
+        side_effecting=False,
+    )
+    store.add(entry)
+    planner = Planner()
+    executive = _executive(store, planner, run_step=run_step)
+
+    await executive._reconsider_suspended()
+
+    assert store.load().entries[0].status == "queued"
+    assert planner.reconsider_calls == 0
+
+    store.transition(entry.id, "active")
+    await executive._advance_entry(store.load().entries[0])
+
+    assert dispatched == ["planned-read"]
+    assert store.load().entries[0].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_reconsideration_failure_is_deferred_instead_of_hot_looping(tmp_path):
+    class Planner:
+        reconsider_calls = 0
+
+        async def reconsider(self, _entry, _context):
+            self.reconsider_calls += 1
+            raise ValueError("empty planner response")
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    entry.checkpoint = ExecutionCheckpoint(
+        step_id="uncertain-read",
+        kind="invoke_tool",
+        state="uncertain",
+        required_capability="read_file",
+        side_effecting=False,
+    )
+    store.add(entry)
+    planner = Planner()
+    executive = _executive(
+        store,
+        planner,
+        settings=AutonomySettings(
+            planner_retry_limit=2,
+            planner_retry_backoff_seconds=0,
+            restart_recovery_grace_seconds=0,
+        ),
+    )
+
+    await executive._reconsider_suspended()
+    first = store.load().entries[0]
+    assert first.status == "suspended"
+    assert first.metadata["reconsider_failures"] == 1
+    assert first.metadata["reconsider_deferred_until"]
+
+    await executive._reconsider_suspended()
+    assert planner.reconsider_calls == 1
+    assert store.load().entries[0].status == "suspended"
 
 
 @pytest.mark.asyncio

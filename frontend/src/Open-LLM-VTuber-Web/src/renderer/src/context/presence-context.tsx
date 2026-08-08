@@ -58,6 +58,7 @@ export interface PresenceReceipt {
   reason: string;
   status: "queued" | "running" | "succeeded" | "failed" | "canceled";
   error: string | null;
+  override_reason?: string | null;
   signals: {
     user_present: boolean;
     activity: "active" | "recently-active" | "idle" | "away" | "unknown";
@@ -72,6 +73,7 @@ export interface PresenceReceipt {
 export interface PresenceState {
   type: "presence-state";
   enabled: boolean;
+  mode?: "enforced" | "observe_only";
   attention_budget?: number;
   attention_budget_max?: number;
   attention_refill_per_hour?: number;
@@ -98,6 +100,7 @@ interface PresenceContextValue {
 const DEFAULT_STATE: PresenceState = {
   type: "presence-state",
   enabled: false,
+  mode: "enforced",
   attention_budget: 0,
   attention_budget_max: 0,
   attention_refill_per_hour: 0,

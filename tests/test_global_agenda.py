@@ -10,7 +10,12 @@ from src.open_llm_vtuber.autonomy.agenda import (
     utc_now,
 )
 from src.open_llm_vtuber.autonomy.agenda_policy import AgendaPolicy
-from src.open_llm_vtuber.autonomy.agenda_planner import normalize_generated_kind
+from src.open_llm_vtuber.autonomy.agenda_context import AgendaContext
+from src.open_llm_vtuber.autonomy.agenda_planner import (
+    PlannerResponseError,
+    StructuredAgendaPlanner,
+    normalize_generated_kind,
+)
 from src.open_llm_vtuber.autonomy.activity import (
     ActivityExecutor,
     ActivityStepTimeout,
@@ -30,6 +35,41 @@ def pursuit(**overrides):
     }
     values.update(overrides)
     return create_entry(**values)
+
+
+@pytest.mark.asyncio
+async def test_structured_planner_normalizes_object_completion_condition():
+    async def complete(_prompt):
+        return """{
+            "kind": "pursuit",
+            "title": "Inspect the room",
+            "description": "Inspect one grounded room object.",
+            "evidence_refs": ["observation:room"],
+            "completion_condition": {"description": "One object is inspected."},
+            "time_budget_seconds": 60
+        }"""
+
+    context = AgendaContext(
+        payload={},
+        evidence_refs={"observation:room"},
+        capabilities=set(),
+        object_names=set(),
+    )
+    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+
+    assert entry.completion_condition.description == "One object is inspected."
+
+
+@pytest.mark.asyncio
+async def test_structured_planner_classifies_empty_reconsideration_response():
+    async def complete(_prompt):
+        return ""
+
+    context = AgendaContext(
+        payload={}, evidence_refs=set(), capabilities=set(), object_names=set()
+    )
+    with pytest.raises(PlannerResponseError, match="empty response"):
+        await StructuredAgendaPlanner(complete).reconsider({}, context)
 
 
 def test_store_enforces_one_foreground_and_suspends_previous(tmp_path):
@@ -123,10 +163,13 @@ def test_compaction_writes_memory_before_deleting(tmp_path):
     store.transition(entry.id, "completed", progress_summary="Saved a useful note.")
     written = []
 
-    assert store.compact_terminal_history(
-        lambda digest: written.append(digest) or True,
-        retention_entries=0,
-    ) == 1
+    assert (
+        store.compact_terminal_history(
+            lambda digest: written.append(digest) or True,
+            retention_entries=0,
+        )
+        == 1
+    )
     assert "Saved a useful note" in written[0]
     assert store.load().entries == []
 
@@ -137,10 +180,13 @@ def test_compaction_keeps_entries_when_memory_write_fails(tmp_path):
     store.add(entry)
     store.transition(entry.id, "completed")
 
-    assert store.compact_terminal_history(
-        lambda _digest: False,
-        retention_entries=0,
-    ) == 0
+    assert (
+        store.compact_terminal_history(
+            lambda _digest: False,
+            retention_entries=0,
+        )
+        == 0
+    )
     assert store.load().entries[0].id == entry.id
 
 

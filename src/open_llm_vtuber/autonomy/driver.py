@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from loguru import logger
 
@@ -27,6 +28,19 @@ def _agenda_step_text(result: AgentTurnResult | str) -> str:
     if not result.success:
         raise RuntimeError(result.error or "Agenda conversation step failed.")
     return str(result.response or "")
+
+
+def _agenda_step_instruction(entry, checkpoint) -> str:
+    """Render every validated execution field for the tool-capable agent."""
+    return (
+        "Execute exactly this validated agenda step. Do not expand its scope. "
+        "Use furniture movement and tools normally, respecting every approval "
+        "and proximity gate. Return a concise execution result.\n"
+        f"Intention: {entry.title}\nCompletion condition: "
+        f"{entry.completion_condition.description}\nValidated step: "
+        f"{json.dumps(asdict(checkpoint), ensure_ascii=False)}\n"
+        f"Purpose: {checkpoint.purpose}"
+    )
 
 
 async def _publish_completion(
@@ -97,7 +111,22 @@ async def agenda_loop(
         return await raw_complete([{"role": "user", "content": prompt}], "")
 
     async def emit(payload: dict) -> None:
-        await send(json.dumps(payload, ensure_ascii=False))
+        current_send = get_client_send(client_uid)
+        if current_send is None:
+            logger.debug(
+                f"agenda: skipped frontend update for disconnected client {client_uid}"
+            )
+            return
+        try:
+            await current_send(json.dumps(payload, ensure_ascii=False))
+        except RuntimeError as exc:
+            # Starlette raises RuntimeError when a disconnect races a final
+            # planning/idle update. Runtime ownership cleanup will persist work.
+            if "websocket" not in str(exc).lower():
+                raise
+            logger.debug(
+                f"agenda: skipped frontend update after disconnect for {client_uid}"
+            )
 
     async def run_step(entry, checkpoint) -> str:
         from ..conversations.single_conversation import process_single_conversation
@@ -112,15 +141,7 @@ async def agenda_loop(
                 lease_handle,
                 minimum_remaining_seconds=1,
             )
-        instruction = (
-            "Execute exactly this validated agenda step. Do not expand its scope. "
-            "Use furniture movement and tools normally, respecting every approval "
-            "and proximity gate. Return a concise execution result.\n"
-            f"Intention: {entry.title}\nCompletion condition: "
-            f"{entry.completion_condition.description}\nStep: "
-            f"{json.dumps(checkpoint.arguments, ensure_ascii=False)}\n"
-            f"Purpose: {checkpoint.purpose}"
-        )
+        instruction = _agenda_step_instruction(entry, checkpoint)
 
         async def execute_step():
             return await process_single_conversation(
@@ -150,13 +171,18 @@ async def agenda_loop(
         return _agenda_step_text(result)
 
     async def run_report(entry, summary: str) -> None:
+        from .reporting import ReportClientUnavailable
+
         if lease_handle is not None:
             WorkspaceLease(lease_handle.workspace_root).assert_current(
                 lease_handle,
                 minimum_remaining_seconds=1,
             )
+        current_send = get_client_send(client_uid)
+        if current_send is None:
+            raise ReportClientUnavailable("frontend client disconnected")
         await _publish_completion(
-            send=send,
+            send=current_send,
             context=context,
             conf_uid=context.character_config.conf_uid,
             entry=entry,

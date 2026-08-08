@@ -2,6 +2,7 @@
 
 from src.open_llm_vtuber.autonomy import AutonomySettings
 from src.open_llm_vtuber.config_manager.autonomy import AutonomyConfig
+from src.open_llm_vtuber.config_manager.main import Config
 
 
 def test_agenda_settings_apply_safe_lower_bounds():
@@ -35,3 +36,32 @@ def test_legacy_tick_setting_migrates_to_the_agenda_cadence():
     )
 
     assert config.fallback_reconsideration_seconds == 45
+
+
+def test_root_autonomy_config_migrates_under_system_config():
+    migrated = Config.migrate_root_autonomy_config(
+        {
+            "system_config": {"host": "localhost"},
+            "autonomy_config": {"presence_mode": "observe_only"},
+        }
+    )
+
+    assert "autonomy_config" not in migrated
+    assert migrated["system_config"]["autonomy_config"] == {
+        "presence_mode": "observe_only"
+    }
+
+
+def test_nested_autonomy_config_wins_over_deprecated_root_value():
+    migrated = Config.migrate_root_autonomy_config(
+        {
+            "system_config": {
+                "autonomy_config": {"presence_mode": "enforced"}
+            },
+            "autonomy_config": {"presence_mode": "observe_only"},
+        }
+    )
+
+    assert migrated["system_config"]["autonomy_config"]["presence_mode"] == (
+        "enforced"
+    )

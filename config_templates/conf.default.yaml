@@ -45,6 +45,7 @@ system_config:
   # work) and how to deliver it, subject to these interruption controls.
   autonomy_config:
     enabled: true
+    presence_mode: enforced
     headless_enabled: true
     lease_ttl_seconds: 30
     lease_renew_seconds: 10

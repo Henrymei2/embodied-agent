@@ -1,7 +1,7 @@
 # config_manager/autonomy.py
 from loguru import logger
 from pydantic import Field, model_validator
-from typing import ClassVar, Dict
+from typing import ClassVar, Dict, Literal
 
 from .i18n import I18nMixin, Description
 
@@ -10,6 +10,9 @@ class AutonomyConfig(I18nMixin):
     """Configuration for the agent's autonomous behavior loop."""
 
     enabled: bool = Field(True, alias="enabled")
+    presence_mode: Literal["enforced", "observe_only"] = Field(
+        "enforced", alias="presence_mode"
+    )
     headless_enabled: bool = Field(True, alias="headless_enabled")
     lease_ttl_seconds: float = Field(30.0, ge=5, le=300)
     lease_renew_seconds: float = Field(10.0, ge=1, le=150)
@@ -80,6 +83,9 @@ class AutonomyConfig(I18nMixin):
 
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "enabled": Description(en="Whether the autonomous behavior loop runs"),
+        "presence_mode": Description(
+            en="Enforce Presence gates or record them without blocking initiative"
+        ),
         "headless_enabled": Description(
             en="Keep safe autonomous continuity while no client is connected"
         ),

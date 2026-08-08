@@ -22,7 +22,7 @@ from .observation import Observation
 from .settings import AutonomySettings
 
 _STATE_FILENAME = "presence_ledger.json"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 HELPFUL = "helpful"
 DISMISSED = "dismissed"
@@ -97,6 +97,7 @@ class PresenceReceipt:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    override_reason: Optional[str] = None
     budget_charged: bool = False
     feedback: Optional[str] = None
     feedback_at: Optional[str] = None
@@ -113,6 +114,7 @@ class PresenceLedger:
     refill_per_hour: float
     receipt_retention: int
     default_snooze_minutes: int
+    mode: str
     budget_balance: float
     last_refill_at: str
     snoozed_until: Optional[str] = None
@@ -142,6 +144,7 @@ class PresenceLedger:
                         started_at=item.get("started_at"),
                         completed_at=item.get("completed_at"),
                         error=item.get("error"),
+                        override_reason=item.get("override_reason"),
                         budget_charged=bool(
                             item.get(
                                 "budget_charged",
@@ -164,6 +167,7 @@ class PresenceLedger:
                     refill_per_hour=settings.attention_refill_per_hour,
                     receipt_retention=settings.receipt_retention,
                     default_snooze_minutes=settings.default_snooze_minutes,
+                    mode=settings.presence_mode,
                     budget_balance=_clamp(
                         float(raw.get("budget_balance", settings.attention_budget)),
                         0.0,
@@ -176,7 +180,7 @@ class PresenceLedger:
                         for key, value in raw.get("direction_affinity", {}).items()
                     },
                     receipts=receipts[-settings.receipt_retention :],
-                    schema_version=int(raw.get("schema_version", _SCHEMA_VERSION)),
+                    schema_version=_SCHEMA_VERSION,
                 )
                 ledger._path = path
                 ledger.refill(now)
@@ -192,6 +196,7 @@ class PresenceLedger:
             refill_per_hour=settings.attention_refill_per_hour,
             receipt_retention=settings.receipt_retention,
             default_snooze_minutes=settings.default_snooze_minutes,
+            mode=settings.presence_mode,
             budget_balance=settings.attention_budget,
             last_refill_at=now.isoformat(),
         )
@@ -203,6 +208,7 @@ class PresenceLedger:
             return
         data = {
             "schema_version": self.schema_version,
+            "mode": self.mode,
             "max_budget": self.max_budget,
             "refill_per_hour": self.refill_per_hour,
             "budget_balance": round(self.budget_balance, 4),
@@ -276,17 +282,41 @@ class PresenceLedger:
         now: Optional[datetime] = None,
     ) -> tuple[bool, str]:
         """Check the presence contract without consuming budget."""
+        allowed, reason, _override_reason = self._gate_decision(
+            cost,
+            user_facing=user_facing,
+            focus_mode=focus_mode,
+            presence_fresh=presence_fresh,
+            now=now,
+        )
+        return allowed, reason
+
+    def _gate_decision(
+        self,
+        cost: float,
+        *,
+        user_facing: bool,
+        focus_mode: bool = False,
+        presence_fresh: bool = True,
+        now: Optional[datetime] = None,
+    ) -> tuple[bool, str, Optional[str]]:
+        """Evaluate Presence and expose what observe-only mode bypassed."""
         now = _as_utc(now)
         self.refill(now)
+        blocked_reason: Optional[str] = None
         if user_facing and not presence_fresh:
-            return False, "presence signal is stale"
-        if user_facing and focus_mode:
-            return False, "focus mode is active"
-        if user_facing and self.is_snoozed(now):
-            return False, "proactive speech is snoozed"
-        if self.budget_balance + 1e-9 < cost:
-            return False, "attention budget exhausted"
-        return True, "allowed by presence contract"
+            blocked_reason = "presence signal is stale"
+        elif user_facing and focus_mode:
+            blocked_reason = "focus mode is active"
+        elif user_facing and self.is_snoozed(now):
+            blocked_reason = "proactive speech is snoozed"
+        elif self.budget_balance + 1e-9 < cost:
+            blocked_reason = "attention budget exhausted"
+        if blocked_reason is None:
+            return True, "allowed by presence contract", None
+        if self.mode == "observe_only":
+            return True, f"observe-only override: {blocked_reason}", blocked_reason
+        return False, blocked_reason, None
 
     def affinity(self, direction: str) -> float:
         """Return bounded learned preference for a behavior direction."""
@@ -341,7 +371,7 @@ class PresenceLedger:
         """Persist a queued receipt without charging attention yet."""
         now = _as_utc(now)
         cost = attention_cost(action)
-        allowed, gate_reason = self.can_afford(
+        allowed, gate_reason, override_reason = self._gate_decision(
             cost,
             user_facing=action in {"ask", "speak"},
             focus_mode=observation.focus_mode,
@@ -361,6 +391,7 @@ class PresenceLedger:
             attention_cost=cost,
             reason=reason,
             status="queued",
+            override_reason=override_reason,
             signals={
                 "user_present": observation.user_present,
                 "activity": _idle_band(observation.idle_seconds),
@@ -436,7 +467,7 @@ class PresenceLedger:
             return False, f"receipt is already {receipt.status}"
 
         now = _as_utc(now)
-        allowed, gate_reason = self.can_afford(
+        allowed, gate_reason, override_reason = self._gate_decision(
             receipt.attention_cost,
             user_facing=receipt.action in {"ask", "speak"},
             focus_mode=observation.focus_mode,
@@ -445,6 +476,9 @@ class PresenceLedger:
         )
         if not allowed:
             return False, gate_reason
+
+        if override_reason and receipt.override_reason is None:
+            receipt.override_reason = override_reason
 
         self.budget_balance = max(0.0, self.budget_balance - receipt.attention_cost)
         receipt.status = "running"
@@ -572,6 +606,7 @@ class PresenceLedger:
         return {
             "type": "presence-state",
             "enabled": True,
+            "mode": self.mode,
             "attention_budget": round(self.budget_balance, 2),
             "attention_budget_max": self.max_budget,
             "attention_refill_per_hour": self.refill_per_hour,

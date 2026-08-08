@@ -75,11 +75,15 @@ def build_agenda_context(
         if ledger is not None:
             snapshot = ledger.snapshot()
             attention = {
+                "mode": snapshot.get("mode", "enforced"),
                 "budget": snapshot.get("attention_budget"),
                 "budget_max": snapshot.get("attention_budget_max"),
                 "snoozed": snapshot.get("snoozed"),
                 "snoozed_until": snapshot.get("snoozed_until"),
                 "direction_affinity": snapshot.get("direction_affinity", {}),
+                "intention_generation_unrestricted": (
+                    snapshot.get("mode") == "observe_only"
+                ),
             }
     except Exception:
         pass

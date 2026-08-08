@@ -528,6 +528,55 @@ async def test_legacy_agenda_step_executes_through_resumable_sidecar(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agenda_plan_accepts_human_readable_furniture_labels(tmp_path):
+    agenda = AgendaStore(tmp_path)
+    entry = create_entry(
+        kind="pursuit",
+        title="Inspect installed skills",
+        description="Walk to the tool rack and inspect one value.",
+        origin="autonomous",
+        evidence_refs=["observation:tool-rack"],
+        completion_condition="The installed skills are inspected.",
+        time_budget_seconds=60,
+        status="active",
+    )
+    agenda.add(entry)
+
+    async def run_step(_entry, _checkpoint):
+        return "skills inspected"
+
+    async def emit(_payload):
+        return None
+
+    checkpoint = ExecutionCheckpoint(
+        step_id="inspect-skills",
+        kind="invoke_tool",
+        state="planned",
+        required_object="tool rack",
+        required_capability="list_skills",
+        side_effecting=False,
+    )
+    bridge = AgendaPlanBridge(agenda, ActivityExecutor(agenda, run_step, emit))
+    result = await bridge.execute(
+        entry,
+        checkpoint,
+        owner_id="agenda-owner",
+        fencing_token=1,
+        capabilities={"list_skills"},
+        object_names={"tool rack"},
+        retry_budget=2,
+    )
+
+    assert result.plan.state == "completed"
+    assert result.summary == "skills inspected"
+    references = result.plan.steps[0].precondition_refs
+    assert len(references) == 2
+    assert all(" " not in reference for reference in references)
+    assert references[0].startswith("capability:")
+    assert references[1].startswith("object:")
+
+
+@pytest.mark.asyncio
 async def test_agenda_absorption_is_atomic_idempotent_and_restart_reconciled(
     tmp_path,
 ):
