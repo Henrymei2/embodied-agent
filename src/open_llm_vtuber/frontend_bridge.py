@@ -48,7 +48,7 @@ _clients: dict[str, _ConnectedClient] = {}
 _pending_requests: dict[str, _PendingRequest] = {}
 
 # How long to wait for the frontend to report back before giving up.
-_DEFAULT_TIMEOUT_SECONDS = 15.0
+_DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 def register_client_sender(

@@ -19,6 +19,7 @@
       "language": "Language",
       "useCameraBackground": "Use Camera Background",
       "showSubtitle": "Show Subtitle",
+      "vrSelectionHighlight": "Highlight VR selection",
       "backgroundImage": "Background Image",
       "customBgUrlPlaceholder": "Enter image URL",
       "customBgUrl": "Or enter a custom background URL",

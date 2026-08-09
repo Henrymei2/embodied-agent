@@ -297,6 +297,7 @@ async def test_move_to_sends_a_path_and_confirms_arrival(monkeypatch):
 
     assert result == "OK: arrived at bookshelf (x=600, y=370)."
     assert sent["action"] == "move_to"
+    assert sent["args"]["target"] == "bookshelf"
     # A path, not just a destination: the renderer walks the legs it is given.
     assert sent["args"]["waypoints"] == [{"x": bookshelf["x"], "y": bookshelf["y"]}]
     assert (sent["args"]["x"], sent["args"]["y"]) == (bookshelf["x"], bookshelf["y"])

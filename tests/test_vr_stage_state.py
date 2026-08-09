@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
+from itertools import combinations
+
+import pytest
 
 from src.open_llm_vtuber.stage_state_manager import get_default_stage, save_stage_state
 from src.open_llm_vtuber.scene_state import get_scene_reachable_objects
@@ -23,15 +27,16 @@ def test_default_vr_stage_has_fixed_current_furniture_and_valid_geometry():
     }
     stage = get_default_vr_stage("character")
 
-    assert stage["version"] == 2
+    assert stage["version"] == 3
     assert stage["mode"] == "vr"
     assert stage["room"] == {
-        "width": 960.0,
-        "depth": 540.0,
+        "width": 1920.0,
+        "depth": 1080.0,
         "height": 280.0,
         "floor_color": "#b99468",
         "wall_color": "#ead7bd",
     }
+    assert stage["world"]["move_speed"] == 200.0
     vr_nodes = {node["id"]: node for node in stage["nodes"]}
     assert set(vr_nodes) == set(normal_nodes)
     for node_id, normal in normal_nodes.items():
@@ -46,6 +51,22 @@ def test_default_vr_stage_has_fixed_current_furniture_and_valid_geometry():
         ):
             assert vr_nodes[node_id].get(key) == normal.get(key)
     assert validate_vr_stage(stage) == (True, [])
+    avatar = vr_nodes["avatar"]
+    assert (avatar["x"], avatar["y"]) == (960.0, 540.0)
+    for node in stage["nodes"]:
+        if node["type"] != "furniture":
+            continue
+        touches_north = node["y"] - node["depth"] / 2 == 0
+        touches_south = node["y"] + node["depth"] / 2 == stage["room"]["depth"]
+        assert touches_north or touches_south, node["id"]
+        assert not 200 < node["y"] < 880, node["id"]
+    furniture = [node for node in stage["nodes"] if node["type"] == "furniture"]
+    for left, right in combinations(furniture, 2):
+        center_distance = math.hypot(left["x"] - right["x"], left["y"] - right["y"])
+        assert center_distance > stage["world"]["reach_ceiling"], (
+            left["id"],
+            right["id"],
+        )
 
 
 def test_normal_and_vr_persistence_are_independent(tmp_path, monkeypatch):
@@ -75,24 +96,49 @@ def test_missing_and_corrupt_vr_state_fall_back_without_importing_normal(
     normal["nodes"][-1]["x"] = 777
     assert save_stage_state("character", normal)[0]
 
-    assert load_vr_stage_state("character")["nodes"][-1]["x"] == 35
+    assert load_vr_stage_state("character")["nodes"][-1]["x"] == 960
     vr_path = tmp_path / "stage_state" / "character" / VR_STAGE_FILENAME
     vr_path.write_text("not json", encoding="utf-8")
-    assert load_vr_stage_state("character")["nodes"][-1]["x"] == 35
+    assert load_vr_stage_state("character")["nodes"][-1]["x"] == 960
 
 
-def test_v1_vr_state_is_loaded_through_the_v2_migration(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_version", [1, 2])
+def test_legacy_vr_state_is_reset_once_and_persisted_as_v3(
+    tmp_path, monkeypatch, legacy_version
+):
     monkeypatch.chdir(tmp_path)
     stage = get_default_vr_stage("character")
-    stage["version"] = 1
+    stage["version"] = legacy_version
+    stage["nodes"].append(
+        {
+            "id": "legacy_prop",
+            "type": "prop",
+            "label": "legacy prop",
+            "x": 960,
+            "y": 540,
+            "width": 10,
+            "depth": 10,
+            "height": 10,
+            "elevation": 5,
+            "yaw": 0,
+            "support_id": "floor",
+            "color": "#ffffff",
+            "interaction": {"on_click": True, "grabbable": True},
+        }
+    )
     path = tmp_path / "stage_state" / "character" / VR_STAGE_FILENAME
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(stage), encoding="utf-8")
 
     migrated = load_vr_stage_state("character")
 
-    assert migrated["version"] == 2
-    assert migrated["metadata"]["updated_by"] == "vr_v1_to_v2_migration"
+    assert migrated["version"] == 3
+    assert migrated["room"]["width"] == 1920
+    assert migrated["metadata"]["updated_by"] == "vr_v3_room_reset"
+    assert "legacy_prop" not in {node["id"] for node in migrated["nodes"]}
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["version"] == 3
+    assert load_vr_stage_state("character") == persisted
 
 
 def test_grabbable_props_validate_but_never_unlock_capability_labels():
@@ -127,7 +173,7 @@ def test_docking_is_nearest_deterministic_and_rejects_duplicate_labels():
     stage = get_default_vr_stage("character")
     point, error = docking_point(stage, "computer")
     assert error is None
-    assert point == WorldPoint(120, 330)
+    assert point == WorldPoint(265, 925)
     assert validate_vr_endpoint(stage, point) == (True, None)
 
     duplicate = dict(stage["nodes"][0])
@@ -175,7 +221,7 @@ def test_vr_reachability_uses_the_floor_plane_and_vr_file(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     stage = get_default_vr_stage("character")
     avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
-    avatar["x"], avatar["y"] = 120, 330
+    avatar["x"], avatar["y"] = 265, 925
     assert save_vr_stage_state("character", stage)[0]
 
     assert "computer" in get_scene_reachable_objects("character", mode="vr")

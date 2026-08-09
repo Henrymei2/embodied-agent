@@ -291,8 +291,11 @@ def dock_at(
     )
 
     ignoring = frozenset({target.entity_id})
+    effective_reach = projection.reaches.get(target.entity_id, 0.0)
     best: NavigationResult | None = None
     for candidate in candidates:
+        if math.dist(candidate, (target.position.x, target.position.y)) > effective_reach:
+            continue
         result = plan_route(world, start, candidate, ignoring=ignoring, margin=margin)
         if result.reachable and (best is None or result.distance < best.distance):
             best = result

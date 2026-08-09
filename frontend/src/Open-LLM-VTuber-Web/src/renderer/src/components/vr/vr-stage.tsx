@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@chakra-ui/react";
 import { FiX } from "react-icons/fi";
 import * as THREE from "three";
-import { useVrStage, VrStageNode, VrTransientEntity } from "@/context/vr-stage-context";
+import {
+  useVrStage, VrAvatarMotionPlan, VrStageNode, VrTransientEntity,
+} from "@/context/vr-stage-context";
 import { useRendererMode } from "@/context/renderer-mode-context";
 import { useVAD } from "@/context/vad-context";
 import { useSubtitle } from "@/context/subtitle-context";
@@ -11,22 +13,34 @@ import { useWebSocket } from "@/context/websocket-context";
 import { wsService } from "@/services/websocket-service";
 import { audioManager } from "@/utils/audio-manager";
 import {
+  fitFurnitureModel,
+  furnitureModelAsset,
+  loadFurnitureModel,
+} from "@/utils/vr-furniture-models";
+import {
   floorToScene,
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   headRelativeDelta,
+  horizontalBillboardTarget,
   inputSourcesByHand,
   isViewerPositionClear,
   pressedEdge,
+  preferPhysicalVrRayHits,
+  isRayGrabbableNode,
+  nextEmailPage,
   questLocomotionStick,
   rescaleThumbstick,
   selectVrRayHit,
+  selectionProxyDimensions,
   selectViewerSpawn,
   snapTurnStep,
+  transientTriggerBehavior,
   clampCaptionText,
   viewerForwardFromPose,
   viewerPoseCamera,
   VR_RAY_MAX_DISTANCE,
+  loadVrSelectionHighlight,
 } from "@/utils/vr-helpers";
 
 const SCALE = 0.01;
@@ -35,6 +49,16 @@ const DEAD_ZONE = 0.2;
 const SNAP_THRESHOLD = 0.7;
 const SNAP_REARM = 0.3;
 const SNAP_RADIANS = THREE.MathUtils.degToRad(30);
+const PANEL_FACING_DAMPING = 8;
+
+interface AvatarMotionRuntime extends VrAvatarMotionPlan {
+  startedAt: number;
+  fromScene: THREE.Vector3;
+  toScene: THREE.Vector3;
+  fromQuaternion: THREE.Quaternion;
+  walkQuaternion: THREE.Quaternion;
+  finalQuaternion: THREE.Quaternion;
+}
 
 interface VrRuntime {
   scene: THREE.Scene;
@@ -60,6 +84,7 @@ interface VrRuntime {
   eventSequence: number;
   lastPoseSentAt: number;
   lastPose: { x: number; y: number; yaw: number } | null;
+  hoveredSelectable: THREE.Object3D | null;
 }
 
 interface PanelAction {
@@ -91,15 +116,41 @@ function disposeObject(root: THREE.Object3D) {
     object.geometry.dispose();
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     materials.forEach((material) => {
-      if (
-        material instanceof THREE.MeshBasicMaterial ||
-        material instanceof THREE.MeshLambertMaterial ||
-        material instanceof THREE.MeshStandardMaterial
-      ) material.map?.dispose();
+      Object.values(material).forEach((value) => {
+        if (value instanceof THREE.Texture) value.dispose();
+      });
       material.dispose();
     });
   });
 }
+
+function ancestorData<T>(object: THREE.Object3D, key: string): T | undefined {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current.userData[key] !== undefined) return current.userData[key] as T;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function ancestorWithData(object: THREE.Object3D, key: string): THREE.Object3D | null {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current.userData[key] !== undefined) return current;
+    current = current.parent;
+  }
+  return null;
+}
+
+function facingQuaternion(from: THREE.Vector3, to: THREE.Vector3) {
+  if (Math.hypot(to.x - from.x, to.z - from.z) < 0.0001) return new THREE.Quaternion();
+  const helper = new THREE.Object3D();
+  helper.position.copy(from);
+  helper.lookAt(to.x, from.y, to.z);
+  return helper.quaternion.clone();
+}
+
+const smoothstep = (value: number) => value * value * (3 - 2 * value);
 
 function roundedRect(
   context: CanvasRenderingContext2D,
@@ -283,7 +334,7 @@ function summaryLines(value: unknown): string[] {
 export default function VrStage() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<VrRuntime | null>(null);
-  const { stage, motionDurationMs, transients, propStates, setUserPose, updateTransient, removeTransient, updatePropState } = useVrStage();
+  const { stage, motionPlan, transients, propStates, setUserPose, updateTransient, removeTransient, updatePropState } = useVrStage();
   const transientRef = useRef(transients);
   const stageRef = useRef(stage);
   const { xrSession, leaveVr } = useRendererMode();
@@ -301,6 +352,7 @@ export default function VrStage() {
   const [vrWarning, setVrWarning] = useState<string | null>(null);
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
   const initialMicOnRef = useRef(micOn);
+  const selectionHighlightEnabled = loadVrSelectionHighlight();
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { transientRef.current = transients; }, [transients]);
@@ -363,7 +415,7 @@ export default function VrStage() {
 
     const controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
     controllers.forEach((controller) => {
-      const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -2.2)];
+      const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -VR_RAY_MAX_DISTANCE)];
       const ray = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(points),
         new THREE.LineBasicMaterial({ color: 0xc7d2fe, transparent: true, opacity: 0.58 }),
@@ -374,9 +426,11 @@ export default function VrStage() {
         new THREE.RingGeometry(0.009, 0.014, 24),
         new THREE.MeshBasicMaterial({ color: 0xe0e7ff, transparent: true, opacity: 0.82, side: THREE.DoubleSide }),
       );
-      reticle.position.z = -2.2;
+      reticle.position.z = -VR_RAY_MAX_DISTANCE;
       reticle.visible = false;
       controller.add(reticle);
+      controller.userData.ray = ray;
+      controller.userData.reticle = reticle;
       // Target-ray poses are reported in XR reference-space coordinates. Keep
       // them under the same locomotion rig as the headset so walking and snap
       // turns transform the head and hands together.
@@ -400,6 +454,7 @@ export default function VrStage() {
       panelGeneration: 0,
       textureWarnings: new Set<string>(),
       grabbed: null, poseSequence: 0, eventSequence: 0, lastPoseSentAt: 0, lastPose: null,
+      hoveredSelectable: null,
     };
     runtimeRef.current = runtime;
 
@@ -417,6 +472,62 @@ export default function VrStage() {
       scene.remove(runtime.panel);
       disposeObject(runtime.panel);
       runtime.panel = null;
+    };
+
+    const addCloseControl = (
+      parent: THREE.Object3D,
+      position: THREE.Vector3,
+      userData: Record<string, unknown>,
+    ) => {
+      const visible = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.14, 0.14),
+        new THREE.MeshBasicMaterial({ map: canvasTexture(["×"], 128, 128), transparent: true }),
+      );
+      visible.position.copy(position);
+      Object.assign(visible.userData, userData);
+      parent.add(visible);
+      const hitTarget = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.26, 0.24),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+      );
+      hitTarget.position.copy(position).add(new THREE.Vector3(0, 0, 0.004));
+      Object.assign(hitTarget.userData, userData);
+      parent.add(hitTarget);
+    };
+
+    const interactiveRoots = () => [
+      ...(runtime.panel ? [runtime.panel] : []),
+      furniture,
+      transientRoot,
+      ...(runtime.avatar ? [runtime.avatar] : []),
+    ];
+
+    const rayHitFromController = (controller: THREE.Object3D) => {
+      const origin = new THREE.Vector3();
+      const direction = new THREE.Vector3(0, 0, -1);
+      controller.getWorldPosition(origin);
+      direction.applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
+      runtime.raycaster.set(origin, direction);
+      const hits = runtime.raycaster.intersectObjects(interactiveRoots(), true);
+      return selectVrRayHit(
+        preferPhysicalVrRayHits(hits),
+        origin,
+        direction,
+      );
+    };
+
+    const setHoveredSelectable = (mesh: THREE.Object3D | null) => {
+      if (runtime.hoveredSelectable === mesh) return;
+      const setOutline = (target: THREE.Object3D | null, active: boolean) => {
+        const outline = target?.userData.selectionOutline as THREE.LineSegments | undefined;
+        if (!outline) return;
+        const material = outline.material as THREE.LineBasicMaterial;
+        material.color.set(active ? 0x67e8f9 : 0xffffff);
+        material.opacity = active ? 0.95 : 0.1;
+      };
+      setOutline(runtime.hoveredSelectable, false);
+      runtime.hoveredSelectable = mesh;
+      setOutline(mesh, selectionHighlightEnabled);
     };
 
     const selectFurniture = async (node: VrStageNode) => {
@@ -443,13 +554,7 @@ export default function VrStage() {
       panel.userData.panel = true;
       panel.userData.node = node;
       panel.userData.nodeId = node.id;
-      const closeButton = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.22, 0.12),
-        new THREE.MeshBasicMaterial({ map: canvasTexture(["Close"], 220, 96), transparent: true }),
-      );
-      closeButton.position.set(0.58, 0.22, 0.012);
-      closeButton.userData.panelClose = true;
-      panel.add(closeButton);
+      addCloseControl(panel, new THREE.Vector3(0.63, 0.22, 0.012), { panelClose: true });
       scene.add(panel);
       runtime.panel = panel;
 
@@ -507,18 +612,7 @@ export default function VrStage() {
     const handleSelect = (event: THREE.Event & { target: THREE.Object3D }) => {
       const controller = event.target;
       if (controller.userData.handedness !== "right") return;
-      const origin = new THREE.Vector3();
-      const direction = new THREE.Vector3(0, 0, -1);
-      controller.getWorldPosition(origin);
-      direction.applyQuaternion(controller.getWorldQuaternion(new THREE.Quaternion()));
-      runtime.raycaster.set(origin, direction);
-      const transientObjects: THREE.Object3D[] = [];
-      runtime.scene.traverse((object) => { if (object.userData.transient) transientObjects.push(object); });
-      const hits = runtime.raycaster.intersectObjects([...(runtime.panel ? [runtime.panel] : []), furniture, ...transientObjects], true);
-      const headset = viewerPoseCamera(runtime.renderer.xr.getCamera());
-      const headsetPosition = headset.getWorldPosition(new THREE.Vector3());
-      const headsetForward = headset.getWorldDirection(new THREE.Vector3());
-      const hit = selectVrRayHit(hits, headsetPosition, headsetForward);
+      const hit = rayHitFromController(controller);
       if (!hit) return;
       const panelAction = hit.object.userData.panelAction as PanelAction | undefined;
       if (panelAction) {
@@ -529,19 +623,20 @@ export default function VrStage() {
         closePanel();
         return;
       }
-      const transientHit = hit.object.userData.transient as VrTransientEntity | undefined;
-      if (transientHit?.kind === "panel") {
-        removeTransient(transientHit.id);
-        emitPhysicalEvent({ kind: "entity_dismissed", entity_id: transientHit.id });
+      const transientClose = hit.object.userData.transientClose as string | undefined;
+      if (transientClose) {
+        if (runtime.grabbed?.entityId === transientClose) runtime.grabbed = null;
+        removeTransient(transientClose);
+        emitPhysicalEvent({ kind: "entity_dismissed", entity_id: transientClose });
         return;
       }
-      if (transientHit?.kind === "email_card" && transientHit.body) {
-        const pages = Math.max(1, Math.ceil(transientHit.body.length / 800));
-        const page = ((transientHit.page || 0) + 1) % (pages + 1);
+      const transientHit = ancestorData<VrTransientEntity>(hit.object, "transient");
+      if (transientHit && transientTriggerBehavior(transientHit.kind, transientHit.body) === "page") {
+        const page = nextEmailPage(transientHit.page || 0, transientHit.body!.length);
         updateTransient({ ...transientHit, page });
         return;
       }
-      const node = hit.object.userData.node as VrStageNode | undefined;
+      const node = ancestorData<VrStageNode>(hit.object, "node");
       if (node) void selectFurniture(node);
     };
     const handleConnected = (event: THREE.Event & { target: THREE.Object3D; data: XRInputSource }) => {
@@ -562,6 +657,37 @@ export default function VrStage() {
       const hand = new THREE.Vector3();
       controller.getWorldPosition(hand);
       const candidates: Array<{ object: THREE.Object3D; entityId: string; kind: "prop" | "transient"; wasOffered: boolean; distance: number }> = [];
+      const rayHit = rayHitFromController(controller);
+      const rayTransientObject = rayHit ? ancestorWithData(rayHit.object, "transient") : null;
+      const rayTransient = rayTransientObject?.userData.transient as VrTransientEntity | undefined;
+      if (rayTransientObject && rayTransient) {
+        controller.attach(rayTransientObject);
+        rayTransientObject.position.set(0, 0, -0.35);
+        rayTransientObject.quaternion.identity();
+        runtime.grabbed = {
+          object: rayTransientObject,
+          entityId: rayTransient.id,
+          kind: "transient",
+          wasOffered: rayTransient.state === "offered",
+        };
+        return;
+      }
+      const rayPropObject = rayHit ? ancestorWithData(rayHit.object, "selectionOutline") : null;
+      const rayProp = rayPropObject?.userData.node as VrStageNode | undefined;
+      if (rayPropObject && isRayGrabbableNode(rayProp)) {
+        const wasOffered = rayPropObject.userData.offeredProp === true;
+        controller.attach(rayPropObject);
+        rayPropObject.position.set(0, 0, -0.35);
+        rayPropObject.quaternion.identity();
+        runtime.grabbed = {
+          object: rayPropObject,
+          entityId: rayProp.id,
+          kind: "prop",
+          wasOffered,
+        };
+        emitPhysicalEvent({ kind: "prop_grabbed", entity_id: rayProp.id });
+        return;
+      }
       runtime.scene.traverse((object) => {
         const node = object.userData.node as VrStageNode | undefined;
         if (!node || node.type !== "prop" || node.interaction?.grabbable !== true || (object.parent !== runtime.furniture && object.parent !== runtime.avatar)) return;
@@ -682,11 +808,61 @@ export default function VrStage() {
           runtime.xPressed = pressed;
         }
       }
+      const rightController = runtime.controllers.find((controller) => controller.userData.handedness === "right");
+      if (rightController) {
+        const hoverHit = rayHitFromController(rightController);
+        const reticle = rightController.userData.reticle as THREE.Mesh | undefined;
+        if (reticle) {
+          reticle.position.z = -(hoverHit?.distance ?? VR_RAY_MAX_DISTANCE);
+          reticle.visible = true;
+        }
+        const hoveredNode = hoverHit ? ancestorData<VrStageNode>(hoverHit.object, "node") : undefined;
+        const hoveredRoot = hoverHit ? ancestorWithData(hoverHit.object, "selectionOutline") : null;
+        const hoveredTransient = hoverHit
+          ? ancestorData<VrTransientEntity>(hoverHit.object, "transient")
+          : undefined;
+        setHoveredSelectable(
+          hoveredRoot && (
+            hoveredNode?.type === "furniture" ||
+            isRayGrabbableNode(hoveredNode) ||
+            hoveredTransient !== undefined
+          ) ? hoveredRoot : null,
+        );
+      } else {
+        setHoveredSelectable(null);
+      }
       if (runtime.avatar?.userData.motion) {
-        const motion = runtime.avatar.userData.motion as { from: THREE.Vector3; to: THREE.Vector3; start: number; duration: number };
-        const progress = Math.min(1, (time - motion.start) / motion.duration);
-        runtime.avatar.position.lerpVectors(motion.from, motion.to, progress);
-        if (progress >= 1) delete runtime.avatar.userData.motion;
+        const motion = runtime.avatar.userData.motion as AvatarMotionRuntime;
+        const elapsed = Math.max(0, time - motion.startedAt);
+        const walkStart = motion.turnDurationMs;
+        const finalTurnStart = walkStart + motion.walkDurationMs;
+        if (elapsed < walkStart && motion.turnDurationMs > 0) {
+          const progress = smoothstep(Math.min(1, elapsed / motion.turnDurationMs));
+          runtime.avatar.position.copy(motion.fromScene);
+          runtime.avatar.quaternion.slerpQuaternions(
+            motion.fromQuaternion, motion.walkQuaternion, progress,
+          );
+          runtime.avatar.userData.walking = false;
+        } else if (elapsed < finalTurnStart && motion.walkDurationMs > 0) {
+          const progress = Math.min(1, (elapsed - walkStart) / motion.walkDurationMs);
+          runtime.avatar.position.lerpVectors(motion.fromScene, motion.toScene, progress);
+          runtime.avatar.quaternion.copy(motion.walkQuaternion);
+          runtime.avatar.userData.walking = true;
+        } else if (elapsed < motion.totalDurationMs && motion.finalTurnDurationMs > 0) {
+          const progress = smoothstep(Math.min(
+            1, (elapsed - finalTurnStart) / motion.finalTurnDurationMs,
+          ));
+          runtime.avatar.position.copy(motion.toScene);
+          runtime.avatar.quaternion.slerpQuaternions(
+            motion.walkQuaternion, motion.finalQuaternion, progress,
+          );
+          runtime.avatar.userData.walking = false;
+        } else {
+          runtime.avatar.position.copy(motion.toScene);
+          runtime.avatar.quaternion.copy(motion.finalQuaternion);
+          runtime.avatar.userData.walking = false;
+          delete runtime.avatar.userData.motion;
+        }
       }
       if (runtime.avatar) {
         const visuals = runtime.avatar.userData.visuals as {
@@ -697,7 +873,7 @@ export default function VrStage() {
           chest: THREE.Mesh;
           halo: THREE.Mesh;
         };
-        const moving = Boolean(runtime.avatar.userData.motion);
+        const moving = runtime.avatar.userData.walking === true;
         const offering = transientRef.current.some((entity) => entity.state === "offered");
         const seated = runtime.avatar.userData.pose === "sitting";
         const pulse = Math.sin(time * 0.0026);
@@ -709,9 +885,15 @@ export default function VrStage() {
         visuals.rightArm.rotation.z = offering ? -0.38 : 0.12;
         visuals.chest.scale.setScalar(1 + Math.max(0, pulse) * 0.08);
         visuals.halo.rotation.z = time * 0.00012;
-        const headsetPosition = new THREE.Vector3();
-        viewerPoseCamera(renderer.xr.getCamera()).getWorldPosition(headsetPosition);
-        runtime.avatar.lookAt(headsetPosition.x, runtime.avatar.position.y, headsetPosition.z);
+      }
+      if (runtime.panel) {
+        const headsetPosition = viewerPoseCamera(renderer.xr.getCamera())
+          .getWorldPosition(new THREE.Vector3());
+        const facingTarget = horizontalBillboardTarget(runtime.panel.position, headsetPosition);
+        const target = facingQuaternion(runtime.panel.position, new THREE.Vector3(
+          facingTarget.x, facingTarget.y, facingTarget.z,
+        ));
+        runtime.panel.quaternion.slerp(target, 1 - Math.exp(-PANEL_FACING_DAMPING * dt));
       }
       if (currentStage) {
         const headset = viewerPoseCamera(renderer.xr.getCamera());
@@ -750,12 +932,14 @@ export default function VrStage() {
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
       runtimeRef.current = null;
     };
-  }, [xrSession]);
+  }, [xrSession, selectionHighlightEnabled]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime || !stage) return;
+    let disposed = false;
     const { furniture, scene } = runtime;
+    runtime.hoveredSelectable = null;
     while (furniture.children.length) {
       const child = furniture.children[furniture.children.length - 1];
       furniture.remove(child);
@@ -779,29 +963,57 @@ export default function VrStage() {
         disposeObject(child);
       });
     }
-    const loader = new THREE.TextureLoader();
+    const textureLoader = new THREE.TextureLoader();
+    const warnUnavailable = (key: string, message: string) => {
+      if (runtime.textureWarnings.has(key)) return;
+      runtime.textureWarnings.add(key);
+      setVrWarning(message);
+      if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
+      warningTimerRef.current = window.setTimeout(() => {
+        setVrWarning(null);
+        warningTimerRef.current = null;
+      }, 3000);
+    };
     runtime.collisionNodes = stage.nodes.filter((node) => node.type !== "prop" || !propStates[node.id]);
     stage.nodes.filter((node) => node.type === "furniture" || node.type === "prop").forEach((node) => {
+      const root = new THREE.Group();
+      const position = documentToScene(stage, node.x, node.y);
+      root.position.set(position.x, furnitureCenterSceneY(node.elevation), position.z);
+      root.rotation.y = THREE.MathUtils.degToRad(node.yaw || 0);
+      root.userData.node = node;
+
       const solid = new THREE.MeshStandardMaterial({
         color: node.color, roughness: 0.64, metalness: 0.035,
       });
       const materials: THREE.Material[] = Array.from({ length: 6 }, () => solid.clone());
       solid.dispose();
-      const mesh = new THREE.Mesh(
+      const fallback = new THREE.Mesh(
         new THREE.BoxGeometry(node.width * SCALE, node.height * SCALE, node.depth * SCALE),
         materials,
       );
-      const position = documentToScene(stage, node.x, node.y);
-      mesh.position.set(position.x, furnitureCenterSceneY(node.elevation), position.z);
-      mesh.rotation.y = THREE.MathUtils.degToRad(node.yaw || 0);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.userData.node = node;
+      fallback.castShadow = true;
+      fallback.receiveShadow = true;
+      fallback.userData.node = node;
+      root.add(fallback);
+
+      const asset = node.type === "furniture" ? furnitureModelAsset(node.id) : undefined;
+      const decalRoot = new THREE.Group();
+      decalRoot.userData.node = node;
+      root.add(decalRoot);
+
+      const trimModelDecals = () => {
+        [...decalRoot.children].forEach((child) => {
+          if (asset?.keepFrontTexture && child.userData.decalFace === "-z") return;
+          decalRoot.remove(child);
+          disposeObject(child);
+        });
+      };
+
       if (node.texture?.src) {
-        loader.load(
+        textureLoader.load(
           node.texture.src,
           (texture) => {
-            if (mesh.parent !== furniture) {
+            if (disposed || !root.parent) {
               texture.dispose();
               return;
             }
@@ -814,11 +1026,16 @@ export default function VrStage() {
               node,
               { width: image.width || 1, height: image.height || 1 },
             );
-            layouts.forEach((layout) => {
+            const visibleLayouts = root.userData.modelLoaded
+              ? layouts.filter((layout) => asset?.keepFrontTexture && layout.face === "-z")
+              : layouts;
+            visibleLayouts.forEach((layout) => {
+              const decalTexture = texture.clone();
+              decalTexture.needsUpdate = true;
               const decal = new THREE.Mesh(
                 new THREE.PlaneGeometry(layout.width * SCALE, layout.height * SCALE),
                 new THREE.MeshStandardMaterial({
-                  map: texture,
+                  map: decalTexture,
                   transparent: true,
                   roughness: 0.55,
                   side: THREE.DoubleSide,
@@ -829,36 +1046,88 @@ export default function VrStage() {
               decal.rotation.y = layout.rotationY;
               decal.renderOrder = 1;
               decal.userData.node = node;
-              mesh.add(decal);
+              decal.userData.decalFace = layout.face;
+              decalRoot.add(decal);
             });
+            texture.dispose();
           },
           undefined,
           () => {
-            if (runtime.textureWarnings.has(node.id)) return;
-            runtime.textureWarnings.add(node.id);
-            setVrWarning(`Texture unavailable: ${node.label || node.id}`);
-            if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
-            warningTimerRef.current = window.setTimeout(() => {
-              setVrWarning(null);
-              warningTimerRef.current = null;
-            }, 3000);
+            warnUnavailable(
+              `texture:${node.id}`,
+              `Texture unavailable: ${node.label || node.id}`,
+            );
           },
         );
       }
       const edge = new THREE.LineSegments(
-        new THREE.EdgesGeometry(mesh.geometry, 24),
+        new THREE.EdgesGeometry(fallback.geometry, 24),
         new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 }),
       );
-      mesh.add(edge);
-      mesh.traverse((child) => { child.userData.node = node; });
+      edge.raycast = () => undefined;
+      root.add(edge);
+      root.userData.selectionOutline = edge;
+      if (node.type === "furniture") {
+        const proxy = selectionProxyDimensions(node);
+        const selectionProxy = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            proxy.width,
+            proxy.height,
+            proxy.depth,
+          ),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+        );
+        selectionProxy.userData.node = node;
+        selectionProxy.userData.selectionProxy = true;
+        root.add(selectionProxy);
+      }
+      root.traverse((child) => { child.userData.node = node; });
       const propState = node.type === "prop" ? propStates[node.id] : undefined;
       if (propState && runtime.avatar) {
-        mesh.position.set(0.42, propState === "offered" ? 0.92 : 0.74, 0.28);
-        mesh.rotation.y = 0;
-        mesh.userData.offeredProp = propState === "offered";
-        runtime.avatar.add(mesh);
+        root.position.set(0.42, propState === "offered" ? 0.92 : 0.74, 0.28);
+        root.rotation.y = 0;
+        root.userData.offeredProp = propState === "offered";
+        runtime.avatar.add(root);
       } else {
-        furniture.add(mesh);
+        furniture.add(root);
+      }
+
+      if (asset) {
+        void loadFurnitureModel(asset).then((model) => {
+          if (disposed || !root.parent) {
+            disposeObject(model);
+            return;
+          }
+          model.rotation.y = asset.rotationY || 0;
+          const visual = new THREE.Group();
+          visual.add(model);
+          const fitted = fitFurnitureModel(visual, {
+            width: node.width * SCALE,
+            height: node.height * SCALE,
+            depth: node.depth * SCALE,
+          });
+          if (!fitted) {
+            disposeObject(visual);
+            warnUnavailable(
+              `model:${node.id}`,
+              `Model unavailable: ${node.label || node.id}`,
+            );
+            return;
+          }
+          visual.userData.node = node;
+          visual.traverse((child) => { child.userData.node = node; });
+          root.userData.modelLoaded = true;
+          trimModelDecals();
+          root.remove(fallback);
+          disposeObject(fallback);
+          root.add(visual);
+        }).catch(() => {
+          if (disposed || !root.parent) return;
+          warnUnavailable(
+            `model:${node.id}`,
+            `Model unavailable: ${node.label || node.id}`,
+          );
+        });
       }
     });
 
@@ -875,6 +1144,7 @@ export default function VrStage() {
     floor.receiveShadow = true;
     furniture.add(floor);
     const grid = new THREE.GridHelper(roomWidth, 24, 0xffffff, 0xffffff);
+    grid.raycast = () => undefined;
     grid.scale.z = roomDepth / roomWidth;
     grid.position.y = 0.004;
     const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
@@ -922,14 +1192,39 @@ export default function VrStage() {
     if (avatarNode) {
       if (!runtime.avatar) {
         runtime.avatar = createSpatialAvatar(avatarNode);
+        runtime.avatar.userData.positionInitialized = false;
         scene.add(runtime.avatar);
       }
       const target = documentToScene(stage, avatarNode.x, avatarNode.y);
-      if (runtime.avatar.position.lengthSq() === 0) runtime.avatar.position.copy(target);
-      else if (!runtime.avatar.position.equals(target)) {
+      if (runtime.avatar.userData.positionInitialized !== true) {
+        runtime.avatar.position.copy(target);
+        runtime.avatar.userData.positionInitialized = true;
+      }
+      else if (
+        motionPlan &&
+        runtime.avatar.userData.motionSequence !== motionPlan.sequence &&
+        Math.abs(motionPlan.to.x - avatarNode.x) < 0.01 &&
+        Math.abs(motionPlan.to.y - avatarNode.y) < 0.01
+      ) {
+        const fromScene = runtime.avatar.position.clone();
+        const walkQuaternion = facingQuaternion(fromScene, target);
+        const finalFaceScene = motionPlan.finalFacePoint
+          ? documentToScene(stage, motionPlan.finalFacePoint.x, motionPlan.finalFacePoint.y)
+          : null;
+        runtime.avatar.userData.motionSequence = motionPlan.sequence;
         runtime.avatar.userData.motion = {
-          from: runtime.avatar.position.clone(), to: target, start: performance.now(), duration: motionDurationMs,
-        };
+          ...motionPlan,
+          startedAt: performance.now(),
+          fromScene,
+          toScene: target,
+          fromQuaternion: runtime.avatar.quaternion.clone(),
+          walkQuaternion,
+          finalQuaternion: finalFaceScene
+            ? facingQuaternion(target, finalFaceScene)
+            : walkQuaternion.clone(),
+        } satisfies AvatarMotionRuntime;
+      } else if (!runtime.avatar.userData.motion && !runtime.avatar.position.equals(target)) {
+        runtime.avatar.position.copy(target);
       }
       runtime.avatar.userData.pose = avatarNode.pose;
     }
@@ -949,7 +1244,8 @@ export default function VrStage() {
       }
       runtime.rig.userData.spawned = true;
     }
-  }, [stage, motionDurationMs, propStates]);
+    return () => { disposed = true; };
+  }, [stage, motionPlan, propStates]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -974,6 +1270,32 @@ export default function VrStage() {
         new THREE.MeshBasicMaterial({ map: canvasTexture(lines, 768, entity.kind === "email_card" ? 504 : 360), transparent: true, side: THREE.DoubleSide }),
       );
       mesh.userData.transient = entity;
+      const edge = new THREE.LineSegments(
+        new THREE.EdgesGeometry(mesh.geometry),
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 }),
+      );
+      edge.raycast = () => undefined;
+      mesh.add(edge);
+      mesh.userData.selectionOutline = edge;
+      const closeX = entity.kind === "email_card" ? 0.25 : 0.52;
+      const closeY = entity.kind === "email_card" ? 0.14 : 0.23;
+      const closeButton = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.12, 0.12),
+        new THREE.MeshBasicMaterial({
+          map: canvasTexture(["×"], 128, 128), transparent: true, depthTest: false,
+        }),
+      );
+      closeButton.position.set(closeX, closeY, 0.012);
+      closeButton.renderOrder = 3;
+      closeButton.userData.transientClose = entity.id;
+      mesh.add(closeButton);
+      const closeHitTarget = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.24, 0.22),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+      );
+      closeHitTarget.position.set(closeX, closeY, 0.018);
+      closeHitTarget.userData.transientClose = entity.id;
+      mesh.add(closeHitTarget);
       if ((entity.state === "held_by_agent" || entity.state === "offered") && runtime.avatar) {
         mesh.position.set(0.42, entity.state === "offered" ? 0.92 : 0.74, 0.28);
         mesh.rotation.y = Math.PI;

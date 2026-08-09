@@ -1,7 +1,7 @@
 """Projecting the screen and VR scene documents into one semantic world.
 
 Two renderers draw this room. The 2D stage is a 960x540 picture with `width`
-and `height` in screen pixels; the VR stage is a 960x540 floor with `depth`,
+and `height` in screen pixels; the VR stage is a 1920x1080 floor with `depth`,
 `height`, and `elevation` in the same units. They share ids, labels, and a
 floor plane, and they disagree about everything above it — the screen document
 has no vertical axis at all.

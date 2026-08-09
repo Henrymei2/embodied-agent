@@ -23,7 +23,7 @@ from typing import Any
 
 DEFAULT_CONF_UID = "mao_pro_001"
 DEFAULT_BACKEND_URL = "http://localhost:12393"
-ACTION_TIMEOUT_SECONDS = 15.0
+ACTION_TIMEOUT_SECONDS = 30.0
 
 
 def get_conf_uid() -> str:

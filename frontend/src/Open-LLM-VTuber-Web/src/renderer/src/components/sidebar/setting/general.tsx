@@ -83,6 +83,12 @@ function General({ onSave, onCancel }: GeneralProps): JSX.Element {
         onChange={setShowSubtitle}
       />
 
+      <SwitchField
+        label={t("settings.general.vrSelectionHighlight")}
+        checked={settings.vrSelectionHighlightEnabled}
+        onChange={(value) => handleSettingChange("vrSelectionHighlightEnabled", value)}
+      />
+
       {!settings.useCameraBackground && (
         <>
           <SelectField

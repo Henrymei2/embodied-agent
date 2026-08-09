@@ -15,7 +15,7 @@ from ..vr_stage_state_manager import docking_point
 
 IdlePosture = Literal["standing", "sitting"]
 _SEATED_OBJECT_IDS = frozenset({"sofa", "reading_chair"})
-IDLE_RELOCATION_TIMEOUT_SECONDS = 15.0
+IDLE_RELOCATION_TIMEOUT_SECONDS = 30.0
 MAX_IDLE_SCENE_OBJECTS = 128
 
 

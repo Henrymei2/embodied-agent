@@ -196,6 +196,7 @@ async def move_to(target: str) -> str:
     ok, error, _result = await _post_frontend_action_result(
         "move_to",
         {
+            "target": destination.id,
             "x": final_position.x,
             "y": final_position.y,
             "waypoints": [{"x": point.x, "y": point.y} for point in path],

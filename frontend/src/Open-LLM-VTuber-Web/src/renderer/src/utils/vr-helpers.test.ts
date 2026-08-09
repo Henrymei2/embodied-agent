@@ -7,16 +7,23 @@ import {
   furnitureDecalLayouts,
   browserEndpoints,
   headRelativeDelta,
+  horizontalBillboardTarget,
   inputSourcesByHand,
   isViewerPositionClear,
   pointInsideAabb,
+  preferPhysicalVrRayHits,
+  isRayGrabbableNode,
+  nextEmailPage,
+  parseVrSelectionHighlight,
   pressedEdge,
   questLocomotionStick,
   rescaleThumbstick,
   selectVrRayHit,
+  selectionProxyDimensions,
   selectDockingPoint,
   selectViewerSpawn,
   snapTurnStep,
+  transientTriggerBehavior,
   validateVrStageShape,
   viewerForwardFromPose,
   viewerPoseCamera,
@@ -24,6 +31,13 @@ import {
 } from "./vr-helpers";
 
 describe("VR spatial helpers", () => {
+  it("defaults VR selection highlighting on and parses a persisted opt-out", () => {
+    expect(parseVrSelectionHighlight(null)).toBe(true);
+    expect(parseVrSelectionHighlight("true")).toBe(true);
+    expect(parseVrSelectionHighlight("false")).toBe(false);
+    expect(parseVrSelectionHighlight("not-json")).toBe(true);
+  });
+
   it("keeps captions within a compact headset-safe line budget", () => {
     expect(clampCaptionText("A concise spatial caption that stays below the companion", 20, 2)).toEqual([
       "A concise spatial",
@@ -44,7 +58,7 @@ describe("VR spatial helpers", () => {
   it("rejects malformed or duplicate-node VR documents", () => {
     const avatar = { id: "avatar", type: "avatar", x: 10, y: 10, width: 10, depth: 10, height: 20, elevation: 10, color: "#fff" };
     const valid = {
-      version: 2,
+      version: 3,
       mode: "vr",
       room: { width: 100, depth: 100, height: 100, floor_color: "#fff", wall_color: "#fff" },
       world: { units_per_meter: 100, reach_ceiling: 220, move_speed: 400 },
@@ -93,13 +107,31 @@ describe("Quest controller helpers", () => {
     kind,
   });
 
-  it("accepts only nearest hits in the headset's forward hemisphere", () => {
+  it("accepts only nearest hits in the active pointing ray's forward hemisphere", () => {
     const viewer = { x: 0, y: 1.6, z: 0 };
     const forward = { x: 0, y: -0.4, z: -1 };
 
     expect(selectVrRayHit([hit(2, 0, -2, "front")], viewer, forward)?.kind).toBe("front");
     expect(selectVrRayHit([hit(2, 0, 2, "behind")], viewer, forward)).toBeNull();
     expect(selectVrRayHit([hit(2, 2, 0, "side")], viewer, forward)?.kind).toBe("side");
+  });
+
+  it("keeps selection valid after the user turns around", () => {
+    const controller = { x: 0, y: 1.4, z: 0 };
+    expect(selectVrRayHit(
+      [hit(2, 0, 2, "opposite-wall")],
+      controller,
+      { x: 0, y: 0, z: 1 },
+    )?.kind).toBe("opposite-wall");
+  });
+
+  it("lets real grabbable geometry take precedence over selection proxies", () => {
+    const proxy = { distance: 1, object: { userData: { selectionProxy: true } } };
+    const prop = { distance: 1.1, object: { userData: {} } };
+    expect(preferPhysicalVrRayHits([proxy, prop])).toEqual([prop]);
+    expect(preferPhysicalVrRayHits([proxy])).toEqual([proxy]);
+    expect(isRayGrabbableNode({ type: "prop", interaction: { grabbable: true } })).toBe(true);
+    expect(isRayGrabbableNode({ type: "furniture", interaction: { grabbable: true } })).toBe(false);
   });
 
   it("limits selection to three metres", () => {
@@ -209,6 +241,29 @@ describe("Quest controller helpers", () => {
 });
 
 describe("VR furniture presentation helpers", () => {
+  it("keeps furniture panels level while targeting the viewer", () => {
+    expect(horizontalBillboardTarget(
+      { x: 1, y: 1.4, z: 2 },
+      { x: 5, y: 2.1, z: -3 },
+    )).toEqual({ x: 5, y: 1.4, z: -3 });
+  });
+
+  it("uses explicit close controls and reserves body triggers for email paging", () => {
+    expect(transientTriggerBehavior("panel")).toBe("none");
+    expect(transientTriggerBehavior("email_card", "")).toBe("none");
+    expect(transientTriggerBehavior("email_card", "message body")).toBe("page");
+    expect(nextEmailPage(0, 1601)).toBe(1);
+    expect(nextEmailPage(3, 1601)).toBe(0);
+  });
+
+  it("adds fifteen centimetres of ray-selection tolerance on every face", () => {
+    expect(selectionProxyDimensions({ width: 100, height: 80, depth: 40 })).toEqual({
+      width: 1.3,
+      height: 1.1,
+      depth: 0.7,
+    });
+  });
+
   it("uses elevation as the furniture centre without adding half-height", () => {
     expect(furnitureCenterSceneY(165)).toBe(1.65);
   });

@@ -5,12 +5,15 @@ import { defaultBaseUrl, defaultWsUrl } from '@/context/websocket-context';
 import { useSubtitle } from '@/context/subtitle-context';
 import { useCamera } from '@/context/camera-context';
 import i18n from 'i18next';
+import {
+  loadVrSelectionHighlight,
+  VR_SELECTION_HIGHLIGHT_KEY,
+} from '@/utils/vr-helpers';
 
 export const IMAGE_COMPRESSION_QUALITY_KEY = 'appImageCompressionQuality';
 export const DEFAULT_IMAGE_COMPRESSION_QUALITY = 0.8;
 export const IMAGE_MAX_WIDTH_KEY = 'appImageMaxWidth';
 export const DEFAULT_IMAGE_MAX_WIDTH = 0;
-
 interface GeneralSettings {
   language: string[]
   customBgUrl: string
@@ -22,6 +25,7 @@ interface GeneralSettings {
   showSubtitle: boolean
   imageCompressionQuality: number;
   imageMaxWidth: number;
+  vrSelectionHighlightEnabled: boolean;
 }
 
 interface UseGeneralSettingsProps {
@@ -89,6 +93,7 @@ export const useGeneralSettings = ({
     showSubtitle,
     imageCompressionQuality: loadInitialCompressionQuality(),
     imageMaxWidth: loadInitialImageMaxWidth(),
+    vrSelectionHighlightEnabled: loadVrSelectionHighlight(),
   };
 
   const [settings, setSettings] = useState<GeneralSettings>(initialSettings);
@@ -112,6 +117,7 @@ export const useGeneralSettings = ({
     }
     localStorage.setItem(IMAGE_COMPRESSION_QUALITY_KEY, settings.imageCompressionQuality.toString());
     localStorage.setItem(IMAGE_MAX_WIDTH_KEY, settings.imageMaxWidth.toString());
+    localStorage.setItem(VR_SELECTION_HIGHLIGHT_KEY, JSON.stringify(settings.vrSelectionHighlightEnabled));
   }, [settings, bgUrlContext, baseUrl, onWsUrlChange, onBaseUrlChange, setShowSubtitle]);
 
   // Add save/cancel effect

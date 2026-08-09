@@ -1,6 +1,6 @@
 """Persistent Meta Quest VR scene state.
 
-VR deliberately has its own v2 document and file.  The normal 2D stage remains
+VR deliberately has its own v3 document and file.  The normal 2D stage remains
 v9 and never migrates into, or is overwritten by, this store.
 """
 
@@ -38,29 +38,31 @@ from .world_model import (
     world_from_stage,
 )
 
-VR_STAGE_VERSION = 2
-VR_THEME_REVISION = "quest-room-v2"
+VR_STAGE_VERSION = 3
+VR_THEME_REVISION = "quest-room-v3"
 VR_STAGE_FILENAME = "vr_stage.json"
 AGENT_CLEARANCE = 10.0
 
 # x, y, width, depth, height, elevation, color
 _VR_LAYOUT: dict[str, tuple[float, float, float, float, float, float, str]] = {
-    "window": (120, 8, 185, 16, 155, 165, "#9cc9e8"),
-    "todo_list": (300, 8, 105, 12, 125, 165, "#d9952f"),
-    "calendar": (480, 8, 110, 12, 130, 165, "#2c9b8e"),
-    "design_board": (660, 8, 120, 12, 110, 160, "#596273"),
-    "mailbox": (840, 12, 96, 24, 88, 140, "#596579"),
-    "hourglass": (120, 200, 65, 20, 90, 45, "#b77b25"),
-    "drawing_board": (300, 200, 115, 12, 125, 100, "#6366f1"),
-    "tool_rack": (480, 200, 120, 35, 100, 50, "#565b65"),
-    "archive_shelf": (660, 200, 125, 55, 170, 85, "#87532f"),
-    "bookshelf": (840, 200, 120, 45, 190, 95, "#765035"),
-    "computer": (120, 430, 230, 110, 140, 70, "#4543a8"),
-    "reading_chair": (300, 430, 120, 105, 100, 50, "#805d43"),
-    "bed": (480, 430, 210, 150, 65, 32.5, "#a84e65"),
-    "sofa": (690, 430, 190, 105, 85, 42.5, "#58647a"),
-    "writing_desk": (870, 430, 150, 70, 85, 42.5, "#74513c"),
-    "avatar": (35, 280, 70, 20, 92, 46, "#2563eb"),
+    # North wall, left to right. Each footprint is flush with y=0.
+    "window": (173, 8, 185, 16, 155, 165, "#9cc9e8"),
+    "todo_list": (384, 6, 105, 12, 125, 165, "#d9952f"),
+    "calendar": (557, 6, 110, 12, 130, 165, "#2c9b8e"),
+    "design_board": (738, 6, 120, 12, 110, 160, "#596273"),
+    "mailbox": (912, 12, 96, 24, 88, 140, "#596579"),
+    "hourglass": (1064, 10, 65, 20, 90, 45, "#b77b25"),
+    "drawing_board": (1215, 6, 115, 12, 125, 100, "#6366f1"),
+    "tool_rack": (1398, 17.5, 120, 35, 100, 50, "#565b65"),
+    "archive_shelf": (1587, 27.5, 125, 55, 170, 85, "#87532f"),
+    "bookshelf": (1775, 22.5, 120, 45, 190, 95, "#765035"),
+    # South wall, left to right. Each footprint is flush with y=1080.
+    "computer": (265, 1025, 230, 110, 140, 70, "#4543a8"),
+    "reading_chair": (620, 1027.5, 120, 105, 100, 50, "#805d43"),
+    "bed": (965, 1005, 210, 150, 65, 32.5, "#a84e65"),
+    "sofa": (1345, 1027.5, 190, 105, 85, 42.5, "#58647a"),
+    "writing_desk": (1695, 1045, 150, 70, 85, 42.5, "#74513c"),
+    "avatar": (960, 540, 70, 20, 92, 46, "#2563eb"),
 }
 
 
@@ -250,8 +252,8 @@ def get_default_vr_stage(conf_uid: str | None = None) -> dict[str, Any]:
         "version": VR_STAGE_VERSION,
         "mode": "vr",
         "room": {
-            "width": 960.0,
-            "depth": 540.0,
+            "width": 1920.0,
+            "depth": 1080.0,
             "height": 280.0,
             "floor_color": "#b99468",
             "wall_color": "#ead7bd",
@@ -259,7 +261,7 @@ def get_default_vr_stage(conf_uid: str | None = None) -> dict[str, Any]:
         "world": {
             "units_per_meter": 100.0,
             "reach_ceiling": REACH_CEILING,
-            "move_speed": 400.0,
+            "move_speed": 200.0,
         },
         "nodes": nodes,
         "metadata": {
@@ -691,10 +693,15 @@ def load_vr_stage_state(conf_uid: str) -> dict[str, Any]:
     try:
         with path.open("r", encoding="utf-8") as handle:
             stage = json.load(handle)
-        if isinstance(stage, dict) and stage.get("version") == 1:
-            stage = copy.deepcopy(stage)
-            stage["version"] = VR_STAGE_VERSION
-            stage.setdefault("metadata", {})["updated_by"] = "vr_v1_to_v2_migration"
+        if isinstance(stage, dict) and stage.get("version") in {1, 2}:
+            reset = get_default_vr_stage(conf_uid)
+            reset["metadata"]["updated_by"] = "vr_v3_room_reset"
+            saved, errors = save_vr_stage_state(
+                conf_uid, reset, updated_by="vr_v3_room_reset"
+            )
+            if not saved:
+                logger.warning(f"Failed to persist VR v3 room reset: {errors}")
+            return reset
         valid, errors = validate_vr_stage(stage)
         if valid:
             return stage

@@ -46,7 +46,7 @@ export interface VrStageNode {
 }
 
 export interface VrStageDocument {
-  version: 2;
+  version: 3;
   mode: "vr";
   room: {
     width: number;
@@ -93,9 +93,20 @@ export interface VrUserPose {
 
 export type VrPropInteractionState = "held_by_agent" | "offered";
 
+export interface VrAvatarMotionPlan {
+  sequence: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  turnDurationMs: number;
+  walkDurationMs: number;
+  finalTurnDurationMs: number;
+  finalFacePoint?: { x: number; y: number };
+  totalDurationMs: number;
+}
+
 interface VrStageValue {
   stage: VrStageDocument | null;
-  motionDurationMs: number;
+  motionPlan: VrAvatarMotionPlan | null;
   transients: VrTransientEntity[];
   userPose: VrUserPose | null;
   propStates: Record<string, VrPropInteractionState>;
@@ -129,6 +140,33 @@ export function validateVrStage(value: unknown): value is VrStageDocument {
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => (
   Math.hypot(a.x - b.x, a.y - b.y)
 );
+
+export const VR_TURN_DURATION_MS = 600;
+
+export const createVrMotionPlan = (
+  sequence: number,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  moveSpeed: number,
+  finalFacePoint?: { x: number; y: number },
+): VrAvatarMotionPlan => {
+  const travelDistance = distance(from, to);
+  const walkDurationMs = travelDistance > 0
+    ? Math.round(Math.max(250, travelDistance / moveSpeed * 1000))
+    : 0;
+  const turnDurationMs = walkDurationMs > 0 ? VR_TURN_DURATION_MS : 0;
+  const finalTurnDurationMs = finalFacePoint ? VR_TURN_DURATION_MS : 0;
+  return {
+    sequence,
+    from: { x: from.x, y: from.y },
+    to: { x: to.x, y: to.y },
+    turnDurationMs,
+    walkDurationMs,
+    finalTurnDurationMs,
+    finalFacePoint,
+    totalDurationMs: turnDurationMs + walkDurationMs + finalTurnDurationMs,
+  };
+};
 
 export const endpointError = (stage: VrStageDocument, x: number, y: number) => {
   const avatar = stage.nodes.find((node) => node.id === "avatar");
@@ -197,7 +235,7 @@ const mergePatch = (stage: VrStageDocument, patch: Record<string, unknown>): VrS
 
 export function VrStageProvider({ children }: { children: React.ReactNode }) {
   const [stage, setStage] = useState<VrStageDocument | null>(null);
-  const [motionDurationMs, setMotionDurationMs] = useState(900);
+  const [motionPlan, setMotionPlan] = useState<VrAvatarMotionPlan | null>(null);
   const [transients, setTransients] = useState<VrTransientEntity[]>([]);
   const [userPose, setUserPoseState] = useState<VrUserPose | null>(null);
   const [propStates, setPropStates] = useState<Record<string, VrPropInteractionState>>({});
@@ -206,6 +244,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
   const transientRef = useRef<VrTransientEntity[]>([]);
   const userPoseRef = useRef<VrUserPose | null>(null);
   const propStateRef = useRef<Record<string, VrPropInteractionState>>({});
+  const motionSequenceRef = useRef(0);
 
   const setUserPose = useCallback((pose: VrUserPose) => {
     userPoseRef.current = pose;
@@ -257,7 +296,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
         request_id, action, ok: true,
         capabilities: {
           actions: ["stage_get_state", "stage_set_state", "stage_patch_state", "stage_reset_state", "stage_list_capabilities", "get_object_position", "move_to", "list_objects", "get_scene_status", "list_physical_entities", "show_vr_panel", "materialize_email", "pick_up_entity", "put_down_entity", "offer_entity", "dismiss_entity", "get_user_location", "move_to_user"],
-          node_types: ["avatar", "furniture", "prop"], version: 2,
+          node_types: ["avatar", "furniture", "prop"], version: 3,
           texture: "front-face texture", spritesheet: "avatar billboard spritesheet",
           furniture_window: "in-world panel", pose: "standing | sitting",
           world: "grounded VR world", move: "waypoint movement",
@@ -274,19 +313,31 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
     if (action === "move_to") {
       const path = parseVrMovePath(args);
       if (!path.length) return { request_id, action, ok: false, error: "move_to requires a destination." };
+      const target = typeof args.target === "string"
+        ? current.nodes.find((node) => node.id === args.target || node.label === args.target)
+        : undefined;
       let elapsed = 0;
-      for (const point of path) {
+      for (const [index, point] of path.entries()) {
         const error = endpointError(stageRef.current || current, point.x, point.y);
         if (error) return { request_id, action, ok: false, error, state: stageRef.current || current };
         const active = stageRef.current || current;
         const avatar = active.nodes.find((node) => node.id === "avatar")!;
-        const duration = Math.round(Math.min(1800, Math.max(250, distance(avatar, point) / active.world.move_speed * 1000)));
-        setMotionDurationMs(duration);
+        motionSequenceRef.current += 1;
+        const plan = createVrMotionPlan(
+          motionSequenceRef.current,
+          avatar,
+          point,
+          active.world.move_speed,
+          index === path.length - 1 && target
+            ? { x: target.x, y: target.y }
+            : undefined,
+        );
+        setMotionPlan(plan);
         const next = mergePatch(active, { nodes: [{ id: "avatar", x: point.x, y: point.y, pose: undefined }] });
         const result = commit(next, action, request_id);
         if (!result.ok) return result;
-        elapsed += duration;
-        await new Promise<void>((resolve) => window.setTimeout(resolve, duration));
+        elapsed += plan.totalDurationMs;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, plan.totalDurationMs));
       }
       const finalPoint = path[path.length - 1];
       return successfulVrMoveResult(request_id, stageRef.current || current, elapsed, finalPoint);
@@ -419,12 +470,19 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
         const target = candidates.find((point) => !endpointError(active, point.x, point.y));
         if (!target) return { request_id, action, ok: false, error: "No safe conversational position exists near the user." };
         const avatar = active.nodes.find((node) => node.id === "avatar")!;
-        const duration = Math.round(Math.min(1800, Math.max(250, distance(avatar, target) / active.world.move_speed * 1000)));
-        setMotionDurationMs(duration);
+        motionSequenceRef.current += 1;
+        const plan = createVrMotionPlan(
+          motionSequenceRef.current,
+          avatar,
+          target,
+          active.world.move_speed,
+          { x: pose.x, y: pose.y },
+        );
+        setMotionPlan(plan);
         result = commit(mergePatch(active, { nodes: [{ id: "avatar", ...target, pose: undefined }] }), action, request_id);
         if (!result.ok) return result;
-        await new Promise<void>((resolve) => window.setTimeout(resolve, duration));
-        totalDuration += duration;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, plan.totalDurationMs));
+        totalDuration += plan.totalDurationMs;
         lastTarget = target;
         const latest = freshPose();
         if (!latest || distance(latest, pose) <= 75) break;
@@ -436,7 +494,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
     return { request_id, action, ok: false, error: `Unknown frontend action: ${String(action)}` };
   }, [commit, removeTransient, updatePropState, updateTransient]);
 
-  const value = useMemo(() => ({ stage, motionDurationMs, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction }), [stage, motionDurationMs, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction]);
+  const value = useMemo(() => ({ stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction }), [stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction]);
   return <VrStageContext.Provider value={value}>{children}</VrStageContext.Provider>;
 }
 

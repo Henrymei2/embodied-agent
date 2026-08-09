@@ -62,7 +62,7 @@ including what that evidence cannot settle on its own.
   backend from the stored stage rather than from client text.
 - Stage state synchronizes on connection and persists after live
   frontend actions.
-- VR schema v2 adds persistent, near-grabbable props with authoritative floor
+- VR schema v3 adds the expanded wall-lined room plus persistent, near-grabbable props with authoritative floor
   and furniture-top snapping. Props participate in navigation but are excluded
   from capability authorization.
 - Session-only email cards and panels can be independently materialized,

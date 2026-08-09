@@ -1160,7 +1160,7 @@ def init_frontend_action_routes() -> APIRouter:
         client_uid = payload.get("client_uid")
         conf_uid = payload.get("conf_uid")
         try:
-            timeout = float(payload.get("timeout", 15.0))
+            timeout = float(payload.get("timeout", 30.0))
         except (TypeError, ValueError):
             return JSONResponse(
                 {"ok": False, "result": {}, "error": "timeout must be a number"},

@@ -93,7 +93,7 @@ object in place.
 | Right thumbstick axis 2 | 30-degree snap turn |
 | Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
 | Right primary trigger / `select` | Select furniture or an in-world panel control |
-| Right `squeezestart` / `squeezeend` | Grab or release a prop/card/panel within 20 cm |
+| Right `squeezestart` / `squeezeend` | Grab or release a nearby prop, or a ray-targeted card/panel within 3 m |
 
 Quest 3 is the only supported controller profile. A left controller without
 `buttons[4]`, or either controller without axes 2/3, must produce a visible
@@ -149,9 +149,12 @@ Selecting furniture with the right trigger is a local UI action: it toggles the
 furniture panel and does not send an `object-interaction` conversation trigger
 to the agent. Furniture without a configured `uiWindow` still opens a generic
 panel naming the object and stating that no additional data is available. A
-panel is positioned above or beside its furniture, faces the headset around
-the vertical axis, and closes when the furniture or its Close control is
-selected again. Only one panel may be open.
+panel is positioned above or beside its furniture and smoothly tracks the
+headset around the vertical axis. It closes when the furniture or its enlarged
+Close control is selected again. Only one panel may be open. Furniture has a
+15 cm selection-only proxy on every face; it does not change collision or
+semantic reach. The hovered outline is enabled by default and can be disabled
+in General settings.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,
@@ -233,7 +236,7 @@ The VR document is a separate schema, not stage v10:
 type VrNodeType = "furniture" | "avatar" | "prop";
 
 interface VrStageDocument {
-  version: 2;
+  version: 3;
   mode: "vr";
   room: {
     width: number;
@@ -296,15 +299,16 @@ Store the document at `stage_state/<sanitized-conf_uid>/vr_stage.json`, beside
 the current `stage.json`. Use the existing path sanitization, atomic write, and
 metadata conventions. A missing file creates the fixed default below. A
 malformed or unsupported-version file logs the validation errors and loads the
-default without overwriting the bad file. There is no normal-to-VR migration,
-live synchronization, or shared position field.
+default without overwriting the bad file. Stored v1/v2 rooms are intentionally
+reset once to the fixed v3 room and persisted. There is no normal-to-VR
+migration, live synchronization, or shared position field.
 
 ### 4.2 Validation
 
 Backend and frontend validators enforce the same rules:
 
-- `version === 2`, `mode === "vr"`, and no more than 80 nodes; stored v1 rooms
-  are migrated losslessly on load;
+- `version === 3`, `mode === "vr"`, and no more than 80 nodes; stored v1/v2
+  rooms are reset to the fixed v3 layout on load;
 - finite positive room dimensions, `units_per_meter`, reach ceiling, and move
   speed, with the existing upper bounds where applicable;
 - unique safe IDs and unique effective labels under whitespace normalization
@@ -330,8 +334,8 @@ floor point starts inside a furniture footprint.
 
 ### 4.3 Fixed default
 
-The default room is `960 x 540 x 280` cm, uses `100` units per metre, the
-current `150` reach ceiling, and the current `400` units/second agent speed.
+The default room is `1920 x 1080 x 280` cm, uses `100` units per metre, the
+current `150` reach ceiling, and a `200` units/second agent speed.
 The user rig chooses a collision-safe point 175 cm from the companion, prefers
 the room interior, and faces the companion. It is session-local and is not part
 of the document.
@@ -341,22 +345,22 @@ canonical 2D room. It contains the current stage v9 furniture IDs and avatar:
 
 | ID | x | y | width | depth | height | elevation | Presentation |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `window` | 120 | 8 | 185 | 16 | 155 | 165 | back wall, `window.png` |
-| `todo_list` | 300 | 8 | 105 | 12 | 125 | 165 | back wall, `todo-list.png` |
-| `calendar` | 480 | 8 | 110 | 12 | 130 | 165 | back wall, `calendar.png` |
-| `design_board` | 660 | 8 | 120 | 12 | 110 | 160 | back wall, `design-board.png` |
-| `mailbox` | 840 | 12 | 96 | 24 | 88 | 140 | back wall, mailbox state texture |
-| `hourglass` | 120 | 200 | 65 | 20 | 90 | 45 | shallow floor unit, `hourglass.png` |
-| `drawing_board` | 300 | 200 | 115 | 12 | 125 | 100 | shallow floor unit, solid color |
-| `tool_rack` | 480 | 200 | 120 | 35 | 100 | 50 | shallow floor unit, `tool-rack.png` |
-| `archive_shelf` | 660 | 200 | 125 | 55 | 170 | 85 | floor unit, `archive-shelf.png` |
-| `bookshelf` | 840 | 200 | 120 | 45 | 190 | 95 | floor unit, `bookshelf.png` |
-| `computer` | 120 | 430 | 230 | 110 | 140 | 70 | floor unit, `computer.png` |
-| `reading_chair` | 300 | 430 | 120 | 105 | 100 | 50 | floor unit, `reading-chair.png` |
-| `bed` | 480 | 430 | 210 | 150 | 65 | 32.5 | floor unit, `bed.png` |
-| `sofa` | 690 | 430 | 190 | 105 | 85 | 42.5 | floor unit, `sofa.png` |
-| `writing_desk` | 870 | 430 | 150 | 70 | 85 | 42.5 | floor unit, `writing-desk.png` |
-| `avatar` | 35 | 280 | 70 | 20 | 92 | 46 | billboard, `avatar.png` |
+| `window` | 173 | 8 | 185 | 16 | 155 | 165 | north wall, `window.png` |
+| `todo_list` | 384 | 6 | 105 | 12 | 125 | 165 | north wall, `todo-list.png` |
+| `calendar` | 557 | 6 | 110 | 12 | 130 | 165 | north wall, `calendar.png` |
+| `design_board` | 738 | 6 | 120 | 12 | 110 | 160 | north wall, `design-board.png` |
+| `mailbox` | 912 | 12 | 96 | 24 | 88 | 140 | north wall, mailbox state texture |
+| `hourglass` | 1064 | 10 | 65 | 20 | 90 | 45 | north wall, `hourglass.png` |
+| `drawing_board` | 1215 | 6 | 115 | 12 | 125 | 100 | north wall, solid color |
+| `tool_rack` | 1398 | 17.5 | 120 | 35 | 100 | 50 | north wall, `tool-rack.png` |
+| `archive_shelf` | 1587 | 27.5 | 125 | 55 | 170 | 85 | north wall, `archive-shelf.png` |
+| `bookshelf` | 1775 | 22.5 | 120 | 45 | 190 | 95 | north wall, `bookshelf.png` |
+| `computer` | 265 | 1025 | 230 | 110 | 140 | 70 | south wall, `computer.png` |
+| `reading_chair` | 620 | 1027.5 | 120 | 105 | 100 | 50 | south wall, `reading-chair.png` |
+| `bed` | 965 | 1005 | 210 | 150 | 65 | 32.5 | south wall, `bed.png` |
+| `sofa` | 1345 | 1027.5 | 190 | 105 | 85 | 42.5 | south wall, `sofa.png` |
+| `writing_desk` | 1695 | 1045 | 150 | 70 | 85 | 42.5 | south wall, `writing-desk.png` |
+| `avatar` | 960 | 540 | 70 | 20 | 92 | 46 | companion, `avatar.png` |
 
 Copy labels, interactions, state textures, furniture windows, spritesheet
 animations, and protected-object semantics from the canonical v9 definitions
@@ -478,7 +482,7 @@ Normal mode continues to receive:
 VR mode receives:
 
 ```json
-{"type": "vr-stage-state", "stage": {"version": 2, "mode": "vr"}}
+{"type": "vr-stage-state", "stage": {"version": 3, "mode": "vr"}}
 ```
 
 The VR provider alone handles `vr-stage-state`. When backend validation rejects
@@ -490,7 +494,7 @@ Frontend action names and request/result envelopes remain unchanged. VR
 floor-plane `{x, y}`. Mode-specific `stage_get_state`, `stage_set_state`,
 `stage_patch_state`, `stage_reset_state`, and `stage_list_capabilities` operate
 on `VrStageDocument` for the owning VR client. Capabilities must report
-`mode: "vr"` and schema version 2.
+`mode: "vr"` and schema version 3.
 
 The backend resolves a pending request to its registered owner, looks up that
 owner's stored mode, validates the returned state with that mode's validator,
@@ -508,7 +512,7 @@ least intrusive suitable channel; deterministic code does not choose that
 channel or assume that an offer was accepted.
 
 The right trigger retains ray selection. Right-hand `squeezestart` grabs a prop
-or transient within 20 cm and `squeezeend` releases it. Persistent props are
+within 20 cm or a transient targeted by the 3 m ray; `squeezeend` releases it. Persistent props are
 authoritatively snapped to a furniture top within 12 cm or to the floor,
 uprighted while preserving yaw, and rolled back to the last server state when
 support or collision validation fails. Session-only `panel` and `email_card`

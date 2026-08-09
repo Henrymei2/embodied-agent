@@ -30,6 +30,53 @@ export interface VrRayHitLike {
 }
 
 export const VR_RAY_MAX_DISTANCE = 3;
+export const VR_SELECTION_HIGHLIGHT_KEY = "vrSelectionHighlightEnabled";
+export const DEFAULT_VR_SELECTION_HIGHLIGHT = true;
+
+export function parseVrSelectionHighlight(stored: string | null) {
+  if (stored === null) return DEFAULT_VR_SELECTION_HIGHLIGHT;
+  try {
+    return JSON.parse(stored) === true;
+  } catch (_error) {
+    return DEFAULT_VR_SELECTION_HIGHLIGHT;
+  }
+}
+
+export function loadVrSelectionHighlight() {
+  try {
+    return parseVrSelectionHighlight(localStorage.getItem(VR_SELECTION_HIGHLIGHT_KEY));
+  } catch (_error) {
+    return DEFAULT_VR_SELECTION_HIGHLIGHT;
+  }
+}
+
+export function selectionProxyDimensions(
+  node: { width: number; height: number; depth: number },
+  paddingCm = 15,
+  unitsPerMeter = 100,
+) {
+  return {
+    width: (node.width + paddingCm * 2) / unitsPerMeter,
+    height: (node.height + paddingCm * 2) / unitsPerMeter,
+    depth: (node.depth + paddingCm * 2) / unitsPerMeter,
+  };
+}
+
+export function transientTriggerBehavior(kind: "panel" | "email_card", body?: string) {
+  return kind === "email_card" && Boolean(body) ? "page" as const : "none" as const;
+}
+
+export function nextEmailPage(currentPage: number, bodyLength: number, pageSize = 800) {
+  const pages = Math.max(1, Math.ceil(bodyLength / pageSize));
+  return (currentPage + 1) % (pages + 1);
+}
+
+export function horizontalBillboardTarget(
+  panel: Vector3Like,
+  viewer: Vector3Like,
+): Vector3Like {
+  return { x: viewer.x, y: panel.y, z: viewer.z };
+}
 
 export interface HandedInputSource {
   handedness: string;
@@ -90,8 +137,10 @@ export function viewerForwardFromPose(
 
 /**
  * Resolve the nearest physical ray hit and reject it when it falls outside the
- * headset's forward horizontal hemisphere. Only the nearest surface is ever
- * returned so callers cannot skip an occluder to activate something behind it.
+ * active pointing ray's forward horizontal hemisphere. Callers must provide
+ * the same live origin and direction used for the raycast so physical turns do
+ * not get compared with a stale headset orientation. Only the nearest surface
+ * is ever returned, so callers cannot skip an occluder behind it.
  */
 export function selectVrRayHit<T extends VrRayHitLike>(
   hits: readonly T[],
@@ -115,6 +164,21 @@ export function selectVrRayHit<T extends VrRayHitLike>(
 
   // A zero dot product is the exact side boundary and remains selectable.
   return horizontalDot >= -Number.EPSILON ? nearest : null;
+}
+
+/** Selection proxies enlarge furniture targets but must never occlude real
+ * geometry such as a grabbable prop resting on that furniture. */
+export function preferPhysicalVrRayHits<
+  T extends { object?: { userData?: Record<string, unknown> } },
+>(hits: readonly T[]): readonly T[] {
+  const physical = hits.filter((hit) => hit.object?.userData?.selectionProxy !== true);
+  return physical.length ? physical : hits;
+}
+
+export function isRayGrabbableNode(
+  node: { type?: string; interaction?: { grabbable?: boolean } } | undefined,
+): node is { type: "prop"; interaction: { grabbable: true } } {
+  return node?.type === "prop" && node.interaction?.grabbable === true;
 }
 
 /** Normalize WebXR's xr-standard primary stick into semantic room axes.
@@ -216,7 +280,7 @@ const finite = (value: unknown): value is number => typeof value === "number" &&
 export function validateVrStageShape(value: unknown) {
   if (!value || typeof value !== "object") return false;
   const stage = value as Record<string, unknown>;
-  if (stage.version !== 2 || stage.mode !== "vr" || !stage.room || !stage.world || !Array.isArray(stage.nodes) || stage.nodes.length > 80) return false;
+  if (stage.version !== 3 || stage.mode !== "vr" || !stage.room || !stage.world || !Array.isArray(stage.nodes) || stage.nodes.length > 80) return false;
   const room = stage.room as Record<string, unknown>;
   const world = stage.world as Record<string, unknown>;
   if (![room.width, room.depth, room.height].every(finite) ||
