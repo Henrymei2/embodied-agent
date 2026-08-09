@@ -114,6 +114,7 @@ interface VrStageValue {
   updateTransient: (entity: VrTransientEntity) => void;
   removeTransient: (entityId: string) => void;
   updatePropState: (entityId: string, state: VrPropInteractionState | null) => void;
+  resetSessionEntities: () => void;
   setStageFromServer: (value: unknown) => VrFrontendActionResult;
   handleFrontendAction: (request: FrontendActionRequest) => Promise<VrFrontendActionResult>;
 }
@@ -264,6 +265,12 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
     else delete next[entityId];
     propStateRef.current = next;
     setPropStates(next);
+  }, []);
+  const resetSessionEntities = useCallback(() => {
+    transientRef.current = [];
+    propStateRef.current = {};
+    setTransients([]);
+    setPropStates({});
   }, []);
 
   const commit = useCallback((candidate: unknown, action?: string, requestId?: string): VrFrontendActionResult => {
@@ -494,7 +501,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
     return { request_id, action, ok: false, error: `Unknown frontend action: ${String(action)}` };
   }, [commit, removeTransient, updatePropState, updateTransient]);
 
-  const value = useMemo(() => ({ stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction }), [stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, setStageFromServer, handleFrontendAction]);
+  const value = useMemo(() => ({ stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, resetSessionEntities, setStageFromServer, handleFrontendAction }), [stage, motionPlan, transients, userPose, propStates, setUserPose, updateTransient, removeTransient, updatePropState, resetSessionEntities, setStageFromServer, handleFrontendAction]);
   return <VrStageContext.Provider value={value}>{children}</VrStageContext.Provider>;
 }
 

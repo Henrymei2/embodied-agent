@@ -23,6 +23,10 @@ from src.open_llm_vtuber.google_integration import (
     GoogleIntegrationService,
     calendar_subprocess_settings,
 )
+from src.open_llm_vtuber.demo_scenarios import (
+    record_simulated_write,
+    simulated_fixture,
+)
 from mcp_servers.bridge_client import get_scene_mode, post_frontend_action_result
 
 _MAX_RESULTS = 100
@@ -147,6 +151,16 @@ def search_emails(
 ) -> str:
     """Search Gmail messages using Gmail query syntax."""
     try:
+        fixture = simulated_fixture()
+        if fixture is not None:
+            return json.dumps(
+                {
+                    "messages": [fixture["email"]],
+                    "next_page_token": None,
+                    "simulated": True,
+                },
+                ensure_ascii=False,
+            )
         if isinstance(limit, bool) or not isinstance(limit, int):
             raise ValueError("limit must be an integer")
         kwargs: dict[str, Any] = {
@@ -180,6 +194,9 @@ def search_emails(
 def get_email(message_id: str) -> str:
     """Read one Gmail message, including its bounded text body."""
     try:
+        fixture = simulated_fixture()
+        if fixture is not None and message_id == fixture["email"]["message_id"]:
+            return json.dumps(fixture["email"], ensure_ascii=False)
         message = (
             _messages()
             .get(userId="me", id=_text(message_id, "message_id", 1024), format="full")
@@ -200,12 +217,18 @@ async def materialize_email(message_id: str) -> str:
     if get_scene_mode() != "vr":
         return "Error: email cards are only available in VR mode"
     try:
-        message = (
-            _messages()
-            .get(userId="me", id=_text(message_id, "message_id", 1024), format="full")
-            .execute()
-        )
-        rendered = _serialize(message, True)
+        fixture = simulated_fixture()
+        if fixture is not None and message_id == fixture["email"]["message_id"]:
+            rendered = fixture["email"]
+        else:
+            message = (
+                _messages()
+                .get(
+                    userId="me", id=_text(message_id, "message_id", 1024), format="full"
+                )
+                .execute()
+            )
+            rendered = _serialize(message, True)
         ok, error, result = await post_frontend_action_result(
             "materialize_email",
             {
@@ -218,7 +241,10 @@ async def materialize_email(message_id: str) -> str:
         )
         if not ok:
             return f"Error: could not materialize email: {error}"
-        return str(result.get("summary") or "OK: created a temporary email card at the mailbox.")[:2000]
+        return str(
+            result.get("summary")
+            or "OK: created a temporary email card at the mailbox."
+        )[:2000]
     except (GoogleIntegrationError, HttpError, OSError, TypeError, ValueError) as exc:
         return _error(exc)
 
@@ -229,6 +255,26 @@ def create_email_draft(
 ) -> str:
     """Create an unsent Gmail draft."""
     try:
+        if simulated_fixture() is not None:
+            record = record_simulated_write(
+                "gmail",
+                {
+                    "action": "create_draft",
+                    "to": to,
+                    "subject": subject,
+                    "body": body,
+                    "cc": cc,
+                    "bcc": bcc,
+                },
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "draft_id": record["id"],
+                    "message_id": "",
+                    "simulated": True,
+                }
+            )
         draft = (
             _service()
             .gmail()
@@ -254,6 +300,26 @@ def create_email_draft(
 def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") -> str:
     """Send a new plain-text email through Gmail."""
     try:
+        if simulated_fixture() is not None:
+            record = record_simulated_write(
+                "gmail",
+                {
+                    "action": "send",
+                    "to": to,
+                    "subject": subject,
+                    "body": body,
+                    "cc": cc,
+                    "bcc": bcc,
+                },
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "message_id": record["id"],
+                    "thread_id": "",
+                    "simulated": True,
+                }
+            )
         sent = (
             _messages()
             .send(userId="me", body={"raw": _raw(to, subject, body, cc, bcc)})
@@ -271,6 +337,24 @@ def send_email(to: str, subject: str, body: str, cc: str = "", bcc: str = "") ->
 
 
 def _modify(message_id: str, add: list[str], remove: list[str]) -> str:
+    if simulated_fixture() is not None:
+        record = record_simulated_write(
+            "gmail",
+            {
+                "action": "modify",
+                "message_id": message_id,
+                "add": add,
+                "remove": remove,
+            },
+        )
+        return json.dumps(
+            {
+                "ok": True,
+                "message_id": message_id,
+                "record_id": record["id"],
+                "simulated": True,
+            }
+        )
     message_id = _text(message_id, "message_id", 1024)
     message = (
         _messages()

@@ -92,6 +92,7 @@ object in place.
 | Left thumbstick axes 2/3 | Head-relative continuous locomotion |
 | Right thumbstick axis 2 | 30-degree snap turn |
 | Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
+| Right A, `buttons[4]` | Toggle the camera-relative VR test-scenario menu |
 | Right primary trigger / `select` | Select furniture or an in-world panel control |
 | Right `squeezestart` / `squeezeend` | Grab or release a nearby prop, or a ray-targeted card/panel within 3 m |
 
@@ -130,6 +131,19 @@ Left X toggles the same `startMic`/`stopMic` functions used by the ordinary UI.
 It uses a rising-edge check, follows the persisted `micOn` preference on entry,
 and displays **Microphone on** or **Microphone off** for 1.5 seconds. It must
 not overwrite the preference merely because an XR session ends.
+
+Right A uses an independent rising-edge latch. While the scenario menu is
+open, locomotion and snap turning are suspended, its controls take raycast
+priority, and the right trigger selects Details, Start, Back, or Cancel. The
+first shipped entry is **An Email Changes the Agent's Plan**. It is visibly
+marked simulated, confirms that the VR room and unfinished autonomous work
+will reset, and reports live agenda phases without presenting a pass score.
+
+The scenario protocol is versioned independently from the stage document:
+`vr-scenario-get-state`, `vr-scenario-start`, and `vr-scenario-cancel` are
+client messages; `vr-scenario-state` is the authoritative catalogue/run
+snapshot. Request IDs are idempotent and snapshots carry a monotonic agenda
+revision so reconnects and reordered messages cannot repeat a launch.
 
 ### 2.4 Pointing and furniture panels
 

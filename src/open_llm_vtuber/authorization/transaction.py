@@ -229,7 +229,9 @@ class ActionTransactionCoordinator:
             if status == "pending_confirmation":
                 return self._error(
                     f"Approval required for exact action {descriptor.action_id}. "
-                    "Review it at the writing desk, then retry the same action."
+                    "Review it at the writing desk, then retry the same action.",
+                    transaction_id=transaction["transaction_id"],
+                    state="pending_confirmation",
                 )
             return self._error(
                 f"Action {descriptor.action_id} was not committed ({reason})."

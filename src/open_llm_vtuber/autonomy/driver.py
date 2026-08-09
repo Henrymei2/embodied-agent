@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 
@@ -66,7 +67,13 @@ async def _publish_completion(
     """Append one Presence-approved autonomous result to the conversation."""
     result = summary.strip() or "The autonomous task finished."
     message = f"{entry.title}\n\n{result}"[:4000]
-    message_id = f"agenda-report:{entry.id}"
+    report_key = str(entry.metadata.get("report_delivery_key", "completion"))
+    suffix = (
+        ""
+        if report_key == "completion"
+        else ":" + hashlib.sha256(report_key.encode("utf-8")).hexdigest()[:12]
+    )
+    message_id = f"agenda-report:{entry.id}{suffix}"
     display = DisplayText(
         text=message,
         name=context.character_config.character_name,
@@ -141,6 +148,7 @@ async def agenda_loop(
             )
 
     async def run_step(entry, checkpoint) -> str:
+        from .action_context import AgendaApprovalRequired, agenda_action_scope
         from ..conversations.single_conversation import process_single_conversation
         from ..conversations.llm_request_queue import (
             PRIORITY_PASSIVE,
@@ -164,15 +172,22 @@ async def agenda_loop(
                 metadata=_agenda_step_metadata(entry, checkpoint),
             )
 
-        priority = PRIORITY_SCHEDULED if entry.kind == "scheduled" else PRIORITY_PASSIVE
-        result = await get_queue(client_uid).enqueue_and_wait(
-            coro_factory=execute_step,
-            priority=priority,
-            label=f"agenda:{entry.id}:{checkpoint.step_id}",
-            dedupe_key=f"agenda:{entry.id}:{checkpoint.step_id}",
-            entry_id=entry.id,
-            work_class="autonomous",
+        priority = (
+            PRIORITY_SCHEDULED
+            if entry.kind == "scheduled" or entry.metadata.get("trigger_foreground")
+            else PRIORITY_PASSIVE
         )
+        with agenda_action_scope(entry.id, checkpoint.step_id) as action_scope:
+            result = await get_queue(client_uid).enqueue_and_wait(
+                coro_factory=execute_step,
+                priority=priority,
+                label=f"agenda:{entry.id}:{checkpoint.step_id}",
+                dedupe_key=f"agenda:{entry.id}:{checkpoint.step_id}",
+                entry_id=entry.id,
+                work_class="autonomous",
+            )
+            if action_scope.pending_transaction_id is not None:
+                raise AgendaApprovalRequired(action_scope)
         return _agenda_step_text(result)
 
     async def run_report(entry, summary: str) -> None:

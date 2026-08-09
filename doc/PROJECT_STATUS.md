@@ -203,7 +203,7 @@ Persistent stage <---- validated result ---+
 | 2D room and navigation | Complete | stage v9, world model, furniture windows, sprite transition, scene MCP, persistence, click-to-interact |
 | Memory and personality | Complete | contextual/daily/long-term memory, hybrid keyword/embedding retrieval, evolution state |
 | Scheduler and serialized LLM work | Complete | scheduler MCP and priority queue |
-| Continuous autonomous behavior | Level 3 operational | fenced renewable cross-process ownership, durable idempotent event inbox, quotas and dead letters, content-free traces and long-horizon chain reports, plus all Level 1–2 continuity and safety gates |
+| Continuous autonomous behavior | Level 3 operational | fenced renewable cross-process ownership, durable idempotent event inbox, quotas and dead letters, content-free traces and long-horizon chain reports, plus a mandatory timer-priority unread-email path with exact-action approval and durable outcome feedback |
 | Spatial modification | Complete | validated placement/removal and persisted stage patches |
 | Calendar object/tool | Complete | Google OAuth, primary-calendar CRUD, connection window, dual proximity enforcement |
 | Just-in-time contextual help | Complete | coarse screen context, confidence/frequency gating, daily-memory task changes |
@@ -211,7 +211,7 @@ Persistent stage <---- validated result ---+
 | Books, plans, idling, room editing | Complete | bookshelf, reading chair, writing desk, sofa, and design board, each with its own tools and window |
 | Self-evolution | Complete | agent-authored skills that change its own prompt, gated on user approval and enforced by a read-only skills mount; unattended executable self-rewrite is excluded |
 | Evidence for the research question | Instrumented | per-pillar ablations, an append-only content-free session log, and a per-condition report; self-report from participants is still required, see [STUDY_MODE.md](STUDY_MODE.md) |
-| 3D embodiment | Experimental; Quest 3 acceptance pending | the Meta Quest 3 WebXR MVP, independent VR layout, controls, and mode-aware backend are implemented; see [VR_MODE.md](VR_MODE.md) |
+| 3D embodiment | Experimental; Quest 3 acceptance pending | the Meta Quest 3 WebXR MVP, independent VR layout, controls, mode-aware backend, and right-A simulated email-change scenario launcher are implemented; see [VR_MODE.md](VR_MODE.md) |
 
 ## 5. External integration boundaries
 

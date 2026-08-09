@@ -45,6 +45,7 @@ import {
   useRendererMode,
 } from "./context/renderer-mode-context";
 import { VrStageProvider } from "./context/vr-stage-context";
+import { VrScenarioProvider } from "./context/vr-scenario-context";
 import VrLaunchSurface from "./components/vr/vr-launch-surface";
 
 const VrStage = lazy(() => import("./components/vr/vr-stage"));
@@ -246,6 +247,7 @@ function AppWithGlobalStyles(): JSX.Element {
                           <BrowserProvider>
                             <DynamicStageProvider>
                               <VrStageProvider>
+                                <VrScenarioProvider>
                                 <PresenceProvider>
                                   <StudyConditionProvider>
                                     <AgentActivityProvider>
@@ -256,6 +258,7 @@ function AppWithGlobalStyles(): JSX.Element {
                                     </AgentActivityProvider>
                                   </StudyConditionProvider>
                                 </PresenceProvider>
+                                </VrScenarioProvider>
                               </VrStageProvider>
                             </DynamicStageProvider>
                           </BrowserProvider>

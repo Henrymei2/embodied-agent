@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Optional
@@ -33,6 +34,7 @@ from .lease import LeaseHandle, LeaseLostError, WorkspaceLease, lease_context
 from .settings import AutonomySettings
 from .step_policy import StepPolicy
 from .telemetry import AutonomyTracer
+from .triggers import trigger_handling_policy, trigger_from_event
 
 RoomSnapshot = Callable[[], IdleScene]
 IdleRelocator = Callable[[IdlePlacement], Awaitable[bool]]
@@ -419,6 +421,56 @@ class AgendaExecutive:
                 )
                 state = self.store.load()
 
+        now = utc_now()
+        pending_events = [
+            event
+            for event in state.inbox
+            if event.status == "pending"
+            and datetime.fromisoformat(event.available_at) <= now
+        ]
+        pending_external_event = bool(pending_events)
+        pending_foreground_event = next(
+            (
+                event
+                for event in pending_events
+                if (policy := trigger_handling_policy(event)) is not None
+                and policy.foreground
+            ),
+            None,
+        )
+        foreground_policy = (
+            trigger_handling_policy(pending_foreground_event)
+            if pending_foreground_event is not None
+            else None
+        )
+        active_for_event = next(
+            (item for item in state.entries if item.status == "active"), None
+        )
+        if (
+            pending_foreground_event is not None
+            and active_for_event is not None
+            and active_for_event.kind != "user"
+            and active_for_event.interruptibility == "high"
+            and foreground_policy is not None
+            and foreground_policy.preempt_interruptible_background
+        ):
+            await self._cancel_entry_work()
+            current = next(
+                (
+                    item
+                    for item in self.store.load().entries
+                    if item.id == active_for_event.id
+                ),
+                None,
+            )
+            if current is not None and current.status == "active":
+                self.store.transition(
+                    current.id,
+                    "suspended",
+                    progress_summary="Suspended for an urgent external event.",
+                )
+            state = self.store.load()
+
         if self._entry_task is not None:
             if not self._entry_task.done():
                 return False
@@ -473,10 +525,31 @@ class AgendaExecutive:
                 item.created_at,
             ),
         )
-        if queued:
+        if queued and not pending_external_event:
             self._settled_hold_key = None
-            decision = self.fair_scheduler.choose_agenda_entries(queued, now=utc_now())
-            selected_id = decision.plan_id if decision is not None else queued[0].id
+            foreground = [
+                item
+                for item in queued
+                if item.metadata.get("trigger_foreground")
+                or item.metadata.get("schedule_occurrence")
+                or item.kind == "scheduled"
+            ]
+            if foreground:
+                selected_id = min(
+                    foreground,
+                    key=lambda item: (
+                        int(item.metadata.get("queue_priority", 10)),
+                        item.created_at,
+                        item.id,
+                    ),
+                ).id
+            else:
+                decision = self.fair_scheduler.choose_agenda_entries(
+                    queued, now=utc_now()
+                )
+                selected_id = (
+                    decision.plan_id if decision is not None else queued[0].id
+                )
             self.store.transition(selected_id, "active")
             await self.broadcast_snapshot()
             return True
@@ -495,7 +568,6 @@ class AgendaExecutive:
                 )
                 return not await self._settle_for_hold(key)
             return False
-        now = utc_now()
         suspended = [
             item
             for item in state.entries
@@ -507,7 +579,7 @@ class AgendaExecutive:
             )
             and self._suspension_defer_is_due(item, now)
         ]
-        if suspended:
+        if suspended and not pending_external_event:
             self._settled_hold_key = None
             await self._reconsider_suspended()
             return True
@@ -752,6 +824,9 @@ class AgendaExecutive:
         try:
             state = self.store.load()
             entry = next(item for item in state.entries if item.id == report.entry_id)
+            delivery_entry = copy.copy(entry)
+            delivery_entry.metadata = dict(entry.metadata)
+            delivery_entry.metadata["report_delivery_key"] = report.report_key
             with self.tracer.span(
                 "agenda.report.deliver",
                 trace_id=entry.metadata.get("trace_id"),
@@ -762,7 +837,7 @@ class AgendaExecutive:
                     "agenda.report_policy": entry.report_policy,
                 },
             ):
-                outcome = await self._report_result(entry, report.summary)
+                outcome = await self._report_result(delivery_entry, report.summary)
             if isinstance(outcome, bool):
                 delivered = outcome
                 error = None if delivered else "Presence Contract deferred delivery."
@@ -889,7 +964,22 @@ class AgendaExecutive:
                     owner_id=self.lease_handle.owner_id,
                     fencing_token=self.lease_handle.fencing_token,
                     claim_timeout_seconds=self.settings.event_claim_timeout_seconds,
+                    priority=lambda event: (
+                        0
+                        if (
+                            (policy := trigger_handling_policy(event)) is not None
+                            and policy.foreground
+                        )
+                        else 1,
+                        event.available_at,
+                        event.created_at,
+                    ),
                 )
+        handling_policy = (
+            trigger_handling_policy(claimed_event)
+            if claimed_event is not None
+            else None
+        )
         context = build_agenda_context(
             self.store,
             client_uid=self.client_uid,
@@ -925,7 +1015,12 @@ class AgendaExecutive:
                         ),
                     },
                 ) as span:
-                    proposal = await self.planner.propose_intention(context)
+                    if handling_policy is not None and handling_policy.foreground:
+                        proposal = await self.planner.propose_triggered_intention(
+                            context, claimed_event, handling_policy
+                        )
+                    else:
+                        proposal = await self.planner.propose_intention(context)
                     proposal.metadata.setdefault("trace_id", span.trace_id)
             except Exception as exc:
                 reason = (
@@ -983,7 +1078,28 @@ class AgendaExecutive:
                 proposal.status = (
                     "blocked_approval" if proposal.requires_approval else "queued"
                 )
-                proposal.metadata["queue_priority"] = 20
+                proposal.metadata["queue_priority"] = (
+                    handling_policy.queue_priority
+                    if handling_policy is not None
+                    else 20
+                )
+                if handling_policy is not None:
+                    trigger = trigger_from_event(claimed_event) or {}
+                    proposal.report_policy = (
+                        "on_completion"
+                        if handling_policy.force_report
+                        else proposal.report_policy
+                    )
+                    proposal.metadata.update(
+                        {
+                            "trigger_foreground": handling_policy.foreground,
+                            "external_event_id": claimed_event.id,
+                            "trigger_resource_id": trigger.get("resource_id"),
+                            "trigger_revision": trigger.get("revision"),
+                            "trigger_simulated": bool(trigger.get("simulated", False)),
+                            "trigger_idempotency_key": claimed_event.idempotency_key,
+                        }
+                    )
                 if proposal.requires_approval:
                     proposal.plan_id = self._draft_approval_plan(proposal)
                 if claimed_event is not None and self.lease_handle is not None:
@@ -1313,6 +1429,18 @@ class AgendaExecutive:
             retry_budget=self.settings.execution_failure_limit,
         )
         if plan_result.plan.state != "completed":
+            current_entry = next(
+                (
+                    item
+                    for item in self.store.load().entries
+                    if item.id == entry.id
+                ),
+                None,
+            )
+            if current_entry is not None and current_entry.status == "blocked_approval":
+                await self.broadcast_snapshot()
+                self.wake()
+                return True
             terminal = plan_result.plan.state in {"failed", "cancelled"}
             target = "failed" if terminal else "suspended"
             if terminal:

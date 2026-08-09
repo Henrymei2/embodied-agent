@@ -21,6 +21,7 @@ from src.open_llm_vtuber.google_integration import (
     GoogleIntegrationService,
     calendar_subprocess_settings,
 )
+from src.open_llm_vtuber.demo_scenarios import record_simulated_write, simulated_fixture
 
 _MAX_RESULTS = 200
 mcp = FastMCP("calendar")
@@ -118,6 +119,11 @@ def list_calendar_events(
 ) -> str:
     """List Google Calendar events overlapping a range (defaults to 7 days)."""
     try:
+        fixture = simulated_fixture()
+        if fixture is not None:
+            return json.dumps(
+                {"events": fixture["events"], "simulated": True}, ensure_ascii=False
+            )
         start_at = _parse_time(start, "start") if start else datetime.now(timezone.utc)
         end_at = _parse_time(end, "end") if end else start_at + timedelta(days=7)
         if end_at <= start_at:
@@ -153,6 +159,14 @@ def list_calendar_events(
 def get_calendar_event(event_id: str) -> str:
     """Read one primary-calendar event by its stable Google event ID."""
     try:
+        fixture = simulated_fixture()
+        if fixture is not None:
+            event = next(
+                (item for item in fixture["events"] if item["event_id"] == event_id),
+                None,
+            )
+            if event is not None:
+                return json.dumps(event, ensure_ascii=False)
         event_id = _validate_text(event_id, "event_id", 1024)
         event = (
             _get_calendar_service()
@@ -170,6 +184,28 @@ def get_calendar_event(event_id: str) -> str:
 def add_calendar_event(title: str, start: str, end: str, notes: str = "") -> str:
     """Create a timed event on the primary Google Calendar."""
     try:
+        if simulated_fixture() is not None:
+            record = record_simulated_write(
+                "calendar",
+                {
+                    "action": "add",
+                    "title": title,
+                    "start": start,
+                    "end": end,
+                    "notes": notes,
+                },
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "event": {
+                        "event_id": record["id"],
+                        **record["payload"],
+                        "simulated": True,
+                    },
+                },
+                ensure_ascii=False,
+            )
         body = _timed_event_body(
             title, _parse_time(start, "start"), _parse_time(end, "end"), notes
         )
@@ -197,6 +233,29 @@ def update_calendar_event(
 ) -> str:
     """Update selected fields of a primary Google Calendar event."""
     try:
+        if simulated_fixture() is not None:
+            record = record_simulated_write(
+                "calendar",
+                {
+                    "action": "update",
+                    "event_id": event_id,
+                    "title": title,
+                    "start": start,
+                    "end": end,
+                    "notes": notes,
+                },
+            )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "event": {
+                        "event_id": event_id,
+                        **record["payload"],
+                        "simulated": True,
+                    },
+                },
+                ensure_ascii=False,
+            )
         if not isinstance(event_id, str) or not event_id or len(event_id) > 1024:
             raise ValueError("event_id must be a non-empty string")
         events_api = _get_calendar_service().calendar().events()
@@ -234,6 +293,11 @@ def update_calendar_event(
 def remove_calendar_event(event_id: str) -> str:
     """Delete an event from the primary Google Calendar."""
     try:
+        if simulated_fixture() is not None:
+            record_simulated_write(
+                "calendar", {"action": "remove", "event_id": event_id}
+            )
+            return json.dumps({"ok": True, "event_id": event_id, "simulated": True})
         if not isinstance(event_id, str) or not event_id or len(event_id) > 1024:
             raise ValueError("event_id must be a non-empty string")
         (

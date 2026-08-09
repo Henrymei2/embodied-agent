@@ -369,6 +369,13 @@ class ToolExecutor:
                         arguments=tool_input,
                         invoke=invoke_tool,
                     )
+                    from ..autonomy.action_context import observe_action_transaction
+
+                    observe_action_transaction(
+                        transaction_result.metadata,
+                        capability=tool_name,
+                        summary=transaction_result.text,
+                    )
                     return (
                         transaction_result.is_error,
                         transaction_result.text,

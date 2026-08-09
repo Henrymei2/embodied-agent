@@ -212,6 +212,7 @@ class ReportOutboxItem:
     id: str
     entry_id: str
     summary: str
+    report_key: str = "completion"
     status: str = "pending"
     attempts: int = 0
     failures: int = 0
@@ -221,7 +222,7 @@ class ReportOutboxItem:
     error: Optional[str] = None
 
     def validate(self) -> None:
-        if not self.id or not self.entry_id:
+        if not self.id or not self.entry_id or not self.report_key:
             raise ValueError("report outbox items require ids")
         if self.status not in REPORT_STATUSES:
             raise ValueError(f"invalid report outbox status: {self.status}")
@@ -600,6 +601,36 @@ class AgendaStore:
             if checkpoint is not None:
                 checkpoint.validate()
                 entry.checkpoint = checkpoint
+            if (
+                status in TERMINAL_STATUSES
+                and entry.metadata.get("trigger_foreground")
+                and entry.report_policy != "silent"
+                and not any(
+                    report.entry_id == entry_id
+                    and report.report_key == "completion"
+                    for report in state.reports
+                )
+            ):
+                report = ReportOutboxItem(
+                    id=f"report_{uuid.uuid4().hex}",
+                    entry_id=entry_id,
+                    summary=(
+                        entry.progress_summary
+                        or (
+                            "The email task completed."
+                            if status == "completed"
+                            else f"The email task ended with status {status}."
+                        )
+                    )[:2000],
+                )
+                state.reports.append(report)
+                entry.metadata["report_status"] = "pending"
+                self._event(
+                    state,
+                    entry_id,
+                    "report_queued",
+                    {"report_id": report.id, "report_key": "completion"},
+                )
             self._event(state, entry_id, "transition", {"status": status})
             return entry
 
@@ -637,6 +668,27 @@ class AgendaStore:
             return entry
 
         return self.mutate(operation)
+
+    def withdraw_event(self, event_id: str) -> bool:
+        """Withdraw an unlinked external event owned by a cancelled demo run.
+
+        Removing a claimed event is safe under the store lock: a planner that
+        already copied the claim can no longer acknowledge it and therefore
+        cannot attach an intention after cancellation.
+        """
+
+        def operation(state: AgendaState) -> bool:
+            event = self._find_event(state, event_id)
+            if event.status == "acknowledged" or event.linked_entry_id:
+                return False
+            state.inbox = [item for item in state.inbox if item.id != event_id]
+            self._event(state, None, "external_event_withdrawn", {"event_id": event_id})
+            return True
+
+        try:
+            return self.mutate(operation)
+        except KeyError:
+            return False
 
     def add_from_event(
         self,
@@ -679,6 +731,126 @@ class AgendaStore:
         def operation(state: AgendaState) -> AgendaEntry:
             entry = self._find(state, entry_id)
             entry.metadata.update(values)
+            return entry
+
+        return self.mutate(operation)
+
+    def block_for_authorization(
+        self,
+        entry_id: str,
+        *,
+        transaction_id: str,
+        capability: str,
+        summary: str,
+    ) -> AgendaEntry:
+        """Persist an exact external-action approval boundary and one report."""
+        cleaned_summary = " ".join(str(summary).split())[:2000]
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            if entry.status in TERMINAL_STATUSES:
+                return entry
+            if entry.checkpoint is not None:
+                entry.checkpoint.state = "planned"
+            entry.status = "blocked_approval"
+            entry.report_policy = "ask_first"
+            entry.progress_summary = cleaned_summary[:1000]
+            entry.metadata.update(
+                {
+                    "authorization_transaction_id": transaction_id,
+                    "authorization_capability": capability,
+                    "authorization_status": "pending",
+                }
+            )
+            report_key = f"approval:{transaction_id}"
+            existing = next(
+                (
+                    report
+                    for report in state.reports
+                    if report.entry_id == entry_id
+                    and report.report_key == report_key
+                ),
+                None,
+            )
+            if existing is None:
+                report = ReportOutboxItem(
+                    id=f"report_{uuid.uuid4().hex}",
+                    entry_id=entry_id,
+                    summary=cleaned_summary or "This email task needs your approval.",
+                    report_key=report_key,
+                )
+                state.reports.append(report)
+                entry.metadata["report_status"] = "pending"
+                self._event(
+                    state,
+                    entry_id,
+                    "report_queued",
+                    {"report_id": report.id, "report_key": report_key},
+                )
+            self._event(
+                state,
+                entry_id,
+                "authorization_required",
+                {"transaction_id": transaction_id, "capability": capability},
+            )
+            return entry
+
+        return self.mutate(operation)
+
+    def resolve_authorization(
+        self,
+        entry_id: str,
+        *,
+        transaction_id: str,
+        decision: str,
+    ) -> AgendaEntry:
+        """Resume an approved exact action or terminate a declined one."""
+        if decision not in {"approved", "declined"}:
+            raise ValueError("authorization decision is invalid")
+
+        def operation(state: AgendaState) -> AgendaEntry:
+            entry = self._find(state, entry_id)
+            if entry.metadata.get("authorization_transaction_id") != transaction_id:
+                raise ValueError("authorization transaction does not match agenda")
+            if entry.status != "blocked_approval":
+                return entry
+            entry.metadata["authorization_status"] = decision
+            entry.metadata["resumable_plan_id"] = None
+            entry.metadata["resumable_plan_absorbed"] = None
+            if decision == "approved":
+                if entry.checkpoint is None:
+                    raise ValueError("approved agenda entry has no pending checkpoint")
+                entry.checkpoint.step_id = new_entry_id("step")
+                entry.checkpoint.state = "planned"
+                entry.status = "queued"
+                entry.progress_summary = "Exact external action approved; resuming."
+            else:
+                entry.status = "abandoned"
+                entry.ended_at = _iso()
+                entry.checkpoint = None
+                entry.progress_summary = (
+                    "The proposed external action was declined and was not executed."
+                )
+                report_key = f"decision:{transaction_id}"
+                if not any(
+                    report.entry_id == entry_id
+                    and report.report_key == report_key
+                    for report in state.reports
+                ):
+                    state.reports.append(
+                        ReportOutboxItem(
+                            id=f"report_{uuid.uuid4().hex}",
+                            entry_id=entry_id,
+                            summary=entry.progress_summary,
+                            report_key=report_key,
+                        )
+                    )
+            self._event(
+                state,
+                entry_id,
+                "authorization_resolved",
+                {"transaction_id": transaction_id, "decision": decision},
+            )
             return entry
 
         return self.mutate(operation)
@@ -749,7 +921,12 @@ class AgendaStore:
 
             if cleaned_report is not None:
                 existing = next(
-                    (report for report in state.reports if report.entry_id == entry_id),
+                    (
+                        report
+                        for report in state.reports
+                        if report.entry_id == entry_id
+                        and report.report_key == "completion"
+                    ),
                     None,
                 )
                 if existing is None:
@@ -783,16 +960,26 @@ class AgendaStore:
 
         return self.mutate(operation)
 
-    def enqueue_report(self, entry_id: str, summary: str) -> ReportOutboxItem:
+    def enqueue_report(
+        self, entry_id: str, summary: str, *, report_key: str = "completion"
+    ) -> ReportOutboxItem:
         """Persist one idempotent completion report for an agenda entry."""
         cleaned = " ".join(str(summary).split())[:2000]
         if not cleaned:
             cleaned = "Agenda intention completed."
+        cleaned_key = str(report_key).strip()[:100]
+        if not cleaned_key:
+            raise ValueError("report key is required")
 
         def operation(state: AgendaState) -> ReportOutboxItem:
             self._find(state, entry_id)
             existing = next(
-                (report for report in state.reports if report.entry_id == entry_id),
+                (
+                    report
+                    for report in state.reports
+                    if report.entry_id == entry_id
+                    and report.report_key == cleaned_key
+                ),
                 None,
             )
             if existing is not None:
@@ -801,6 +988,7 @@ class AgendaStore:
                 id=f"report_{uuid.uuid4().hex}",
                 entry_id=entry_id,
                 summary=cleaned,
+                report_key=cleaned_key,
             )
             state.reports.append(report)
             entry = self._find(state, entry_id)
@@ -1079,6 +1267,7 @@ class AgendaStore:
         fencing_token: int,
         now: Optional[datetime] = None,
         claim_timeout_seconds: float = 300,
+        priority: Optional[Callable[[ExternalEvent], tuple]] = None,
     ) -> Optional[ExternalEvent]:
         """Claim one due event under the active fenced workspace lease."""
         from .lease import LeaseLostError, current_lease
@@ -1126,7 +1315,14 @@ class AgendaStore:
                     due.append(event)
             if not due:
                 return None
-            event = min(due, key=lambda item: (item.available_at, item.created_at))
+            event = min(
+                due,
+                key=(
+                    priority
+                    if priority is not None
+                    else lambda item: (item.available_at, item.created_at)
+                ),
+            )
             event.status = "claimed"
             event.attempts += 1
             event.claimed_at = _iso(now)

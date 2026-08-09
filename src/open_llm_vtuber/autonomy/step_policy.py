@@ -117,6 +117,7 @@ class StepPolicy:
         if (
             capability
             and capability_requires_approval(capability)
+            and entry.metadata.get("trigger_policy") != "gmail-unread-v1"
             and not (
                 entry.requires_approval
                 and entry.plan_id

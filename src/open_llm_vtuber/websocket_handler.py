@@ -111,6 +111,9 @@ class WebSocketHandler:
             "screen-context": self._handle_screen_context,
             "vr-user-pose": self._handle_vr_user_pose,
             "vr-physical-events": self._handle_vr_physical_events,
+            "vr-scenario-get-state": self._handle_vr_scenario_get_state,
+            "vr-scenario-start": self._handle_vr_scenario_start,
+            "vr-scenario-cancel": self._handle_vr_scenario_cancel,
             "autonomy-feedback": self._handle_autonomy_feedback,
             "request-presence-state": self._handle_presence_state_request,
             "turn-timing": self._handle_turn_timing,
@@ -303,6 +306,105 @@ class WebSocketHandler:
                     ),
                 }
             )
+        )
+
+        if session_service_context.scene_mode == "vr":
+            from .autonomy.agenda import get_agenda_store
+            from .demo_scenarios import scenario_state_payload
+
+            await websocket.send_text(
+                json.dumps(scenario_state_payload(get_agenda_store()))
+            )
+
+    async def _handle_vr_scenario_get_state(
+        self, websocket: WebSocket, client_uid: str, data: dict
+    ) -> None:
+        from .autonomy.agenda import get_agenda_store
+        from .demo_scenarios import scenario_state_payload
+
+        context = self.client_contexts[client_uid]
+        error = (
+            None
+            if context.scene_mode == "vr"
+            else "VR scenarios are only available in immersive mode."
+        )
+        await websocket.send_text(
+            json.dumps(scenario_state_payload(get_agenda_store(), error=error))
+        )
+
+    async def _handle_vr_scenario_start(
+        self, websocket: WebSocket, client_uid: str, data: dict
+    ) -> None:
+        from .autonomy.agenda import get_agenda_store
+        from .autonomy.executive import get_executive
+        from .demo_scenarios import (
+            ScenarioConflictError,
+            scenario_state_payload,
+            start_scenario,
+        )
+        from .scene_state import load_scene_state
+
+        context = self.client_contexts[client_uid]
+        error = None
+        if context.scene_mode != "vr":
+            error = "VR scenarios are only available in immersive mode."
+        elif data.get("version") != 1:
+            error = "Unsupported VR scenario protocol version."
+        else:
+            try:
+                await start_scenario(
+                    scenario_id=str(data.get("scenario_id") or ""),
+                    request_id=str(data.get("request_id") or ""),
+                    conf_uid=context.character_config.conf_uid,
+                    agenda=get_agenda_store(),
+                    executive=get_executive(client_uid),
+                )
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "vr-stage-state",
+                            "stage": load_scene_state(
+                                context.character_config.conf_uid, "vr"
+                            ),
+                            "reset_transients": True,
+                        }
+                    )
+                )
+            except (OSError, ValueError, ScenarioConflictError) as exc:
+                error = str(exc)
+        await websocket.send_text(
+            json.dumps(scenario_state_payload(get_agenda_store(), error=error))
+        )
+
+    async def _handle_vr_scenario_cancel(
+        self, websocket: WebSocket, client_uid: str, data: dict
+    ) -> None:
+        from .autonomy.agenda import get_agenda_store
+        from .autonomy.executive import get_executive
+        from .demo_scenarios import (
+            ScenarioConflictError,
+            cancel_scenario,
+            scenario_state_payload,
+        )
+
+        context = self.client_contexts[client_uid]
+        error = None
+        if context.scene_mode != "vr":
+            error = "VR scenarios are only available in immersive mode."
+        elif data.get("version") != 1:
+            error = "Unsupported VR scenario protocol version."
+        else:
+            try:
+                await cancel_scenario(
+                    run_id=str(data.get("run_id") or ""),
+                    request_id=str(data.get("request_id") or ""),
+                    agenda=get_agenda_store(),
+                    executive=get_executive(client_uid),
+                )
+            except (OSError, ValueError, ScenarioConflictError) as exc:
+                error = str(exc)
+        await websocket.send_text(
+            json.dumps(scenario_state_payload(get_agenda_store(), error=error))
         )
 
     async def _init_service_context(
@@ -912,6 +1014,7 @@ class WebSocketHandler:
         pending_action = pending_request_action(request_id, client_uid)
         if ok and pending_action in {"move_to", "move_to_user"}:
             position = result.get("position")
+
             def finite_number(value: object) -> bool:
                 return (
                     isinstance(value, (int, float))
@@ -1047,15 +1150,28 @@ class WebSocketHandler:
         """Accept a bounded, ephemeral headset pose from the owning VR client."""
         context = self.client_contexts.get(client_uid)
         if context is None or getattr(context, "scene_mode", "normal") != "vr":
-            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": "VR pose is only accepted from a VR session."})
+            await websocket.send_json(
+                {
+                    "type": "vr-physical-result",
+                    "ok": False,
+                    "error": "VR pose is only accepted from a VR session.",
+                }
+            )
             return
         from .physical_context import update_user_pose
+
         try:
-            pose = update_user_pose(client_uid, context.character_config.conf_uid, data.get("pose"))
+            pose = update_user_pose(
+                client_uid, context.character_config.conf_uid, data.get("pose")
+            )
         except ValueError as exc:
-            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": str(exc)})
+            await websocket.send_json(
+                {"type": "vr-physical-result", "ok": False, "error": str(exc)}
+            )
             return
-        await websocket.send_json({"type": "vr-user-pose-ack", "sequence": pose.sequence})
+        await websocket.send_json(
+            {"type": "vr-user-pose-ack", "sequence": pose.sequence}
+        )
 
     async def _handle_vr_physical_events(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
@@ -1063,10 +1179,17 @@ class WebSocketHandler:
         """Validate discrete VR observations and authoritatively save prop releases."""
         context = self.client_contexts.get(client_uid)
         if context is None or getattr(context, "scene_mode", "normal") != "vr":
-            await websocket.send_json({"type": "vr-physical-result", "ok": False, "error": "Physical events are only accepted from a VR session."})
+            await websocket.send_json(
+                {
+                    "type": "vr-physical-result",
+                    "ok": False,
+                    "error": "Physical events are only accepted from a VR session.",
+                }
+            )
             return
         from .physical_context import record_events
         from .scene_state import load_scene_state
+
         try:
             accepted = record_events(
                 client_uid,
@@ -1075,21 +1198,27 @@ class WebSocketHandler:
                 data.get("events"),
             )
         except (OSError, TypeError, ValueError) as exc:
-            await websocket.send_json({
-                "type": "vr-physical-result",
-                "ok": False,
-                "sequence": data.get("sequence"),
-                "error": str(exc),
-                "stage": load_scene_state(context.character_config.conf_uid, "vr"),
-            })
+            await websocket.send_json(
+                {
+                    "type": "vr-physical-result",
+                    "ok": False,
+                    "sequence": data.get("sequence"),
+                    "error": str(exc),
+                    "stage": load_scene_state(context.character_config.conf_uid, "vr"),
+                }
+            )
             return
-        await websocket.send_json({
-            "type": "vr-physical-result",
-            "ok": True,
-            "sequence": data.get("sequence"),
-            "accepted": len(accepted),
-            "stage": load_scene_state(context.character_config.conf_uid, "vr") if any(event.kind == "prop_relocated" for event in accepted) else None,
-        })
+        await websocket.send_json(
+            {
+                "type": "vr-physical-result",
+                "ok": True,
+                "sequence": data.get("sequence"),
+                "accepted": len(accepted),
+                "stage": load_scene_state(context.character_config.conf_uid, "vr")
+                if any(event.kind == "prop_relocated" for event in accepted)
+                else None,
+            }
+        )
 
     async def _handle_autonomy_feedback(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

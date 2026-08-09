@@ -70,6 +70,14 @@ Duplicate identity binds client, server, tool-call ID, and exact argument
 digest. An exact replay has no effect. Changed arguments create a different
 proposal even if a caller incorrectly reuses the tool-call ID.
 
+Autonomous foreground email work links a pending transaction back to its agenda
+entry without copying private arguments into the agenda. The entry records only
+the transaction ID, capability, and bounded status summary, moves to
+`blocked_approval`, and emits a Presence-gated report. Approval gives the same
+checkpoint a fresh execution identity while the authorization journal retains
+the exact descriptor binding; decline abandons the entry without invoking the
+adapter. Restart and reconnect preserve both records.
+
 ## User authority and outcome evidence
 
 Reversible local and embodied actions can use a reviewed session grant, so

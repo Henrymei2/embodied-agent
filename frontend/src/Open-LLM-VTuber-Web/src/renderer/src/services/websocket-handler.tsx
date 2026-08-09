@@ -25,6 +25,7 @@ import { useStudyCondition } from '@/context/study-condition-context';
 import { useAgentActivity } from '@/context/agent-activity-context';
 import { useRendererMode } from '@/context/renderer-mode-context';
 import { useVrStage } from '@/context/vr-stage-context';
+import { useVrScenario, VrScenarioStateMessage } from '@/context/vr-scenario-context';
 import { browserEndpoints, withRendererMode } from '@/utils/vr-helpers';
 
 function WebSocketHandler({ children }: { children: React.ReactNode }) {
@@ -56,7 +57,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const {
     handleFrontendAction: handleVrFrontendAction,
     setStageFromServer: setVrStageFromServer,
+    resetSessionEntities,
   } = useVrStage();
+  const { receiveState: receiveVrScenarioState } = useVrScenario();
   const selectedMode = rendererMode === 'vr' ? 'vr' : 'normal';
   const browser = useMemo(() => browserEndpoints(window.location), []);
   const effectiveWsUrl = window.api ? wsUrl : browser.wsUrl;
@@ -186,6 +189,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         break;
       case 'vr-stage-state':
         if (message.stage) {
+          if ((message as unknown as { reset_transients?: boolean }).reset_transients) resetSessionEntities();
           const result = setVrStageFromServer(message.stage);
           if (!result.ok) {
             toaster.create({
@@ -195,6 +199,9 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
             });
           }
         }
+        break;
+      case 'vr-scenario-state':
+        receiveVrScenarioState(message as unknown as VrScenarioStateMessage);
         break;
       case 'vr-physical-result':
         if (message.stage) {
@@ -397,7 +404,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, handleVrFrontendAction, setStageFromServer, setVrStageFromServer, selectedMode, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, handleVrFrontendAction, setStageFromServer, setVrStageFromServer, resetSessionEntities, receiveVrScenarioState, selectedMode, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
 
   useEffect(() => {
     if (rendererMode === 'normal' || rendererMode === 'vr') {

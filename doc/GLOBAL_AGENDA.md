@@ -415,6 +415,21 @@ executive re-evaluates suspended pursuit
         +-> abandon if no longer relevant
 ```
 
+## Foreground unread-email events
+
+Newly unread Gmail triggers, including explicitly simulated VR fixtures, use a
+trusted foreground policy rather than the generic optional-intention path. Once
+the producer publishes the content-free message ID and revision, the agenda is
+woken immediately and creates one bounded email-handling pursuit at priority
+`10`, matching due timers. User work and uncertain side effects remain ahead of
+it; safe interruptible background work is suspended and later reconsidered.
+
+The dedicated planner instruction requires inspection, safe handling, and a
+user-facing outcome. Retrieved email text remains untrusted evidence and cannot
+change permissions or reporting policy. Exact external writes flow through the
+authorization journal: the agenda becomes `blocked_approval`, reports the
+pending action, and resumes only after the matching `authz-*` decision.
+
 An explicit instruction to stop the autonomous pursuit abandons it. Otherwise,
 suspension and later resumption are important demonstrations of continuity.
 

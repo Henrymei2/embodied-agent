@@ -10,6 +10,7 @@ import { useVAD } from "@/context/vad-context";
 import { useSubtitle } from "@/context/subtitle-context";
 import { useAgentActivity } from "@/context/agent-activity-context";
 import { useWebSocket } from "@/context/websocket-context";
+import { useVrScenario } from "@/context/vr-scenario-context";
 import { wsService } from "@/services/websocket-service";
 import { audioManager } from "@/utils/audio-manager";
 import {
@@ -85,6 +86,12 @@ interface VrRuntime {
   lastPoseSentAt: number;
   lastPose: { x: number; y: number; yaw: number } | null;
   hoveredSelectable: THREE.Object3D | null;
+  scenarioMenu: THREE.Group;
+  scenarioPanel: THREE.Mesh;
+  scenarioMenuOpen: boolean;
+  scenarioPage: "catalog" | "confirm";
+  aPressed: boolean;
+  renderScenarioMenu: () => void;
 }
 
 interface PanelAction {
@@ -189,6 +196,31 @@ function canvasTexture(lines: string[], width = 768, height = 256) {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function scenarioMenuTexture(lines: string[]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 920;
+  const context = canvas.getContext("2d")!;
+  const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, "rgba(15, 23, 42, 0.98)");
+  gradient.addColorStop(1, "rgba(6, 10, 22, 0.98)");
+  roundedRect(context, 8, 8, canvas.width - 16, canvas.height - 16, 54);
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = "rgba(103, 232, 249, 0.58)";
+  context.lineWidth = 5;
+  context.stroke();
+  lines.slice(0, 14).forEach((line, index) => {
+    context.fillStyle = index === 0 ? "#f8fafc" : index === 1 ? "#fbbf24" : "#dbeafe";
+    context.font = index === 0 ? "700 54px system-ui, sans-serif" : "500 35px system-ui, sans-serif";
+    context.fillText(line.length > 68 ? `${line.slice(0, 67)}…` : line, 58, 82 + index * 57);
+  });
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
 }
@@ -343,6 +375,8 @@ export default function VrStage() {
   const { subtitleText } = useSubtitle();
   const { activity } = useAgentActivity();
   const { baseUrl, wsState } = useWebSocket();
+  const scenarioState = useVrScenario();
+  const scenarioStateRef = useRef(scenarioState);
   const baseUrlRef = useRef(baseUrl);
   const startMicRef = useRef(startMic);
   const stopMicRef = useRef(stopMic);
@@ -360,6 +394,17 @@ export default function VrStage() {
   useEffect(() => { baseUrlRef.current = baseUrl; }, [baseUrl]);
   useEffect(() => { startMicRef.current = startMic; }, [startMic]);
   useEffect(() => { stopMicRef.current = stopMic; }, [stopMic]);
+  useEffect(() => {
+    scenarioStateRef.current = scenarioState;
+    runtimeRef.current?.renderScenarioMenu();
+  }, [scenarioState]);
+
+  useEffect(() => {
+    if (!xrSession) return undefined;
+    scenarioState.refresh();
+    const interval = window.setInterval(() => scenarioStateRef.current.refresh(), 2000);
+    return () => window.clearInterval(interval);
+  }, [xrSession, scenarioState.refresh]);
 
   useEffect(() => {
     if (xrSession && initialMicOnRef.current) void startMicRef.current();
@@ -446,6 +491,22 @@ export default function VrStage() {
     hud.renderOrder = 100;
     camera.add(hud);
 
+    const scenarioMenu = new THREE.Group();
+    scenarioMenu.position.set(0, 0, -1.55);
+    scenarioMenu.visible = false;
+    camera.add(scenarioMenu);
+    const scenarioPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.5, 1.08),
+      new THREE.MeshBasicMaterial({
+        map: scenarioMenuTexture(["VR test scenarios", "Loading…"]),
+        transparent: true,
+        depthTest: false,
+      }),
+    );
+    scenarioPanel.renderOrder = 200;
+    scenarioPanel.userData.scenarioPanel = true;
+    scenarioMenu.add(scenarioPanel);
+
     const runtime: VrRuntime = {
       scene, renderer, camera, rig, furniture, transientRoot, avatar: null, panel: null,
       raycaster: new THREE.Raycaster(undefined, undefined, 0, VR_RAY_MAX_DISTANCE), controllers, hud, hudTexture,
@@ -455,6 +516,8 @@ export default function VrStage() {
       textureWarnings: new Set<string>(),
       grabbed: null, poseSequence: 0, eventSequence: 0, lastPoseSentAt: 0, lastPose: null,
       hoveredSelectable: null,
+      scenarioMenu, scenarioPanel, scenarioMenuOpen: false, scenarioPage: "catalog",
+      aPressed: false, renderScenarioMenu: () => undefined,
     };
     runtimeRef.current = runtime;
 
@@ -473,6 +536,72 @@ export default function VrStage() {
       disposeObject(runtime.panel);
       runtime.panel = null;
     };
+
+    const addScenarioButton = (label: string, action: string, x: number, color: number) => {
+      const button = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.58, 0.15),
+        new THREE.MeshBasicMaterial({
+          map: canvasTexture([label], 384, 100), transparent: true, depthTest: false, color,
+        }),
+      );
+      button.position.set(x, -0.43, 0.018);
+      button.renderOrder = 202;
+      button.userData.scenarioAction = action;
+      scenarioMenu.add(button);
+    };
+
+    runtime.renderScenarioMenu = () => {
+      while (scenarioMenu.children.length > 1) {
+        const child = scenarioMenu.children[scenarioMenu.children.length - 1];
+        scenarioMenu.remove(child);
+        disposeObject(child);
+      }
+      const state = scenarioStateRef.current;
+      const definition = state.scenarios[0];
+      const run = state.active_run;
+      let lines: string[];
+      if (run) {
+        lines = [
+          definition?.title || "VR test scenario",
+          "SIMULATED · LIVE STATUS, NOT A SCORE",
+          `Phase: ${run.phase.replace(/_/g, " ")}`,
+          run.progress_summary || "Waiting for an update…",
+          ...(run.error ? [`Error: ${run.error}`] : []),
+          "A closes this menu. Right trigger selects a control.",
+        ];
+        if (["preparing", "waiting_event", "planning", "running", "awaiting_approval", "cancelling"].includes(run.phase)) {
+          addScenarioButton(run.phase === "cancelling" ? "Stopping…" : "Cancel", "cancel", 0, 0xffb4a2);
+        }
+      } else if (runtime.scenarioPage === "confirm" && definition) {
+        lines = [
+          definition.title,
+          "SIMULATED · RESET CONFIRMATION",
+          definition.reset_notice,
+          "Real Google data will not be read or changed.",
+          "Start the scenario now?",
+        ];
+        addScenarioButton("Back", "back", -0.34, 0xffffff);
+        addScenarioButton("Start", "start", 0.34, 0xa7f3d0);
+      } else if (definition) {
+        lines = [
+          definition.title,
+          "SIMULATED",
+          definition.summary,
+          ...definition.sequence.slice(0, 4).map((item, index) => `${index + 1}. ${item}`),
+          `Shows: ${definition.demonstrates.slice(0, 3).join(" · ")}`,
+          "Select Details to review the reset and start.",
+        ];
+        addScenarioButton("Details", "details", 0, 0xa5f3fc);
+      } else {
+        lines = ["VR test scenarios", "Loading scenario catalogue…"];
+      }
+      if (state.error) lines.splice(2, 0, `Error: ${state.error}`);
+      const material = scenarioPanel.material as THREE.MeshBasicMaterial;
+      material.map?.dispose();
+      material.map = scenarioMenuTexture(lines);
+      material.needsUpdate = true;
+    };
+    runtime.renderScenarioMenu();
 
     const addCloseControl = (
       parent: THREE.Object3D,
@@ -496,6 +625,7 @@ export default function VrStage() {
     };
 
     const interactiveRoots = () => [
+      ...(runtime.scenarioMenuOpen ? [runtime.scenarioMenu] : []),
       ...(runtime.panel ? [runtime.panel] : []),
       furniture,
       transientRoot,
@@ -614,6 +744,22 @@ export default function VrStage() {
       if (controller.userData.handedness !== "right") return;
       const hit = rayHitFromController(controller);
       if (!hit) return;
+      const scenarioAction = hit.object.userData.scenarioAction as string | undefined;
+      if (scenarioAction) {
+        if (scenarioAction === "details") runtime.scenarioPage = "confirm";
+        if (scenarioAction === "back") runtime.scenarioPage = "catalog";
+        if (scenarioAction === "start") {
+          const definition = scenarioStateRef.current.scenarios[0];
+          if (definition) scenarioStateRef.current.start(definition.id);
+        }
+        if (scenarioAction === "cancel") {
+          const run = scenarioStateRef.current.active_run;
+          if (run) scenarioStateRef.current.cancel(run.run_id);
+        }
+        runtime.renderScenarioMenu();
+        return;
+      }
+      if (runtime.scenarioMenuOpen) return;
       const panelAction = hit.object.userData.panelAction as PanelAction | undefined;
       if (panelAction) {
         void activatePanelAction(panelAction);
@@ -741,7 +887,7 @@ export default function VrStage() {
       const inputSources = inputSourcesByHand(xrSession.inputSources);
       const left = inputSources.left?.gamepad;
       const right = inputSources.right?.gamepad;
-      if (left && left.axes.length >= 4 && currentStage) {
+      if (!runtime.scenarioMenuOpen && left && left.axes.length >= 4 && currentStage) {
         const rawAxes = questLocomotionStick(left.axes[2] || 0, left.axes[3] || 0);
         const axes = rescaleThumbstick(rawAxes.x, rawAxes.y, DEAD_ZONE);
         const referenceSpace = renderer.xr.getReferenceSpace();
@@ -778,7 +924,7 @@ export default function VrStage() {
           rig.position.z = nextZ;
         }
       }
-      if (right && right.axes.length >= 3) {
+      if (!runtime.scenarioMenuOpen && right && right.axes.length >= 3) {
         const axis = right.axes[2] || 0;
         const turn = snapTurnStep(axis, runtime.turnArmed, SNAP_THRESHOLD, SNAP_REARM, SNAP_RADIANS);
         if (turn.delta) {
@@ -807,6 +953,20 @@ export default function VrStage() {
           }
           runtime.xPressed = pressed;
         }
+      }
+      if (right && right.buttons.length > 4) {
+        const pressed = right.buttons[4].pressed;
+        if (pressedEdge(pressed, runtime.aPressed)) {
+          runtime.scenarioMenuOpen = !runtime.scenarioMenuOpen;
+          runtime.scenarioMenu.visible = runtime.scenarioMenuOpen;
+          if (runtime.scenarioMenuOpen) {
+            closePanel();
+            runtime.scenarioPage = "catalog";
+            scenarioStateRef.current.refresh();
+            runtime.renderScenarioMenu();
+          }
+        }
+        runtime.aPressed = pressed;
       }
       const rightController = runtime.controllers.find((controller) => controller.userData.handedness === "right");
       if (rightController) {

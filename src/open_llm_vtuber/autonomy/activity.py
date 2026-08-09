@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Awaitable, Callable
 
 from .agenda import AgendaEntry, AgendaStore, ExecutionCheckpoint
+from .action_context import AgendaApprovalRequired
 
 
 class ActivityStepTimeout(TimeoutError):
@@ -67,6 +68,18 @@ class ActivityExecutor:
                     self.run_step(entry, checkpoint),
                     timeout=checkpoint.timeout_seconds,
                 )
+        except AgendaApprovalRequired as exc:
+            checkpoint.state = "planned"
+            checkpoint.result_summary = str(exc)[:1000]
+            scope = exc.scope
+            self.store.transition(entry.id, "active", checkpoint=checkpoint)
+            self.store.block_for_authorization(
+                entry.id,
+                transaction_id=str(scope.pending_transaction_id),
+                capability=scope.capability or "external_action",
+                summary=scope.summary,
+            )
+            raise
         except asyncio.TimeoutError as exc:
             checkpoint.state = "uncertain" if checkpoint.side_effecting else "planned"
             checkpoint.result_summary = (

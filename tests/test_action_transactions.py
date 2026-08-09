@@ -84,6 +84,12 @@ async def test_exact_confirmation_commit_verification_and_duplicate_suppression(
     )
     assert proposed.is_error is True
     assert "Approval required" in proposed.text
+    assert proposed.metadata["action_transaction"]["state"] == (
+        "pending_confirmation"
+    )
+    assert proposed.metadata["action_transaction"]["transaction_id"].startswith(
+        "txn:"
+    )
     assert calls == 0
     _approve_pending(coordinator)
 

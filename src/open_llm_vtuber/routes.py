@@ -161,10 +161,18 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
 
     @router.get("/status")
     async def google_status():
+        from .demo_scenarios import simulated_fixture
+
+        if simulated_fixture() is not None:
+            return JSONResponse({"connected": True, "simulated": True})
         return JSONResponse(await run_in_threadpool(service.status))
 
     @router.get("/gmail/unread-status")
     async def gmail_unread_status():
+        from .demo_scenarios import simulated_fixture
+
+        if simulated_fixture() is not None:
+            return JSONResponse({"has_unread": True, "simulated": True})
         try:
             return JSONResponse(await run_in_threadpool(service.unread_status))
         except GoogleIntegrationError as exc:
@@ -177,12 +185,24 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
 
     @router.get("/gmail/unread")
     async def gmail_unread(page_size: int = 20, page_token: str = ""):
+        from .demo_scenarios import simulated_fixture
+
         if page_size < 1 or page_size > 50:
             return JSONResponse(
                 {"error": "page_size must be between 1 and 50."}, status_code=400
             )
         if len(page_token) > 2048:
             return JSONResponse({"error": "page_token is invalid."}, status_code=400)
+        fixture = simulated_fixture()
+        if fixture is not None:
+            return JSONResponse(
+                {
+                    "messages": [fixture["email"]],
+                    "next_page_token": None,
+                    "has_unread": True,
+                    "simulated": True,
+                }
+            )
         try:
             payload = await run_in_threadpool(
                 service.unread_messages,
@@ -341,8 +361,9 @@ def init_furniture_routes() -> APIRouter:
             return JSONResponse({"error": "invalid plan id"}, status_code=400)
         if plan_id.startswith("authz-"):
             try:
+                journal = get_action_transaction_journal(workspace_root())
                 transaction = await run_in_threadpool(
-                    get_action_transaction_journal(workspace_root()).decide,
+                    journal.decide,
                     plan_id,
                     decision=decision,
                 )
@@ -356,6 +377,43 @@ def init_furniture_routes() -> APIRouter:
                 return JSONResponse(
                     {"error": "no action is awaiting a decision under that id"},
                     status_code=404,
+                )
+            from .autonomy.agenda import get_agenda_store
+            from .autonomy.executive import get_connected_executive
+
+            agenda = get_agenda_store()
+            transaction_id = str(transaction.get("transaction_id", ""))
+            try:
+                state = await run_in_threadpool(agenda.load)
+                linked = next(
+                    (
+                        entry
+                        for entry in state.entries
+                        if entry.status == "blocked_approval"
+                        and entry.metadata.get("authorization_transaction_id")
+                        == transaction_id
+                    ),
+                    None,
+                )
+                if linked is not None:
+                    await run_in_threadpool(
+                        agenda.resolve_authorization,
+                        linked.id,
+                        transaction_id=transaction_id,
+                        decision=decision,
+                    )
+                    executive = get_connected_executive()
+                    if executive:
+                        executive.wake()
+            except (OSError, ValueError):
+                logger.exception("Could not update authorization-linked agenda")
+                return JSONResponse(
+                    {
+                        "error": (
+                            "authorization changed but linked agenda update failed"
+                        )
+                    },
+                    status_code=503,
                 )
             return JSONResponse(
                 {
