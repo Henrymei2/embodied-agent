@@ -20,6 +20,7 @@ import {
 } from "@/utils/vr-furniture-models";
 import {
   floorToScene,
+  furniturePanelLayout,
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   headRelativeDelta,
@@ -27,16 +28,15 @@ import {
   inputSourcesByHand,
   isViewerPositionClear,
   pressedEdge,
-  preferPhysicalVrRayHits,
   isRayGrabbableNode,
   nextEmailPage,
   questLocomotionStick,
   rescaleThumbstick,
   selectVrRayHit,
-  selectionProxyDimensions,
   selectViewerSpawn,
   snapTurnStep,
   transientTriggerBehavior,
+  updateFurniturePanelProximity,
   clampCaptionText,
   viewerForwardFromPose,
   viewerPoseCamera,
@@ -69,7 +69,7 @@ interface VrRuntime {
   furniture: THREE.Group;
   transientRoot: THREE.Group;
   avatar: THREE.Group | null;
-  panel: THREE.Mesh | null;
+  panels: Map<string, THREE.Mesh>;
   raycaster: THREE.Raycaster;
   controllers: THREE.XRTargetRaySpace[];
   hud: THREE.Mesh;
@@ -78,7 +78,8 @@ interface VrRuntime {
   xPressed: boolean;
   lastFrame: number;
   collisionNodes: VrStageNode[];
-  panelGeneration: number;
+  panelGenerations: Map<string, number>;
+  dismissedPanels: Set<string>;
   textureWarnings: Set<string>;
   grabbed: { object: THREE.Object3D; entityId: string; kind: "prop" | "transient"; wasOffered: boolean } | null;
   poseSequence: number;
@@ -172,7 +173,7 @@ function roundedRect(
   context.closePath();
 }
 
-function canvasTexture(lines: string[], width = 768, height = 256) {
+function canvasTexture(lines: string[], width = 768, height = 256, maxLines = 5) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -188,7 +189,7 @@ function canvasTexture(lines: string[], width = 768, height = 256) {
   context.stroke();
   context.fillStyle = "#f8fafc";
   context.font = "600 34px system-ui, sans-serif";
-  lines.slice(0, 5).forEach((line, index) => {
+  lines.slice(0, maxLines).forEach((line, index) => {
     const clipped = line.length > 48 ? `${line.slice(0, 47)}…` : line;
     context.fillText(clipped, 30, 52 + index * 43);
   });
@@ -508,11 +509,12 @@ export default function VrStage() {
     scenarioMenu.add(scenarioPanel);
 
     const runtime: VrRuntime = {
-      scene, renderer, camera, rig, furniture, transientRoot, avatar: null, panel: null,
+      scene, renderer, camera, rig, furniture, transientRoot, avatar: null,
+      panels: new Map(),
       raycaster: new THREE.Raycaster(undefined, undefined, 0, VR_RAY_MAX_DISTANCE), controllers, hud, hudTexture,
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
       collisionNodes: [],
-      panelGeneration: 0,
+      panelGenerations: new Map(), dismissedPanels: new Set(),
       textureWarnings: new Set<string>(),
       grabbed: null, poseSequence: 0, eventSequence: 0, lastPoseSentAt: 0, lastPose: null,
       hoveredSelectable: null,
@@ -524,17 +526,32 @@ export default function VrStage() {
     const setPanelLines = (panel: THREE.Mesh, lines: string[]) => {
       const material = panel.material as THREE.MeshBasicMaterial;
       const previous = material.map;
-      material.map = canvasTexture(lines, 768, 300);
+      const layout = furniturePanelLayout(panel.userData.provider as string | undefined);
+      material.map = canvasTexture(
+        lines,
+        layout.textureWidth,
+        layout.textureHeight,
+        layout.maxLines,
+      );
       material.needsUpdate = true;
       previous?.dispose();
     };
 
-    const closePanel = () => {
-      runtime.panelGeneration += 1;
-      if (!runtime.panel) return;
-      scene.remove(runtime.panel);
-      disposeObject(runtime.panel);
-      runtime.panel = null;
+    const closePanel = (nodeId: string, dismiss = false) => {
+      runtime.panelGenerations.set(
+        nodeId,
+        (runtime.panelGenerations.get(nodeId) || 0) + 1,
+      );
+      if (dismiss) runtime.dismissedPanels.add(nodeId);
+      const panel = runtime.panels.get(nodeId);
+      if (!panel) return;
+      scene.remove(panel);
+      disposeObject(panel);
+      runtime.panels.delete(nodeId);
+    };
+
+    const closeAllPanels = () => {
+      [...runtime.panels.keys()].forEach((nodeId) => closePanel(nodeId));
     };
 
     const addScenarioButton = (label: string, action: string, x: number, color: number) => {
@@ -626,7 +643,7 @@ export default function VrStage() {
 
     const interactiveRoots = () => [
       ...(runtime.scenarioMenuOpen ? [runtime.scenarioMenu] : []),
-      ...(runtime.panel ? [runtime.panel] : []),
+      ...runtime.panels.values(),
       furniture,
       transientRoot,
       ...(runtime.avatar ? [runtime.avatar] : []),
@@ -640,7 +657,7 @@ export default function VrStage() {
       runtime.raycaster.set(origin, direction);
       const hits = runtime.raycaster.intersectObjects(interactiveRoots(), true);
       return selectVrRayHit(
-        preferPhysicalVrRayHits(hits),
+        hits,
         origin,
         direction,
       );
@@ -660,19 +677,24 @@ export default function VrStage() {
       setOutline(mesh, selectionHighlightEnabled);
     };
 
-    const selectFurniture = async (node: VrStageNode) => {
-      const closingCurrent = runtime.panel?.userData.nodeId === node.id;
-      closePanel();
-      if (closingCurrent) return;
+    const openFurniturePanel = async (node: VrStageNode) => {
+      if (runtime.panels.has(node.id) || runtime.dismissedPanels.has(node.id)) return;
       const windowConfig: NonNullable<VrStageNode["uiWindow"]> = node.uiWindow || {
         title: node.label || node.id,
         body: "No additional information is available for this furniture.",
       };
-      const generation = runtime.panelGeneration;
+      const layout = furniturePanelLayout(windowConfig.provider);
+      const generation = (runtime.panelGenerations.get(node.id) || 0) + 1;
+      runtime.panelGenerations.set(node.id, generation);
       const lines = [windowConfig.title, windowConfig.body || "", "Loading…"];
-      const panelTexture = canvasTexture(lines, 768, 300);
+      const panelTexture = canvasTexture(
+        lines,
+        layout.textureWidth,
+        layout.textureHeight,
+        layout.maxLines,
+      );
       const panel = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.5, 0.59),
+        new THREE.PlaneGeometry(layout.width, layout.height),
         new THREE.MeshBasicMaterial({ map: panelTexture, transparent: true, side: THREE.DoubleSide }),
       );
       const position = documentToScene(stageRef.current!, node.x, node.y);
@@ -684,9 +706,18 @@ export default function VrStage() {
       panel.userData.panel = true;
       panel.userData.node = node;
       panel.userData.nodeId = node.id;
-      addCloseControl(panel, new THREE.Vector3(0.63, 0.22, 0.012), { panelClose: true });
+      panel.userData.provider = windowConfig.provider;
+      addCloseControl(
+        panel,
+        new THREE.Vector3(
+          layout.closePosition.x,
+          layout.closePosition.y,
+          layout.closePosition.z,
+        ),
+        { panelClose: node.id },
+      );
       scene.add(panel);
-      runtime.panel = panel;
+      runtime.panels.set(node.id, panel);
 
       const route = windowConfig.provider ? providerRoutes[windowConfig.provider] : undefined;
       let liveData: Record<string, unknown> | null = null;
@@ -704,8 +735,11 @@ export default function VrStage() {
           lines.splice(2, 0, "Live data unavailable");
         }
       }
-      if (runtime.panel !== panel || runtime.panelGeneration !== generation) return;
-      lines.splice(lines.indexOf("Loading…"), 1, "Select the furniture again to close");
+      if (
+        runtime.panels.get(node.id) !== panel ||
+        runtime.panelGenerations.get(node.id) !== generation
+      ) return;
+      lines.splice(lines.indexOf("Loading…"), 1, "Close hides this panel until you leave");
       setPanelLines(panel, lines);
       const pending = Array.isArray(liveData?.pending) ? liveData.pending[0] as Record<string, unknown> | undefined : undefined;
       const collection = windowConfig.provider === "plan_status" ? "plans" : windowConfig.provider === "skill_status" ? "skills" : null;
@@ -719,7 +753,7 @@ export default function VrStage() {
               transparent: true,
             }),
           );
-          button.position.set(index === 0 ? -0.32 : 0.32, -0.39, 0.01);
+          button.position.set(index === 0 ? -0.32 : 0.32, layout.actionY, 0.01);
           button.userData.panelAction = { collection, id: decisionId, decision } satisfies PanelAction;
           panel.add(button);
         });
@@ -765,8 +799,9 @@ export default function VrStage() {
         void activatePanelAction(panelAction);
         return;
       }
-      if (hit.object.userData.panelClose === true) {
-        closePanel();
+      const panelClose = hit.object.userData.panelClose as string | undefined;
+      if (panelClose) {
+        closePanel(panelClose, true);
         return;
       }
       const transientClose = hit.object.userData.transientClose as string | undefined;
@@ -782,8 +817,6 @@ export default function VrStage() {
         updateTransient({ ...transientHit, page });
         return;
       }
-      const node = ancestorData<VrStageNode>(hit.object, "node");
-      if (node) void selectFurniture(node);
     };
     const handleConnected = (event: THREE.Event & { target: THREE.Object3D; data: XRInputSource }) => {
       event.target.userData.handedness = event.data.handedness;
@@ -960,7 +993,7 @@ export default function VrStage() {
           runtime.scenarioMenuOpen = !runtime.scenarioMenuOpen;
           runtime.scenarioMenu.visible = runtime.scenarioMenuOpen;
           if (runtime.scenarioMenuOpen) {
-            closePanel();
+            closeAllPanels();
             runtime.scenarioPage = "catalog";
             scenarioStateRef.current.refresh();
             runtime.renderScenarioMenu();
@@ -983,7 +1016,6 @@ export default function VrStage() {
           : undefined;
         setHoveredSelectable(
           hoveredRoot && (
-            hoveredNode?.type === "furniture" ||
             isRayGrabbableNode(hoveredNode) ||
             hoveredTransient !== undefined
           ) ? hoveredRoot : null,
@@ -1046,14 +1078,61 @@ export default function VrStage() {
         visuals.chest.scale.setScalar(1 + Math.max(0, pulse) * 0.08);
         visuals.halo.rotation.z = time * 0.00012;
       }
-      if (runtime.panel) {
+      if (currentStage) {
         const headsetPosition = viewerPoseCamera(renderer.xr.getCamera())
           .getWorldPosition(new THREE.Vector3());
-        const facingTarget = horizontalBillboardTarget(runtime.panel.position, headsetPosition);
-        const target = facingQuaternion(runtime.panel.position, new THREE.Vector3(
-          facingTarget.x, facingTarget.y, facingTarget.z,
-        ));
-        runtime.panel.quaternion.slerp(target, 1 - Math.exp(-PANEL_FACING_DAMPING * dt));
+        const userPosition = {
+          x: headsetPosition.x / SCALE + currentStage.room.width / 2,
+          y: currentStage.room.depth / 2 - headsetPosition.z / SCALE,
+        };
+        const avatarPosition = runtime.avatar
+          ?.getWorldPosition(new THREE.Vector3());
+        const agentPosition = avatarPosition ? {
+          x: avatarPosition.x / SCALE + currentStage.room.width / 2,
+          y: currentStage.room.depth / 2 - avatarPosition.z / SCALE,
+        } : null;
+        const furnitureNodes = currentStage.nodes.filter(
+          (node) => node.type === "furniture",
+        );
+        const proximity = updateFurniturePanelProximity(
+          furnitureNodes,
+          userPosition,
+          agentPosition,
+          currentStage.world.reach_ceiling,
+          {
+            visible: new Set(runtime.panels.keys()),
+            dismissed: runtime.dismissedPanels,
+          },
+        );
+        runtime.dismissedPanels = new Set(proximity.dismissed);
+        const desiredPanels = runtime.scenarioMenuOpen
+          ? new Set<string>()
+          : proximity.visible;
+
+        [...runtime.panels.keys()].forEach((nodeId) => {
+          if (!desiredPanels.has(nodeId)) closePanel(nodeId);
+        });
+        furnitureNodes.forEach((node) => {
+          if (desiredPanels.has(node.id) && !runtime.panels.has(node.id)) {
+            void openFurniturePanel(node);
+          }
+        });
+
+        runtime.panels.forEach((panel, nodeId) => {
+          const node = furnitureNodes.find((candidate) => candidate.id === nodeId);
+          if (!node) return;
+          const position = documentToScene(currentStage, node.x, node.y);
+          panel.position.set(
+            position.x,
+            Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE),
+            position.z,
+          );
+          const facingTarget = horizontalBillboardTarget(panel.position, headsetPosition);
+          const target = facingQuaternion(panel.position, new THREE.Vector3(
+            facingTarget.x, facingTarget.y, facingTarget.z,
+          ));
+          panel.quaternion.slerp(target, 1 - Math.exp(-PANEL_FACING_DAMPING * dt));
+        });
       }
       if (currentStage) {
         const headset = viewerPoseCamera(renderer.xr.getCamera());
@@ -1227,20 +1306,6 @@ export default function VrStage() {
       edge.raycast = () => undefined;
       root.add(edge);
       root.userData.selectionOutline = edge;
-      if (node.type === "furniture") {
-        const proxy = selectionProxyDimensions(node);
-        const selectionProxy = new THREE.Mesh(
-          new THREE.BoxGeometry(
-            proxy.width,
-            proxy.height,
-            proxy.depth,
-          ),
-          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
-        );
-        selectionProxy.userData.node = node;
-        selectionProxy.userData.selectionProxy = true;
-        root.add(selectionProxy);
-      }
       root.traverse((child) => { child.userData.node = node; });
       const propState = node.type === "prop" ? propStates[node.id] : undefined;
       if (propState && runtime.avatar) {

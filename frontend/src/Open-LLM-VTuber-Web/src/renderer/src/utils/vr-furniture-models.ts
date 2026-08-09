@@ -39,7 +39,7 @@ export const FURNITURE_MODEL_ASSETS: Readonly<
 > = {
   archive_shelf: { src: `${VR_MODEL_ROOT}/archive-shelf.glb` },
   bed: { src: `${VR_MODEL_ROOT}/bed.glb`, rotationY: Math.PI / 2 },
-  bookshelf: { src: `${VR_MODEL_ROOT}/bookshelf.glb` },
+  bookshelf: { src: `${VR_MODEL_ROOT}/bookshelf.glb`, rotationY: Math.PI },
   calendar: wallCorkboard,
   computer: {
     src: `${VR_MODEL_ROOT}/writing-desk.glb`,

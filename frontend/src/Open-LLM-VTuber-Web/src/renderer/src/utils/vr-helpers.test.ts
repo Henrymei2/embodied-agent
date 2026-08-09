@@ -3,15 +3,16 @@ import * as THREE from "three";
 import {
   clampCaptionText,
   floorToScene,
+  furnitureInteractionReach,
   furnitureCenterSceneY,
   furnitureDecalLayouts,
+  furniturePanelLayout,
   browserEndpoints,
   headRelativeDelta,
   horizontalBillboardTarget,
   inputSourcesByHand,
   isViewerPositionClear,
   pointInsideAabb,
-  preferPhysicalVrRayHits,
   isRayGrabbableNode,
   nextEmailPage,
   parseVrSelectionHighlight,
@@ -19,11 +20,11 @@ import {
   questLocomotionStick,
   rescaleThumbstick,
   selectVrRayHit,
-  selectionProxyDimensions,
   selectDockingPoint,
   selectViewerSpawn,
   snapTurnStep,
   transientTriggerBehavior,
+  updateFurniturePanelProximity,
   validateVrStageShape,
   viewerForwardFromPose,
   viewerPoseCamera,
@@ -125,11 +126,7 @@ describe("Quest controller helpers", () => {
     )?.kind).toBe("opposite-wall");
   });
 
-  it("lets real grabbable geometry take precedence over selection proxies", () => {
-    const proxy = { distance: 1, object: { userData: { selectionProxy: true } } };
-    const prop = { distance: 1.1, object: { userData: {} } };
-    expect(preferPhysicalVrRayHits([proxy, prop])).toEqual([prop]);
-    expect(preferPhysicalVrRayHits([proxy])).toEqual([proxy]);
+  it("identifies only explicitly grabbable props as ray-grabbable", () => {
     expect(isRayGrabbableNode({ type: "prop", interaction: { grabbable: true } })).toBe(true);
     expect(isRayGrabbableNode({ type: "furniture", interaction: { grabbable: true } })).toBe(false);
   });
@@ -241,6 +238,87 @@ describe("Quest controller helpers", () => {
 });
 
 describe("VR furniture presentation helpers", () => {
+  const furniture = [
+    { id: "desk", x: 100, y: 100, width: 100, depth: 60 },
+    { id: "shelf", x: 400, y: 100, width: 120, depth: 40 },
+  ];
+
+  it("uses the semantic furniture reach with the scene ceiling", () => {
+    expect(furnitureInteractionReach(furniture[0], 150)).toBe(110);
+    expect(furnitureInteractionReach({ ...furniture[0], reach: 140 }, 120)).toBe(120);
+  });
+
+  it("opens independent panels when either the user or agent is near", () => {
+    const next = updateFurniturePanelProximity(
+      furniture,
+      { x: 100, y: 210 },
+      { x: 400, y: 220 },
+      150,
+      { visible: new Set(), dismissed: new Set() },
+    );
+    expect([...next.visible]).toEqual(["desk", "shelf"]);
+  });
+
+  it("keeps visible panels through the exit buffer, then closes them independently", () => {
+    const buffered = updateFurniturePanelProximity(
+      furniture,
+      { x: 100, y: 225 },
+      null,
+      150,
+      { visible: new Set(["desk", "shelf"]), dismissed: new Set() },
+    );
+    expect([...buffered.visible]).toEqual(["desk"]);
+
+    const outside = updateFurniturePanelProximity(
+      furniture,
+      { x: 100, y: 236 },
+      null,
+      150,
+      buffered,
+    );
+    expect([...outside.visible]).toEqual([]);
+  });
+
+  it("suppresses a dismissed panel until both occupants leave the buffered area", () => {
+    const held = updateFurniturePanelProximity(
+      furniture,
+      { x: 100, y: 100 },
+      { x: 100, y: 230 },
+      150,
+      { visible: new Set(), dismissed: new Set(["desk"]) },
+    );
+    expect([...held.visible]).toEqual([]);
+    expect([...held.dismissed]).toEqual(["desk"]);
+
+    const cleared = updateFurniturePanelProximity(
+      furniture,
+      { x: 300, y: 300 },
+      { x: 300, y: 300 },
+      150,
+      held,
+    );
+    expect([...cleared.dismissed]).toEqual([]);
+
+    const returned = updateFurniturePanelProximity(
+      furniture,
+      { x: 100, y: 100 },
+      null,
+      150,
+      cleared,
+    );
+    expect([...returned.visible]).toEqual(["desk"]);
+  });
+
+  it("makes the Plans panel taller without widening it and keeps controls inside", () => {
+    const standard = furniturePanelLayout("bookshelf");
+    const plans = furniturePanelLayout("plan_status");
+    expect(plans.width).toBe(standard.width);
+    expect(plans.height).toBeGreaterThan(standard.height);
+    expect(plans.maxLines).toBeGreaterThan(standard.maxLines);
+    expect(Math.abs(plans.closePosition.y) + 0.07).toBeLessThanOrEqual(plans.height / 2);
+    expect(Math.abs(plans.actionY) + 0.075).toBeLessThanOrEqual(plans.height / 2);
+  });
+
   it("keeps furniture panels level while targeting the viewer", () => {
     expect(horizontalBillboardTarget(
       { x: 1, y: 1.4, z: 2 },
@@ -254,14 +332,6 @@ describe("VR furniture presentation helpers", () => {
     expect(transientTriggerBehavior("email_card", "message body")).toBe("page");
     expect(nextEmailPage(0, 1601)).toBe(1);
     expect(nextEmailPage(3, 1601)).toBe(0);
-  });
-
-  it("adds fifteen centimetres of ray-selection tolerance on every face", () => {
-    expect(selectionProxyDimensions({ width: 100, height: 80, depth: 40 })).toEqual({
-      width: 1.3,
-      height: 1.1,
-      depth: 0.7,
-    });
   });
 
   it("uses elevation as the furniture centre without adding half-height", () => {

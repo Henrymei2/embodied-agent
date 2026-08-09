@@ -38,8 +38,9 @@ Run this pass before guests arrive:
 4. Enter VR and confirm the companion starts at a comfortable conversation
    distance, centered in view, with no caption panel while idle.
 5. Speak one short prompt, interrupt one response, toggle the microphone with
-   left X, walk with the left stick, snap-turn with the right stick, and point
-   at one furniture object with the right trigger.
+   left X, walk with the left stick, snap-turn with the right stick, approach
+   one furniture object to open its panel, and use the right trigger on a panel
+   control.
 6. Confirm locomotion slides along furniture rather than entering it, captions
    stay below the companion, and **Exit VR** returns to the desktop workspace.
 7. Re-enter VR once. This catches session cleanup, microphone, texture, and

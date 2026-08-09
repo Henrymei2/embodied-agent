@@ -355,7 +355,12 @@ async def test_cancel_after_tool_result_preserves_completed_safe_boundary(tmp_pa
     async def immediate_result(_entry, _checkpoint):
         return "result already consumed"
 
-    executor = ActivityExecutor(store, immediate_result, _emit)
+    executor = ActivityExecutor(
+        store,
+        immediate_result,
+        _emit,
+        max_plausible_duration_seconds=60,
+    )
     task = asyncio.create_task(executor.execute(entry, checkpoint))
     for _ in range(20):
         await asyncio.sleep(0)
@@ -431,21 +436,26 @@ async def test_short_generated_pursuit_gets_a_complete_execution_window(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_insufficient_execution_window_fails_before_dispatch(tmp_path):
+async def test_short_execution_window_reduces_timeout_and_still_dispatches(tmp_path):
     class Planner:
         async def next_step(self, _entry, _context):
             return ExecutionCheckpoint(
                 step_id="too-late",
                 kind="reflect",
                 state="planned",
-                timeout_seconds=1,
+                timeout_seconds=120,
             )
 
-    dispatched = False
+        async def evaluate_completion(self, _entry, _evidence):
+            return True, "completed inside the remaining window"
 
-    async def run_step(_entry, _checkpoint):
-        nonlocal dispatched
+    dispatched = False
+    applied_timeout = None
+
+    async def run_step(_entry, checkpoint):
+        nonlocal applied_timeout, dispatched
         dispatched = True
+        applied_timeout = checkpoint.timeout_seconds
         return "should not run"
 
     store = AgendaStore(tmp_path)
@@ -457,9 +467,9 @@ async def test_insufficient_execution_window_fails_before_dispatch(tmp_path):
     assert await executive._advance_entry(store.load().entries[0]) is True
 
     current = store.load().entries[0]
-    assert current.status == "failed"
-    assert "no action was started" in current.progress_summary
-    assert dispatched is False
+    assert current.status == "completed"
+    assert dispatched is True
+    assert applied_timeout == 30
 
 
 @pytest.mark.asyncio

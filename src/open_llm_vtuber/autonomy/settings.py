@@ -23,7 +23,8 @@ class AutonomySettings:
     planner_retry_backoff_seconds: float = 2.0
     planner_circuit_failure_threshold: int = 3
     planner_circuit_max_seconds: int = 1800
-    step_timeout_seconds: int = 120
+    step_timeout_seconds: int = 30
+    max_plausible_duration_seconds: float = 0.0
     human_preemption_timeout_seconds: float = 0.25
     fallback_reconsideration_seconds: int = 300
     store_poll_seconds: float = 1.0
@@ -126,6 +127,11 @@ class AutonomySettings:
         )
         object.__setattr__(
             self, "step_timeout_seconds", max(5, int(self.step_timeout_seconds))
+        )
+        object.__setattr__(
+            self,
+            "max_plausible_duration_seconds",
+            max(0.0, min(60.0, float(self.max_plausible_duration_seconds))),
         )
         object.__setattr__(
             self,
@@ -256,7 +262,10 @@ class AutonomySettings:
             planner_circuit_max_seconds=int(
                 getattr(cfg, "planner_circuit_max_seconds", 1800)
             ),
-            step_timeout_seconds=int(getattr(cfg, "step_timeout_seconds", 120)),
+            step_timeout_seconds=int(getattr(cfg, "step_timeout_seconds", 30)),
+            max_plausible_duration_seconds=float(
+                getattr(cfg, "max_plausible_duration_seconds", 0.0)
+            ),
             human_preemption_timeout_seconds=float(
                 getattr(cfg, "human_preemption_timeout_seconds", 0.25)
             ),

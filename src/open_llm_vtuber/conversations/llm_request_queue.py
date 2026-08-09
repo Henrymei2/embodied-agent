@@ -28,6 +28,25 @@ PRIORITY_SCHEDULED = 10  # scheduled background task
 PRIORITY_PASSIVE = 20  # memory compaction, housekeeping, etc.
 
 
+class QueueExecutionTimeout(TimeoutError):
+    """Work exceeded its execution budget after leaving the queue."""
+
+    def __init__(
+        self,
+        timeout_seconds: float,
+        *,
+        queue_wait_seconds: float,
+        execution_seconds: float,
+    ) -> None:
+        super().__init__(
+            f"queued work timed out after {timeout_seconds:g}s of execution"
+        )
+        self.timeout_seconds = timeout_seconds
+        self.queue_wait_seconds = queue_wait_seconds
+        self.execution_seconds = execution_seconds
+        self.timeout_stage = "execution"
+
+
 @dataclass(order=True)
 class _QueueItem:
     """Wrapper that makes coroutines orderable by priority."""
@@ -176,14 +195,40 @@ class ClientRequestQueue:
         dedupe_key: str,
         entry_id: Optional[str] = None,
         work_class: str = "autonomous",
+        execution_timeout_seconds: Optional[float] = None,
+        on_started: Optional[Callable[[], None]] = None,
     ) -> Any:
-        """Enqueue work and return its result to the lifecycle that owns it."""
+        """Enqueue work and return its result to the lifecycle that owns it.
+
+        ``execution_timeout_seconds`` starts when the worker begins this item,
+        so time spent behind higher-priority requests never consumes the work's
+        execution budget.
+        """
         loop = asyncio.get_running_loop()
         result: asyncio.Future = loop.create_future()
+        queued_at = loop.time()
 
         async def tracked_work():
+            started_at = loop.time()
+            queue_wait_seconds = started_at - queued_at
             try:
-                value = await coro_factory()
+                if on_started is not None:
+                    on_started()
+                work = coro_factory()
+                if execution_timeout_seconds is None:
+                    value = await work
+                else:
+                    timeout = max(0.001, float(execution_timeout_seconds))
+                    value = await asyncio.wait_for(work, timeout=timeout)
+            except asyncio.TimeoutError as exc:
+                timeout_error = QueueExecutionTimeout(
+                    float(execution_timeout_seconds),
+                    queue_wait_seconds=queue_wait_seconds,
+                    execution_seconds=loop.time() - started_at,
+                )
+                if not result.done():
+                    result.set_exception(timeout_error)
+                raise timeout_error from exc
             except asyncio.CancelledError:
                 if not result.done():
                     result.cancel()

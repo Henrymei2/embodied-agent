@@ -93,7 +93,7 @@ object in place.
 | Right thumbstick axis 2 | 30-degree snap turn |
 | Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
 | Right A, `buttons[4]` | Toggle the camera-relative VR test-scenario menu |
-| Right primary trigger / `select` | Select furniture or an in-world panel control |
+| Right primary trigger / `select` | Select an in-world panel control |
 | Right `squeezestart` / `squeezeend` | Grab or release a nearby prop, or a ray-targeted card/panel within 3 m |
 
 Quest 3 is the only supported controller profile. A left controller without
@@ -159,16 +159,21 @@ reports both in reference-space coordinates; parenting controllers at the scene
 root while moving only the camera rig leaves the ray behind at its initial
 world position and makes interaction disagree with locomotion.
 
-Selecting furniture with the right trigger is a local UI action: it toggles the
-furniture panel and does not send an `object-interaction` conversation trigger
-to the agent. Furniture without a configured `uiWindow` still opens a generic
-panel naming the object and stating that no additional data is available. A
-panel is positioned above or beside its furniture and smoothly tracks the
-headset around the vertical axis. It closes when the furniture or its enlarged
-Close control is selected again. Only one panel may be open. Furniture has a
-15 cm selection-only proxy on every face; it does not change collision or
-semantic reach. The hovered outline is enabled by default and can be disabled
-in General settings.
+Furniture panels are driven by proximity rather than selecting fixed furniture.
+A panel opens when either the user or agent enters the furniture's semantic
+reach: an explicit bounded `reach`, or 60 cm beyond the furniture's largest
+half-span. It remains visible through a 25 cm exit buffer and closes once both
+occupants leave that buffered area. Multiple panels may be visible when the
+user and agent are near different furniture. Furniture without a configured
+`uiWindow` still opens a generic panel naming the object and stating that no
+additional data is available.
+
+A panel is positioned above or beside its furniture and smoothly tracks the
+headset around the vertical axis. Selecting its enlarged Close control hides
+that panel until both occupants leave the buffered area; returning later opens
+it again. Opening the VR test-scenario menu temporarily hides furniture panels.
+Fixed furniture is not trigger-selectable and does not receive a selectable
+hover highlight.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,
@@ -668,8 +673,9 @@ On a physical Meta Quest 3 over trusted HTTPS:
 5. Complete a voice conversation with streamed audio, subtitle updates, and
    interruption. Confirm the caption never covers the companion and disappears
    while idle.
-6. Select every furniture class with the right ray, open dynamic panels, and
-   exercise one plan or skill decision.
+6. Approach every furniture class as the user or agent, verify dynamic panels
+   open and close by distance, and exercise one plan or skill decision with the
+   right ray.
 7. Ask the agent to move furniture at the design board; reconnect and restart
    the server, then confirm only the VR layout changed.
 8. Confirm an agent path may visibly cross a box but no waypoint or final

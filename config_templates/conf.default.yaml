@@ -58,7 +58,10 @@ system_config:
     planner_retry_backoff_seconds: 2
     planner_circuit_failure_threshold: 3
     planner_circuit_max_seconds: 1800
-    step_timeout_seconds: 120
+    # Hard timeout after an autonomous Agent/tool step leaves the request queue.
+    step_timeout_seconds: 30
+    # Artificial post-result pacing is disabled by default.
+    max_plausible_duration_seconds: 0
     human_preemption_timeout_seconds: 0.25
     fallback_reconsideration_seconds: 300
     store_poll_seconds: 1

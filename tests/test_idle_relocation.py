@@ -316,10 +316,35 @@ async def _complete_entry(executive, store, entry_id: str) -> None:
     raise AssertionError(f"entry {entry_id} did not complete")
 
 
-async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_path):
+async def test_explicit_idle_entry_may_relocate_once(tmp_path):
+    proposal = _pursuit(title="Unused successor", status="proposed")
+    planner = _LifecyclePlanner(proposal)
+    relocations: list[IdlePlacement] = []
+
+    async def relocate(placement):
+        relocations.append(placement)
+        return True
+
+    store, executive = _executive(tmp_path, planner, relocate)
+    idle = create_entry(
+        kind="idle",
+        title="Wait briefly",
+        description="Remain available.",
+        origin="recovery",
+        evidence_refs=["system:test"],
+        completion_condition="The wait ends.",
+        time_budget_seconds=60,
+        status="active",
+    )
+    store.add(idle)
+
+    assert await executive._advance_entry(idle) is True
+    assert len(relocations) == 1
+    assert store.load().entries[0].metadata["idle_relocation_attempted"] is True
+
+
+async def test_successor_planning_does_not_start_or_wait_for_idle_relocation(tmp_path):
     generation_gate = asyncio.Event()
-    relocation_gate = asyncio.Event()
-    relocation_started = asyncio.Event()
     completed = _pursuit(status="completed", title="Finished earlier work")
     proposal = _pursuit(
         title="Choose the next useful pursuit",
@@ -328,9 +353,10 @@ async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_pa
     )
     planner = _LifecyclePlanner(proposal, generation_gate=generation_gate)
 
-    async def relocate(_placement):
-        relocation_started.set()
-        await relocation_gate.wait()
+    relocations: list[IdlePlacement] = []
+
+    async def relocate(placement):
+        relocations.append(placement)
         return True
 
     emitted: list[dict] = []
@@ -338,14 +364,11 @@ async def test_planning_overlaps_relocation_but_advance_waits_for_arrival(tmp_pa
     store.add(completed)
 
     advance = asyncio.create_task(executive._advance())
-    await asyncio.wait_for(relocation_started.wait(), timeout=1)
     await asyncio.wait_for(planner.generation_started.wait(), timeout=1)
     generation_gate.set()
-    await asyncio.sleep(0)
-
-    assert not advance.done()
-    relocation_gate.set()
     assert await asyncio.wait_for(advance, timeout=1) is True
+    assert relocations == []
+    assert planner.choose_calls == 0
     assert [entry.kind for entry in store.load().entries] == ["pursuit", "pursuit"]
     phases = [
         event["phase"] for event in emitted if event.get("type") == "agent_activity"
@@ -372,7 +395,7 @@ async def test_runnable_queued_work_does_not_trigger_idle_relocation(tmp_path):
     assert store.load().entries[0].status == "completed"
 
 
-async def test_invalid_planner_output_and_relocation_failure_do_not_block_successor(
+async def test_successor_generation_does_not_invoke_idle_relocation(
     tmp_path,
 ):
     completed = _pursuit(status="completed", title="Finished autonomous work")
@@ -397,11 +420,12 @@ async def test_invalid_planner_output_and_relocation_failure_do_not_block_succes
     store.add(completed)
 
     assert await asyncio.wait_for(executive._advance(), timeout=1) is True
-    assert placements[0].object_id == "sofa"
+    assert placements == []
+    assert planner.choose_calls == 0
     assert any(entry.title == proposal.title for entry in store.load().entries)
 
 
-async def test_held_state_settles_once_and_pause_stops_relocation(tmp_path):
+async def test_held_state_does_not_start_idle_relocation(tmp_path):
     proposal = _pursuit(status="blocked_approval", requires_approval=True)
     planner = _LifecyclePlanner(proposal)
 
@@ -413,23 +437,21 @@ async def test_held_state_settles_once_and_pause_stops_relocation(tmp_path):
 
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 1
+    assert planner.choose_calls == 0
 
     await executive.pause(True)
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 1
+    assert planner.choose_calls == 0
 
     await executive.pause(False)
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 2
+    assert planner.choose_calls == 0
 
 
-async def test_user_preempts_settling_without_creating_an_idle_entry(tmp_path):
+async def test_user_preempts_successor_generation_without_idle_relocation(tmp_path):
     generation_gate = asyncio.Event()
-    relocation_started = asyncio.Event()
-    relocation_cancelled = asyncio.Event()
     completed = _pursuit(status="completed", title="Finished autonomous work")
     proposal = _pursuit(
         title="Future work",
@@ -438,23 +460,22 @@ async def test_user_preempts_settling_without_creating_an_idle_entry(tmp_path):
     )
     planner = _LifecyclePlanner(proposal, generation_gate=generation_gate)
 
-    async def relocate(_placement):
-        relocation_started.set()
-        try:
-            await asyncio.Event().wait()
-        finally:
-            relocation_cancelled.set()
+    relocations: list[IdlePlacement] = []
+
+    async def relocate(placement):
+        relocations.append(placement)
+        return True
 
     emitted: list[dict] = []
     store, executive = _executive(tmp_path, planner, relocate, emitted=emitted)
     store.add(completed)
 
     advance = asyncio.create_task(executive._advance())
-    await asyncio.wait_for(relocation_started.wait(), timeout=1)
+    await asyncio.wait_for(planner.generation_started.wait(), timeout=1)
     user = await executive.preempt_for_user("Help now")
 
     assert await asyncio.wait_for(advance, timeout=1) is True
-    assert relocation_cancelled.is_set()
+    assert relocations == []
     state = store.load()
     assert (
         next(entry for entry in state.entries if entry.id == user.id).status == "active"

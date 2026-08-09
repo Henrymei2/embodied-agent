@@ -20,7 +20,9 @@ from src.open_llm_vtuber.conversations.llm_request_queue import (
     PRIORITY_PASSIVE,
     PRIORITY_USER,
     ClientRequestQueue,
+    QueueExecutionTimeout,
 )
+import pytest
 from src.open_llm_vtuber.conversations.single_conversation import (
     process_single_conversation,
 )
@@ -144,6 +146,68 @@ async def test_agenda_completion_callback_receives_failure_state():
         )
         await asyncio.wait_for(queue.join(), timeout=1)
         assert failures == [True]
+    finally:
+        queue.stop()
+        await asyncio.sleep(0)
+
+
+async def test_execution_timeout_starts_after_queue_wait():
+    queue = ClientRequestQueue("dequeue-timeout-test")
+    queue.start()
+    blocker_started = asyncio.Event()
+    release_blocker = asyncio.Event()
+
+    async def blocker() -> None:
+        blocker_started.set()
+        await release_blocker.wait()
+
+    async def quick_work() -> str:
+        return "done"
+
+    try:
+        await queue.enqueue(
+            coro_factory=blocker,
+            priority=PRIORITY_USER,
+            label="blocker",
+        )
+        await asyncio.wait_for(blocker_started.wait(), timeout=1)
+        queued = asyncio.create_task(
+            queue.enqueue_and_wait(
+                coro_factory=quick_work,
+                priority=PRIORITY_PASSIVE,
+                label="timed-after-dequeue",
+                dedupe_key="timed-after-dequeue",
+                execution_timeout_seconds=0.01,
+            )
+        )
+        await asyncio.sleep(0.03)
+        assert not queued.done()
+        release_blocker.set()
+        assert await asyncio.wait_for(queued, timeout=1) == "done"
+    finally:
+        queue.stop()
+        await asyncio.sleep(0)
+
+
+async def test_execution_timeout_reports_queue_and_execution_timings():
+    queue = ClientRequestQueue("execution-timeout-test")
+    queue.start()
+
+    async def slow_work() -> None:
+        await asyncio.Event().wait()
+
+    try:
+        with pytest.raises(QueueExecutionTimeout) as caught:
+            await queue.enqueue_and_wait(
+                coro_factory=slow_work,
+                priority=PRIORITY_PASSIVE,
+                label="slow-work",
+                dedupe_key="slow-work",
+                execution_timeout_seconds=0.01,
+            )
+        assert caught.value.timeout_stage == "execution"
+        assert caught.value.execution_seconds >= 0.01
+        assert caught.value.queue_wait_seconds >= 0
     finally:
         queue.stop()
         await asyncio.sleep(0)

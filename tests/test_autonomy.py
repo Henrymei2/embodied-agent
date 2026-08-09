@@ -27,6 +27,33 @@ def test_agenda_settings_apply_safe_lower_bounds():
     assert settings.human_preemption_timeout_seconds == 0.05
 
 
+def test_latency_settings_default_to_fast_hard_limits():
+    config = AutonomyConfig()
+    settings = AutonomySettings.from_config(
+        type("System", (), {"autonomy_config": config})()
+    )
+
+    assert config.step_timeout_seconds == 30
+    assert config.max_plausible_duration_seconds == 0.0
+    assert settings.step_timeout_seconds == 30
+    assert settings.max_plausible_duration_seconds == 0.0
+
+
+def test_plausible_duration_limit_is_bounded():
+    assert (
+        AutonomySettings(
+            max_plausible_duration_seconds=-1
+        ).max_plausible_duration_seconds
+        == 0
+    )
+    assert (
+        AutonomySettings(
+            max_plausible_duration_seconds=120
+        ).max_plausible_duration_seconds
+        == 60
+    )
+
+
 def test_legacy_tick_setting_migrates_to_the_agenda_cadence():
     config = AutonomyConfig.model_validate(
         {
@@ -57,16 +84,12 @@ def test_root_autonomy_config_migrates_under_system_config():
 def test_nested_autonomy_config_wins_over_deprecated_root_value():
     migrated = Config.migrate_root_autonomy_config(
         {
-            "system_config": {
-                "autonomy_config": {"presence_mode": "enforced"}
-            },
+            "system_config": {"autonomy_config": {"presence_mode": "enforced"}},
             "autonomy_config": {"presence_mode": "observe_only"},
         }
     )
 
-    assert migrated["system_config"]["autonomy_config"]["presence_mode"] == (
-        "enforced"
-    )
+    assert migrated["system_config"]["autonomy_config"]["presence_mode"] == ("enforced")
 
 
 def test_event_producers_are_opt_in_and_workspace_path_is_confined():

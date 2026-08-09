@@ -11,6 +11,7 @@ describe("VR furniture model registry", () => {
     expect(Object.keys(FURNITURE_MODEL_ASSETS)).toHaveLength(13);
     expect(furnitureModelAsset("bed")?.src).toMatch(/bed\.glb$/);
     expect(furnitureModelAsset("bed")?.rotationY).toBe(Math.PI / 2);
+    expect(furnitureModelAsset("bookshelf")?.rotationY).toBe(Math.PI);
     expect(furnitureModelAsset("computer")?.accessory?.src).toMatch(
       /computer\.glb$/,
     );

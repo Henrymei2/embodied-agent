@@ -64,6 +64,7 @@ class AgendaExecutive:
         lease_handle: LeaseHandle | None = None,
         room_snapshot: Optional[RoomSnapshot] = None,
         relocate_idle: Optional[IdleRelocator] = None,
+        run_step_enforces_timeout: bool = False,
     ) -> None:
         self.client_uid = client_uid
         self.store = store
@@ -93,6 +94,8 @@ class AgendaExecutive:
             run_step,
             emit,
             tracer=self.tracer,
+            max_plausible_duration_seconds=(settings.max_plausible_duration_seconds),
+            run_step_enforces_timeout=run_step_enforces_timeout,
         )
         self.plan_bridge = AgendaPlanBridge(
             store,
@@ -108,7 +111,6 @@ class AgendaExecutive:
         self._entry_task_entry_id: Optional[str] = None
         self._settling_task: Optional[asyncio.Task] = None
         self._settling_interrupted = False
-        self._settled_hold_key: Optional[str] = None
         self._report_result = report_result
 
     async def run(self) -> None:
@@ -311,7 +313,6 @@ class AgendaExecutive:
         else:
             cancellation.result()
         preemption_latency_ms = (loop.time() - started) * 1000.0
-        self._settled_hold_key = None
         state = self.store.load()
         for active in state.entries:
             if active.status == "active":
@@ -351,8 +352,6 @@ class AgendaExecutive:
     async def pause(self, paused: bool) -> None:
         if paused:
             await self._cancel_entry_work()
-        else:
-            self._settled_hold_key = None
         self.store.pause(paused)
         self.wake()
         await self.emit(
@@ -497,7 +496,6 @@ class AgendaExecutive:
 
         active = next((item for item in state.entries if item.status == "active"), None)
         if active:
-            self._settled_hold_key = None
             if active.kind != "user":
                 self._entry_task = asyncio.create_task(
                     self._advance_entry(active),
@@ -526,7 +524,6 @@ class AgendaExecutive:
             ),
         )
         if queued and not pending_external_event:
-            self._settled_hold_key = None
             foreground = [
                 item
                 for item in queued
@@ -547,9 +544,7 @@ class AgendaExecutive:
                 decision = self.fair_scheduler.choose_agenda_entries(
                     queued, now=utc_now()
                 )
-                selected_id = (
-                    decision.plan_id if decision is not None else queued[0].id
-                )
+                selected_id = decision.plan_id if decision is not None else queued[0].id
             self.store.transition(selected_id, "active")
             await self.broadcast_snapshot()
             return True
@@ -560,13 +555,7 @@ class AgendaExecutive:
         ]
         if held:
             # Exactly one generated successor is retained. Do not generate
-            # additional work while that successor awaits user approval.
-            if self.connected_client:
-                key = "held:" + ",".join(
-                    f"{item.id}:{item.status}"
-                    for item in sorted(held, key=lambda candidate: candidate.id)
-                )
-                return not await self._settle_for_hold(key)
+            # additional work or cosmetic movement while it awaits approval.
             return False
         suspended = [
             item
@@ -580,7 +569,6 @@ class AgendaExecutive:
             and self._suspension_defer_is_due(item, now)
         ]
         if suspended and not pending_external_event:
-            self._settled_hold_key = None
             await self._reconsider_suspended()
             return True
         if not self.connected_client and any(
@@ -646,9 +634,8 @@ class AgendaExecutive:
             except (TypeError, ValueError):
                 logger.warning("agenda: clearing invalid reconsideration timestamp")
             self.store.set_reconsideration(None)
-        self._settled_hold_key = None
         if self.connected_client:
-            await self._settle_while_generating_successor()
+            await self._generate_live_successor()
         else:
             await self._run_settling_task(self._generate_successor())
         return True
@@ -760,59 +747,18 @@ class AgendaExecutive:
                 self._settling_task = None
                 self._settling_interrupted = False
 
-    async def _settle_for_hold(self, key: str) -> bool:
-        if self._settled_hold_key == key:
-            return True
-        self._settled_hold_key = key
-        context = self._agenda_context()
-        scene = self._room_snapshot()
+    async def _generate_live_successor(self) -> None:
+        """Generate live work without putting cosmetic relocation in its path."""
 
-        async def settle() -> None:
-            placement = await self._choose_idle_placement(context, scene)
-            await self._relocate_idle_safely(placement)
-
-        return await self._run_settling_task(settle())
-
-    async def _settle_while_generating_successor(self) -> None:
-        context = self._agenda_context()
-        scene = self._room_snapshot()
-
-        async def settle_and_generate() -> None:
+        async def generate() -> None:
             await self.emit(AgentActivityTracker.planning())
-            generation = asyncio.create_task(self._generate_successor())
-            relocation: asyncio.Task | None = None
             try:
-                # Let successor generation reserve its planner quota and claim a
-                # durable external event before optional placement planning.
-                await asyncio.sleep(0)
-                placement = await self._choose_idle_placement(context, scene)
-                relocation = asyncio.create_task(self._relocate_idle_safely(placement))
-                await asyncio.gather(generation, relocation)
-            except BaseException:
-                for task in (generation, relocation):
-                    if task is not None and not task.done():
-                        task.cancel()
-                await asyncio.gather(
-                    *(task for task in (generation, relocation) if task is not None),
-                    return_exceptions=True,
-                )
-                raise
+                await self._generate_successor()
             finally:
                 if not self._settling_interrupted:
                     await self.emit(AgentActivityTracker.idle())
 
-        await self._run_settling_task(settle_and_generate())
-        state = self.store.load()
-        held = [
-            item
-            for item in state.entries
-            if item.status in {"proposed", "blocked_approval"}
-        ]
-        if held:
-            self._settled_hold_key = "held:" + ",".join(
-                f"{item.id}:{item.status}"
-                for item in sorted(held, key=lambda candidate: candidate.id)
-            )
+        await self._run_settling_task(generate())
 
     async def _deliver_due_report(self) -> bool:
         self._assert_lease()
@@ -1248,6 +1194,17 @@ class AgendaExecutive:
             if deadline is None:
                 entry = self.store.transition(entry.id, "active")
                 deadline = entry.budget.deadline_at
+            if self.connected_client and not entry.metadata.get(
+                "idle_relocation_attempted"
+            ):
+                scene = self._room_snapshot()
+                if scene.objects:
+                    self.store.update_metadata(entry.id, idle_relocation_attempted=True)
+                    placement = await self._choose_idle_placement(
+                        self._agenda_context(), scene
+                    )
+                    await self._relocate_idle_safely(placement)
+                    return True
             if deadline and utc_now() < datetime.fromisoformat(deadline):
                 return False
             self.store.transition(entry.id, "completed")
@@ -1372,19 +1329,14 @@ class AgendaExecutive:
                     )
                     await self.broadcast_snapshot()
                     return True
-        # The configured timeout is the operational minimum for an LLM/tool
-        # round trip. Models may request more time for a step, but may not
-        # accidentally cancel a healthy provider request after only a few
-        # seconds. The entry deadline remains the outer wall-clock bound.
-        checkpoint.timeout_seconds = max(
-            checkpoint.timeout_seconds,
-            self.settings.step_timeout_seconds,
-        )
+        # The configured timeout is a hard execution ceiling. Queue wait is
+        # measured separately by the request queue and does not consume it.
+        checkpoint.timeout_seconds = self.settings.step_timeout_seconds
         if deadline:
             remaining_budget = int(
                 (datetime.fromisoformat(deadline) - utc_now()).total_seconds()
             )
-            if remaining_budget < self.settings.step_timeout_seconds:
+            if remaining_budget <= 0:
                 reason = (
                     "Execution window expired before tool dispatch; no action was "
                     "started."
@@ -1405,11 +1357,7 @@ class AgendaExecutive:
                 return True
             checkpoint.timeout_seconds = min(
                 checkpoint.timeout_seconds,
-                remaining_budget,
-            )
-            checkpoint.plausible_duration_seconds = min(
-                checkpoint.plausible_duration_seconds,
-                float(remaining_budget),
+                max(1, remaining_budget),
             )
         owner_id = (
             self.lease_handle.owner_id if self.lease_handle else "agenda-executive"
@@ -1430,11 +1378,7 @@ class AgendaExecutive:
         )
         if plan_result.plan.state != "completed":
             current_entry = next(
-                (
-                    item
-                    for item in self.store.load().entries
-                    if item.id == entry.id
-                ),
+                (item for item in self.store.load().entries if item.id == entry.id),
                 None,
             )
             if current_entry is not None and current_entry.status == "blocked_approval":

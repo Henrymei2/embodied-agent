@@ -32,6 +32,113 @@ export interface VrRayHitLike {
 export const VR_RAY_MAX_DISTANCE = 3;
 export const VR_SELECTION_HIGHLIGHT_KEY = "vrSelectionHighlightEnabled";
 export const DEFAULT_VR_SELECTION_HIGHLIGHT = true;
+export const FURNITURE_PANEL_EXIT_BUFFER_CM = 25;
+
+export interface FurniturePanelNode extends FloorAabbNode {
+  reach?: number;
+  uiWindow?: { provider?: string };
+}
+
+export interface FurniturePanelProximityState {
+  visible: ReadonlySet<string>;
+  dismissed: ReadonlySet<string>;
+}
+
+export interface FurniturePanelLayout {
+  width: number;
+  height: number;
+  textureWidth: number;
+  textureHeight: number;
+  maxLines: number;
+  closePosition: Vector3Like;
+  actionY: number;
+}
+
+const STANDARD_FURNITURE_PANEL_LAYOUT: FurniturePanelLayout = {
+  width: 1.5,
+  height: 0.59,
+  textureWidth: 768,
+  textureHeight: 300,
+  maxLines: 5,
+  closePosition: { x: 0.63, y: 0.22, z: 0.012 },
+  actionY: -0.39,
+};
+
+const PLANS_FURNITURE_PANEL_LAYOUT: FurniturePanelLayout = {
+  width: 1.5,
+  height: 0.95,
+  textureWidth: 768,
+  textureHeight: 486,
+  maxLines: 8,
+  closePosition: { x: 0.63, y: 0.4, z: 0.012 },
+  actionY: -0.37,
+};
+
+export function furniturePanelLayout(provider?: string): FurniturePanelLayout {
+  return provider === "plan_status"
+    ? PLANS_FURNITURE_PANEL_LAYOUT
+    : STANDARD_FURNITURE_PANEL_LAYOUT;
+}
+
+export function furnitureInteractionReach(
+  node: Pick<FurniturePanelNode, "width" | "depth" | "reach">,
+  reachCeiling: number,
+) {
+  const derived = 60 + Math.max(node.width, node.depth) / 2;
+  const declared = typeof node.reach === "number" && Number.isFinite(node.reach) && node.reach > 0
+    ? node.reach
+    : derived;
+  return Math.min(reachCeiling, declared);
+}
+
+function withinFurnitureDistance(
+  node: FurniturePanelNode,
+  point: Point2 | null,
+  limit: number,
+) {
+  return point !== null && Math.hypot(point.x - node.x, point.y - node.y) <= limit;
+}
+
+/**
+ * Derive the next set of proximity-driven panels. Visible panels receive an
+ * exit buffer, while manually dismissed panels stay suppressed until both the
+ * user and agent have left that buffered area.
+ */
+export function updateFurniturePanelProximity(
+  nodes: readonly FurniturePanelNode[],
+  user: Point2 | null,
+  agent: Point2 | null,
+  reachCeiling: number,
+  state: FurniturePanelProximityState,
+  exitBuffer = FURNITURE_PANEL_EXIT_BUFFER_CM,
+): FurniturePanelProximityState {
+  const visible = new Set<string>();
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const dismissed = new Set([...state.dismissed].filter((id) => nodeIds.has(id)));
+
+  nodes.forEach((node) => {
+    const enterLimit = furnitureInteractionReach(node, reachCeiling);
+    const exitLimit = enterLimit + exitBuffer;
+    const withinEnter = (
+      withinFurnitureDistance(node, user, enterLimit) ||
+      withinFurnitureDistance(node, agent, enterLimit)
+    );
+    const withinExit = (
+      withinFurnitureDistance(node, user, exitLimit) ||
+      withinFurnitureDistance(node, agent, exitLimit)
+    );
+
+    if (dismissed.has(node.id)) {
+      if (withinExit) return;
+      dismissed.delete(node.id);
+    }
+    if (withinEnter || (state.visible.has(node.id) && withinExit)) {
+      visible.add(node.id);
+    }
+  });
+
+  return { visible, dismissed };
+}
 
 export function parseVrSelectionHighlight(stored: string | null) {
   if (stored === null) return DEFAULT_VR_SELECTION_HIGHLIGHT;
@@ -48,18 +155,6 @@ export function loadVrSelectionHighlight() {
   } catch (_error) {
     return DEFAULT_VR_SELECTION_HIGHLIGHT;
   }
-}
-
-export function selectionProxyDimensions(
-  node: { width: number; height: number; depth: number },
-  paddingCm = 15,
-  unitsPerMeter = 100,
-) {
-  return {
-    width: (node.width + paddingCm * 2) / unitsPerMeter,
-    height: (node.height + paddingCm * 2) / unitsPerMeter,
-    depth: (node.depth + paddingCm * 2) / unitsPerMeter,
-  };
 }
 
 export function transientTriggerBehavior(kind: "panel" | "email_card", body?: string) {
@@ -164,15 +259,6 @@ export function selectVrRayHit<T extends VrRayHitLike>(
 
   // A zero dot product is the exact side boundary and remains selectable.
   return horizontalDot >= -Number.EPSILON ? nearest : null;
-}
-
-/** Selection proxies enlarge furniture targets but must never occlude real
- * geometry such as a grabbable prop resting on that furniture. */
-export function preferPhysicalVrRayHits<
-  T extends { object?: { userData?: Record<string, unknown> } },
->(hits: readonly T[]): readonly T[] {
-  const physical = hits.filter((hit) => hit.object?.userData?.selectionProxy !== true);
-  return physical.length ? physical : hits;
 }
 
 export function isRayGrabbableNode(

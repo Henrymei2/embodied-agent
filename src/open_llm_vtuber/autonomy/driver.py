@@ -11,6 +11,7 @@ from loguru import logger
 from ..agent.output_types import DisplayText
 from ..chat_history_manager import store_message
 from ..conversations.types import AgentTurnResult
+from .activity import ActivityRunResult
 from .agenda import get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
 from .executive import AgendaExecutive, register_executive, unregister_executive
@@ -147,7 +148,9 @@ async def agenda_loop(
                 f"agenda: skipped frontend update after disconnect for {client_uid}"
             )
 
-    async def run_step(entry, checkpoint) -> str:
+    async def run_step(entry, checkpoint) -> ActivityRunResult:
+        import asyncio
+
         from .action_context import AgendaApprovalRequired, agenda_action_scope
         from ..conversations.single_conversation import process_single_conversation
         from ..conversations.llm_request_queue import (
@@ -177,6 +180,14 @@ async def agenda_loop(
             if entry.kind == "scheduled" or entry.metadata.get("trigger_foreground")
             else PRIORITY_PASSIVE
         )
+        loop = asyncio.get_running_loop()
+        queued_at = loop.time()
+        execution_started_at: float | None = None
+
+        def mark_started() -> None:
+            nonlocal execution_started_at
+            execution_started_at = loop.time()
+
         with agenda_action_scope(entry.id, checkpoint.step_id) as action_scope:
             result = await get_queue(client_uid).enqueue_and_wait(
                 coro_factory=execute_step,
@@ -185,10 +196,18 @@ async def agenda_loop(
                 dedupe_key=f"agenda:{entry.id}:{checkpoint.step_id}",
                 entry_id=entry.id,
                 work_class="autonomous",
+                execution_timeout_seconds=checkpoint.timeout_seconds,
+                on_started=mark_started,
             )
             if action_scope.pending_transaction_id is not None:
                 raise AgendaApprovalRequired(action_scope)
-        return _agenda_step_text(result)
+        finished_at = loop.time()
+        started_at = execution_started_at or finished_at
+        return ActivityRunResult(
+            summary=_agenda_step_text(result),
+            queue_wait_seconds=max(0.0, started_at - queued_at),
+            execution_seconds=max(0.0, finished_at - started_at),
+        )
 
     async def run_report(entry, summary: str) -> None:
         from .reporting import ReportClientUnavailable
@@ -272,6 +291,7 @@ async def agenda_loop(
             else None
         ),
         relocate_idle=relocate_idle if connected_client else None,
+        run_step_enforces_timeout=True,
     )
     register_executive(client_uid, executive)
     logger.info(

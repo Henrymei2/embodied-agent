@@ -18,6 +18,7 @@ from src.open_llm_vtuber.autonomy.agenda_planner import (
 )
 from src.open_llm_vtuber.autonomy.activity import (
     ActivityExecutor,
+    ActivityRunResult,
     ActivityStepTimeout,
 )
 
@@ -244,6 +245,139 @@ async def test_activity_timeout_is_descriptive_and_retryable(tmp_path):
     assert updated.status == "queued"
     assert updated.checkpoint.state == "planned"
     assert "timed out" in updated.progress_summary
+
+
+@pytest.mark.asyncio
+async def test_default_pacing_limit_disables_model_requested_sleep(
+    tmp_path, monkeypatch
+):
+    store = AgendaStore(tmp_path)
+    entry = pursuit(status="active")
+    store.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="unpaced-step",
+        kind="reflect",
+        state="planned",
+        plausible_duration_seconds=60,
+    )
+    sleeps: list[float] = []
+
+    async def immediate(_entry, _checkpoint):
+        return ActivityRunResult("done", 4.0, 0.25)
+
+    async def record_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.activity.asyncio.sleep", record_sleep
+    )
+    executor = ActivityExecutor(store, immediate, lambda _payload: _noop())
+
+    assert await executor.execute(entry, checkpoint) == "done"
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_configured_pacing_uses_execution_time_not_queue_wait(
+    tmp_path, monkeypatch
+):
+    store = AgendaStore(tmp_path)
+    entry = pursuit(status="active")
+    store.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="bounded-paced-step",
+        kind="reflect",
+        state="planned",
+        plausible_duration_seconds=60,
+    )
+    sleeps: list[float] = []
+
+    async def immediate(_entry, _checkpoint):
+        return ActivityRunResult("done", 10.0, 0.5)
+
+    async def record_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.activity.asyncio.sleep", record_sleep
+    )
+    executor = ActivityExecutor(
+        store,
+        immediate,
+        lambda _payload: _noop(),
+        max_plausible_duration_seconds=2,
+    )
+
+    assert await executor.execute(entry, checkpoint) == "done"
+    assert sleeps == [pytest.approx(1.5)]
+
+
+@pytest.mark.asyncio
+async def test_activity_trace_records_content_free_latency_breakdown(
+    tmp_path, monkeypatch
+):
+    class Span:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    class TraceContext:
+        def __init__(self, span):
+            self.span = span
+
+        def __enter__(self):
+            return self.span
+
+        def __exit__(self, *_args):
+            return False
+
+    class Tracer:
+        def __init__(self):
+            self.last_span = Span()
+
+        def span(self, *_args, **_kwargs):
+            return TraceContext(self.last_span)
+
+    store = AgendaStore(tmp_path)
+    entry = pursuit(status="active")
+    store.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="traced-step",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="read_file",
+        plausible_duration_seconds=9,
+        timeout_seconds=30,
+    )
+
+    async def immediate(_entry, _checkpoint):
+        return ActivityRunResult("private result", 3.0, 0.5)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("src.open_llm_vtuber.autonomy.activity.asyncio.sleep", no_sleep)
+    tracer = Tracer()
+    executor = ActivityExecutor(
+        store,
+        immediate,
+        lambda _payload: _noop(),
+        tracer=tracer,
+        max_plausible_duration_seconds=2,
+    )
+
+    await executor.execute(entry, checkpoint)
+
+    attributes = tracer.last_span.attributes
+    assert attributes["agenda.queue_wait_seconds"] == 3.0
+    assert attributes["agenda.execution_seconds"] == 0.5
+    assert attributes["agenda.requested_pacing_seconds"] == 9
+    assert attributes["agenda.applied_pacing_seconds"] == 2
+    assert 0 <= attributes["agenda.pacing_sleep_seconds"] < 0.01
+    assert attributes["agenda.execution_timeout_seconds"] == 30
+    assert "private result" not in repr(attributes)
 
 
 async def _noop():
