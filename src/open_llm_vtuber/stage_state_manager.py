@@ -45,11 +45,20 @@ UI_WINDOW_PROVIDERS = (
     "room_layout",
     "skill_status",
     "drawing_board_image",
+    "browser_status",
 )
 
 # Avatar postures. Anything else is rejected, and walking clears the pose, so a
 # seated avatar can never be shown mid-stride.
 AVATAR_POSES = ("standing", "sitting")
+
+# The computer's hover/panel window. The browser and web_search servers are
+# gated on the computer, so this is where their live activity is shown.
+BROWSER_WINDOW = {
+    "title": "Browser",
+    "body": "Web browsing and web search results.",
+    "provider": "browser_status",
+}
 
 
 def _is_safe_filename(filename: str) -> bool:
@@ -136,6 +145,7 @@ def get_default_stage(conf_uid: str | None = None) -> dict[str, Any]:
                 "height": 190,
                 "zIndex": 2,
                 "interaction": {"on_click": True},
+                "uiWindow": dict(BROWSER_WINDOW),
                 "text": "computer",
                 "texture": {
                     "src": "./stage-assets/computer.png",
@@ -1152,12 +1162,34 @@ def load_stage_state(conf_uid: str) -> dict[str, Any]:
         if ok:
             stage.setdefault("metadata", {})
             stage["metadata"]["conf_uid"] = conf_uid
-            return stage
+            return _backfill_browser_window(stage)
         logger.warning(f"Invalid stage state for {conf_uid}: {errors}")
     except Exception as e:
         logger.error(f"Failed to load stage state for {conf_uid}: {e}")
 
     return get_default_stage(conf_uid)
+
+
+def _backfill_browser_window(stage: Any) -> dict[str, Any]:
+    """Give the computer its browser window in an older saved room, in memory.
+
+    Older rooms predate the browser_status panel, so their computer node has no
+    uiWindow. Loading is not the place to rewrite the user's file: this patches
+    the returned document only, the patch is idempotent, and the next save
+    persists the window naturally.
+    """
+    if not isinstance(stage, dict):
+        return stage
+    nodes = stage.get("nodes")
+    if not isinstance(nodes, list):
+        return stage
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("id") != "computer":
+            continue
+        if node.get("uiWindow") is None:
+            node["uiWindow"] = dict(BROWSER_WINDOW)
+        break
+    return stage
 
 
 def _repair_stage(stage: Any) -> Any:

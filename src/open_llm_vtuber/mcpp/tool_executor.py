@@ -1,5 +1,6 @@
-import json
+import base64
 import datetime
+import json
 from loguru import logger
 from typing import (
     Dict,
@@ -15,6 +16,7 @@ from ..conversations.agent_activity import tool_batch_activity
 from .types import ToolCallObject
 from .mcp_client import MCPClient
 from .tool_manager import ToolManager
+from ..browser_session import record_browser_activity
 
 if TYPE_CHECKING:
     from ..authorization.transaction import ActionTransactionCoordinator
@@ -81,6 +83,62 @@ class ToolExecutor:
             parse_error = True
 
         return tool_name, tool_id, tool_input, is_error, result_content, parse_error
+
+    def _record_browser_activity(
+        self,
+        tool_name: str,
+        tool_input: Any,
+        text_content: str,
+        content_items: List[Dict[str, Any]],
+    ) -> None:
+        """Keep the computer panel's browser snapshot fresh for web tools.
+
+        Only playwright (browser tools) and ddg-search (web_search) results are
+        recorded, and only successful calls. The snapshot powers the VR
+        computer panel and the normal computer hover window; it is bounded,
+        in-memory, and never logged (see browser_session).
+        """
+        tool = self._tool_manager.get_tool(tool_name) if self._tool_manager else None
+        server = getattr(tool, "related_server", None) if tool else None
+        if server not in {"playwright", "ddg-search"}:
+            return
+
+        url = None
+        if tool_name == "browser_navigate" and isinstance(tool_input, dict):
+            candidate = tool_input.get("url")
+            if isinstance(candidate, str) and candidate.strip():
+                url = candidate.strip()
+
+        image_bytes = None
+        mime_type = None
+        for item in content_items or []:
+            if item.get("type") != "image":
+                continue
+            data = item.get("data")
+            if not isinstance(data, str) or not data:
+                continue
+            try:
+                image_bytes = base64.b64decode(data, validate=False)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Browser snapshot for {server}/{tool_name} skipped an "
+                    "undecodable screenshot."
+                )
+                continue
+            mime_type = item.get("mimeType")
+            break
+
+        try:
+            record_browser_activity(
+                server=server,
+                tool=tool_name,
+                text=text_content,
+                url=url,
+                image_bytes=image_bytes,
+                mime_type=mime_type or "image/png",
+            )
+        except Exception as exc:  # noqa: BLE001 - a panel must never break a turn
+            logger.warning(f"Could not record browser activity: {exc}")
 
     def format_tool_result(
         self,
@@ -237,6 +295,14 @@ class ToolExecutor:
                 metadata,
                 content_items,
             ) = await self.run_single_tool(tool_name, tool_id, tool_input)
+
+            if not is_error:
+                self._record_browser_activity(
+                    tool_name,
+                    tool_input,
+                    text_content,
+                    content_items,
+                )
 
             # Determine content for status update and LLM result format
             status_content = text_content  # Default to text content

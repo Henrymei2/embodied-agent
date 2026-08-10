@@ -290,6 +290,16 @@ interface DrawingBoardWindowData {
   };
 }
 
+interface BrowserWindowData {
+  available: boolean;
+  tool?: string | null;
+  url?: string | null;
+  text?: string;
+  has_image: boolean;
+  image_url?: string;
+  updated_at?: string | null;
+}
+
 interface ShelfWindowBook {
   title: string;
   author?: string;
@@ -369,6 +379,7 @@ const FURNITURE_FEED_ROUTES: Record<string, string> = {
   plan_status: "/api/furniture/plans",
   skill_status: "/api/furniture/skills",
   drawing_board_image: "/api/furniture/drawing-board",
+  browser_status: "/api/furniture/browser",
 };
 
 // Objects the backend refuses to remove, because the tools reachable at them
@@ -495,6 +506,7 @@ function FurnitureWindow({
   const readingFeed = useFurnitureFeed<ReadingWindowData>(baseUrl, provider === "reading_status" ? provider : undefined, open, 20_000);
   const planFeed = useFurnitureFeed<PlanWindowData>(baseUrl, provider === "plan_status" ? provider : undefined, open, 15_000);
   const skillFeed = useFurnitureFeed<SkillWindowData>(baseUrl, provider === "skill_status" ? provider : undefined, open, 15_000);
+  const browserFeed = useFurnitureFeed<BrowserWindowData>(baseUrl, provider === "browser_status" ? provider : undefined, open, 15_000);
   const { stage } = useDynamicStage();
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
@@ -789,6 +801,44 @@ function FurnitureWindow({
               {drawingBoardFeed.data.drawing.prompt && (
                 <Text mt="8px" fontSize="xs" color={text.secondary} overflowWrap="anywhere">
                   {drawingBoardFeed.data.drawing.prompt}
+                </Text>
+              )}
+            </Box>
+          )}
+        </Box>
+      )}
+      {provider === "browser_status" && (
+        <Box mt="12px" aria-live="polite">
+          {browserFeed.failed ? (
+            <Text fontSize="sm" color={statusColor.warningFg}>
+              Browser status is unavailable.
+            </Text>
+          ) : !browserFeed.data ? (
+            <Spinner size="sm" aria-label="Loading browser status" />
+          ) : browserFeed.data.available !== true ? (
+            <Text fontSize="sm" color={text.tertiary}>
+              No browser activity yet.
+            </Text>
+          ) : (
+            <Box>
+              {browserFeed.data.tool && (
+                <Text fontSize="sm" color={text.primary}>
+                  Tool: {browserFeed.data.tool}
+                </Text>
+              )}
+              {browserFeed.data.url && (
+                <Text fontSize="xs" color={text.secondary} mt="4px" overflowWrap="anywhere">
+                  {browserFeed.data.url}
+                </Text>
+              )}
+              {browserFeed.data.text && (
+                <Text fontSize="xs" color={text.secondary} mt="8px" overflowWrap="anywhere">
+                  {browserFeed.data.text}
+                </Text>
+              )}
+              {browserFeed.data.updated_at && (
+                <Text fontSize="xs" color={text.tertiary} mt="8px">
+                  Updated {browserFeed.data.updated_at.replace("T", " ").replace("+00:00", " UTC")}
                 </Text>
               )}
             </Box>

@@ -25,6 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 from loguru import logger
 from .bridge_auth import BRIDGE_TOKEN_HEADER, verify_bridge_token
+from .browser_session import browser_image_bytes, browser_snapshot
 from .furniture_state import (
     drawing_board_image_path,
     drawing_board_snapshot,
@@ -491,6 +492,29 @@ def init_furniture_routes() -> APIRouter:
             )
         return FileResponse(
             path, media_type="image/png", headers={"Cache-Control": "no-store"}
+        )
+
+    @router.get("/browser")
+    async def browser_window():
+        return JSONResponse(
+            browser_snapshot(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @router.get("/browser/image")
+    async def browser_latest_image():
+        result = browser_image_bytes()
+        if result is None:
+            return JSONResponse(
+                {"error": "no browser screenshot is available"},
+                status_code=404,
+                headers={"Cache-Control": "no-store"},
+            )
+        image_bytes, mime_type = result
+        return Response(
+            content=image_bytes,
+            media_type=mime_type,
+            headers={"Cache-Control": "no-store"},
         )
 
     return router

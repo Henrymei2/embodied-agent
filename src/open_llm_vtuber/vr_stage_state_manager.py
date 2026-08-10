@@ -17,8 +17,10 @@ from loguru import logger
 
 from .stage_state_manager import (
     AVATAR_POSES,
+    BROWSER_WINDOW,
     LABEL_LIMIT,
     _ensure_stage_dir,
+    _backfill_browser_window,
     _is_number,
     _is_safe_color,
     _is_safe_text,
@@ -95,7 +97,13 @@ def _furniture(
 # This is a deliberate snapshot of the current v9 presentation metadata, not a
 # view of either stage.json or the normal default builder. Tests flag ID drift.
 _VR_PRESENTATION: dict[str, dict[str, Any]] = {
-    "computer": _furniture("computer", texture="computer.png"),
+    "computer": _furniture(
+        "computer",
+        texture="computer.png",
+        title=BROWSER_WINDOW["title"],
+        body=BROWSER_WINDOW["body"],
+        provider=BROWSER_WINDOW["provider"],
+    ),
     "calendar": _furniture(
         "calendar",
         texture="calendar.png",
@@ -704,7 +712,7 @@ def load_vr_stage_state(conf_uid: str) -> dict[str, Any]:
             return reset
         valid, errors = validate_vr_stage(stage)
         if valid:
-            return stage
+            return _backfill_browser_window(stage)
         logger.warning(f"Invalid VR stage state for {conf_uid}: {errors}")
     except Exception as exc:  # noqa: BLE001
         logger.error(f"Failed to load VR stage state for {conf_uid}: {exc}")

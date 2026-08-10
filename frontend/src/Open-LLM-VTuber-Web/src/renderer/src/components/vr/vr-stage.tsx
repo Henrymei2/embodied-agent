@@ -134,6 +134,7 @@ const providerRoutes: Record<string, string> = {
   skill_status: "/api/furniture/skills",
   drawing_board_image: "/api/furniture/drawing-board",
   google_calendar_status: "/api/integrations/google/status",
+  browser_status: "/api/furniture/browser",
 };
 
 function documentToScene(stage: { room: { width: number; depth: number } }, x: number, y: number) {
@@ -196,7 +197,13 @@ function roundedRect(
   context.closePath();
 }
 
-function canvasTexture(lines: string[], width = 768, height = 256, maxLines = 5) {
+function canvasTexture(
+  lines: string[],
+  width = 768,
+  height = 256,
+  maxLines = 5,
+  image: HTMLImageElement | null = null,
+) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -210,11 +217,36 @@ function canvasTexture(lines: string[], width = 768, height = 256, maxLines = 5)
   context.strokeStyle = "rgba(199, 210, 254, 0.42)";
   context.lineWidth = 3;
   context.stroke();
+
+  const hasImage = Boolean(image && image.width > 0 && image.height > 0);
+  let textTop = 52;
+  if (hasImage && image) {
+    const inset = 18;
+    const imageBand = Math.max(1, Math.floor(height * 0.52) - inset * 2);
+    const scale = Math.min(
+      (width - inset * 2) / image.width,
+      imageBand / image.height,
+    );
+    const drawWidth = Math.max(1, Math.floor(image.width * scale));
+    const drawHeight = Math.max(1, Math.floor(image.height * scale));
+    context.drawImage(
+      image,
+      Math.floor((width - drawWidth) / 2),
+      inset,
+      drawWidth,
+      drawHeight,
+    );
+    textTop = inset + drawHeight + 16;
+  }
+
   context.fillStyle = "#f8fafc";
-  context.font = "600 34px system-ui, sans-serif";
+  context.font = hasImage
+    ? "600 28px system-ui, sans-serif"
+    : "600 34px system-ui, sans-serif";
+  const lineStep = hasImage ? 38 : 43;
   lines.slice(0, maxLines).forEach((line, index) => {
     const clipped = line.length > 48 ? `${line.slice(0, 47)}…` : line;
-    context.fillText(clipped, 30, 52 + index * 43);
+    context.fillText(clipped, 30, textTop + index * lineStep);
   });
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -552,7 +584,11 @@ export default function VrStage() {
     };
     runtimeRef.current = runtime;
 
-    const setPanelLines = (panel: THREE.Mesh, lines: string[]) => {
+    const setPanelLines = (
+      panel: THREE.Mesh,
+      lines: string[],
+      image: HTMLImageElement | null = null,
+    ) => {
       const material = panel.material as THREE.MeshBasicMaterial;
       const previous = material.map;
       const layout = furniturePanelLayout(panel.userData.provider as string | undefined);
@@ -561,6 +597,7 @@ export default function VrStage() {
         layout.textureWidth,
         layout.textureHeight,
         layout.maxLines,
+        image,
       );
       material.needsUpdate = true;
       previous?.dispose();
@@ -734,6 +771,7 @@ export default function VrStage() {
       panel: THREE.Mesh,
       liveData: Record<string, unknown> | null,
       failed: boolean,
+      panelImage: HTMLImageElement | null = null,
     ) => {
       const node = panel.userData.node as VrStageNode;
       const provider = panel.userData.provider as string | undefined;
@@ -752,7 +790,7 @@ export default function VrStage() {
       }
       if (failed) lines.splice(2, 0, "Live data unavailable");
       lines.push("Close hides this panel until you leave");
-      setPanelLines(panel, lines);
+      setPanelLines(panel, lines, panelImage);
       removePanelActions(panel);
       if (content.decision) {
         const { collection, id } = content.decision;
@@ -774,6 +812,34 @@ export default function VrStage() {
           } satisfies PanelAction;
           panel.add(button);
         });
+      }
+    };
+
+    const loadPanelImage = async (
+      panel: THREE.Mesh,
+      liveData: Record<string, unknown> | null,
+    ): Promise<HTMLImageElement | null> => {
+      if (!liveData || liveData.has_image !== true) return null;
+      const imageUrl = liveData.image_url;
+      const updatedAt = liveData.updated_at;
+      if (typeof imageUrl !== "string" || !imageUrl) return null;
+      const cached = panel.userData.browserImageAt;
+      if (cached === updatedAt) {
+        const element = panel.userData.browserImageElement as HTMLImageElement | undefined;
+        return element ?? null;
+      }
+      try {
+        const image = new Image();
+        const cacheBust = typeof updatedAt === "string" && updatedAt
+          ? `?t=${encodeURIComponent(updatedAt)}`
+          : "";
+        image.src = `${baseUrlRef.current}${imageUrl}${cacheBust}`;
+        await image.decode();
+        panel.userData.browserImageAt = updatedAt;
+        panel.userData.browserImageElement = image;
+        return image;
+      } catch (_error) {
+        return null;
       }
     };
 
@@ -801,12 +867,13 @@ export default function VrStage() {
           failed = true;
         }
       }
+      const panelImage = await loadPanelImage(panel, liveData);
       if (
         runtime.panels.get(nodeId) !== panel ||
         runtime.panelGenerations.get(nodeId) !== generation
       ) return;
       if (failed && keepOnFailure) return;
-      renderPanelContent(panel, liveData, failed);
+      renderPanelContent(panel, liveData, failed, panelImage);
     };
 
     const refreshPanel = async (nodeId: string) => {

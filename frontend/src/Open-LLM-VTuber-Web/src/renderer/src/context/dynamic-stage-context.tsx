@@ -81,6 +81,7 @@ export const UI_WINDOW_PROVIDERS = [
   "room_layout",
   "skill_status",
   "drawing_board_image",
+  "browser_status",
 ] as const;
 
 export type FurnitureWindowProvider = (typeof UI_WINDOW_PROVIDERS)[number];

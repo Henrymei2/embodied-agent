@@ -21,12 +21,9 @@ These scenarios can be more scripted, complex, and polished. They should emphasi
 1. An Email Changes the Agent’s Plan
 Setup
 
-The agent has:
-
-a desk,
-a computer,
-a calendar,
-a place for notes or pending tasks.
+furnitures
+- gmail
+- calendar
 
 The agent is initially doing something unrelated.
 
@@ -36,10 +33,9 @@ The agent notices the notification without being prompted.
 It walks to the computer and reads the email.
 It realizes that the email affects an existing meeting or deadline.
 It walks to the calendar to inspect the conflict.
-It returns to the computer and prepares a possible response.
-It leaves a visible note or pending action for the user.
+It drafts a response and go to planning desk, leaving a pending action for the user.
 
-Example outcome:
+After sequence is finished, speak for example:
 
 “The meeting was moved earlier and now conflicts with your review. I prepared a reply asking whether 3:30 works instead.”
 
@@ -49,24 +45,26 @@ autonomous intention formation,
 cross-tool reasoning,
 persistent tasks,
 environment → intention → action.
+
 2. Remembering an Unfinished User Intention
 Setup
 
-Earlier, the user casually told the agent:
+Earlier daily memory:
+- “When the paper is ready, remind me to send it to Alex.”
 
-“When the paper is ready, remind me to send it to Alex.”
-
-Later, the paper becomes available.
+Agent worksapce:
+- paper file exists in agent's workspace
 
 Sequence
-The agent notices that the final paper now exists.
-It recalls the earlier unfinished intention.
+The agent recalls the earlier unfinished intention.
+It decides to check if the paper now exists
+The agent went to the computer, and notices that the final paper now exists.
 It retrieves the relevant file.
 It moves toward the email interface.
 It prepares the message.
 Before sending, it waits for user approval.
 
-Example:
+After sequence is finished, speak for example:
 
 “The paper is ready now. You previously wanted to send it to Alex. I have the message ready if you want to send it.”
 
@@ -76,6 +74,8 @@ opportunity detection,
 linking past intentions to new environmental states,
 proactive behavior,
 permission boundaries.
+
+
 3. The Room as the Agent’s Memory
 Setup
 

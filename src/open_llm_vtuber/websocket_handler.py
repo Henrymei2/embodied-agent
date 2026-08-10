@@ -163,6 +163,13 @@ class WebSocketHandler:
                 scene_mode=scene_mode,
             )
 
+            if scene_mode == "vr":
+                from .browser_session import clear_browser_session
+
+                # A fresh VR session must not open the computer panel onto
+                # browser activity left behind by an earlier session.
+                clear_browser_session(client_uid)
+
             await self._store_client_data(
                 websocket, client_uid, session_service_context
             )
@@ -667,6 +674,7 @@ class WebSocketHandler:
         from .autonomy.presence import unregister_presence_ledger
         from .autonomy.screen_context import clear_screen_context
         from .autonomy.welcome_back import unregister_welcome_session
+        from .browser_session import clear_browser_session
         from .conversations.llm_request_queue import remove_queue
         from .physical_context import clear_physical_context
 
@@ -684,6 +692,7 @@ class WebSocketHandler:
             ("presence observation", clear_client_presence),
             ("screen context", clear_screen_context),
             ("VR physical context", clear_physical_context),
+            ("VR browser session", clear_browser_session),
             ("presence ledger", unregister_presence_ledger),
             ("request queue", remove_queue),
             ("message handler", message_handler.cleanup_client),

@@ -75,10 +75,20 @@ const PLANS_FURNITURE_PANEL_LAYOUT: FurniturePanelLayout = {
   actionY: -0.37,
 };
 
+const BROWSER_FURNITURE_PANEL_LAYOUT: FurniturePanelLayout = {
+  width: 1.6,
+  height: 0.92,
+  textureWidth: 768,
+  textureHeight: 512,
+  maxLines: 7,
+  closePosition: { x: 0.68, y: 0.39, z: 0.012 },
+  actionY: -0.4,
+};
+
 export function furniturePanelLayout(provider?: string): FurniturePanelLayout {
-  return provider === "plan_status"
-    ? PLANS_FURNITURE_PANEL_LAYOUT
-    : STANDARD_FURNITURE_PANEL_LAYOUT;
+  if (provider === "plan_status") return PLANS_FURNITURE_PANEL_LAYOUT;
+  if (provider === "browser_status") return BROWSER_FURNITURE_PANEL_LAYOUT;
+  return STANDARD_FURNITURE_PANEL_LAYOUT;
 }
 
 export interface FurniturePanelDecisionTarget {
@@ -89,6 +99,8 @@ export interface FurniturePanelDecisionTarget {
 export interface FurniturePanelContent {
   lines: string[];
   decision: FurniturePanelDecisionTarget | null;
+  /** Optional screenshot/panel image rendered above the text lines. */
+  imageUrl?: string | null;
 }
 
 const DECISION_STATUS_LABELS: Record<string, string> = {
@@ -125,6 +137,27 @@ function genericFurniturePanelLines(liveData: Record<string, unknown> | null): s
   });
 }
 
+function browserTextLines(text: string, maxLines: number, maxChars: number): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (current && current.length + 1 + word.length > maxChars) {
+      lines.push(current);
+      current = "";
+      if (lines.length === maxLines) break;
+    }
+    current = current ? `${current} ${word}` : word;
+    if (current.length > maxChars) {
+      lines.push(current);
+      current = "";
+      if (lines.length === maxLines) break;
+    }
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
 /**
  * Turn a furniture window snapshot into panel text and, for approval
  * providers, the next decision the user can make. Plan and skill windows
@@ -137,6 +170,25 @@ export function furniturePanelContent(
 ): FurniturePanelContent {
   if (!liveData || typeof liveData !== "object") {
     return { lines: [], decision: null };
+  }
+  if (provider === "browser_status") {
+    const tool = typeof liveData.tool === "string" && liveData.tool ? liveData.tool : "";
+    const url = typeof liveData.url === "string" && liveData.url ? liveData.url : "";
+    const updatedAt = typeof liveData.updated_at === "string" && liveData.updated_at
+      ? liveData.updated_at.replace("T", " ").replace("+00:00", " UTC")
+      : "";
+    const text = typeof liveData.text === "string" ? liveData.text.trim() : "";
+    const lines: string[] = [];
+    if (tool) lines.push(`Tool: ${tool}`);
+    if (url) lines.push(`URL: ${url}`);
+    if (updatedAt) lines.push(`Updated: ${updatedAt}`);
+    if (text) lines.push(...browserTextLines(text, 4, 52));
+    if (lines.length === 0) lines.push("No browser activity yet.");
+    return {
+      lines,
+      decision: null,
+      imageUrl: liveData.has_image === true ? "/api/furniture/browser/image" : null,
+    };
   }
   if (provider !== "plan_status" && provider !== "skill_status") {
     return { lines: genericFurniturePanelLines(liveData), decision: null };

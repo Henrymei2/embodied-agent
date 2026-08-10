@@ -192,11 +192,18 @@ selectable and does not receive a selectable hover highlight.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,
-timers, Gmail, books, reading, plans, skills, and the drawing board. The room
-layout panel reads the active `VrStageDocument`. Approve/Decline controls reuse
-the existing plan and skill decision routes and retain their pending-only
-semantics. Google connection state may be shown, but authorization must say
-**Exit VR to connect Google** rather than opening an OAuth flow in-headset.
+timers, Gmail, books, reading, plans, skills, the drawing board, and the
+browser. The room layout panel reads the active `VrStageDocument`.
+Approve/Decline controls reuse the existing plan and skill decision routes and
+retain their pending-only semantics. Google connection state may be shown, but
+authorization must say **Exit VR to connect Google** rather than opening an
+OAuth flow in-headset.
+
+The computer's `browser_status` panel is the headset view of the browser and
+web search: it shows the latest tool name, URL, tool output, and the most
+recent page screenshot (when one was returned), refreshed on the same panel
+cycle as the other furniture windows. The agent still has to walk to the
+computer to unlock these tools; the panel appears as it approaches.
 
 ## 3. Rendering architecture
 
@@ -486,6 +493,28 @@ the final saved avatar position again on the backend. A point on an AABB edge
 counts as inside; reject it. Endpoint rejection returns the authoritative
 unchanged VR state. Arrival is successful only when the saved position is
 within the existing two-unit tolerance of the selected docking point.
+
+### 5.4 Browser activity snapshot
+
+The computer's `browser_status` window reads an ephemeral, in-memory snapshot
+of the latest browser/web-search activity instead of a new persistence store.
+`ToolExecutor` records a successful `playwright` or `ddg-search` tool call
+(both interactive and autonomous paths pass through it): the first text item,
+the `browser_navigate` URL, and the first image item (decoded from base64).
+
+Two trusted-request routes serve the panels, both with `Cache-Control:
+no-store`:
+
+- `GET /api/furniture/browser` returns
+  `{available, tool, url, text, has_image, image_url, updated_at}`.
+- `GET /api/furniture/browser/image` returns the latest screenshot bytes, or
+  404 when none is available.
+
+The snapshot keeps only the most recent activity: text is clipped to 2,000
+characters, a screenshot larger than 2 MB is dropped (the text and URL remain),
+and page text or screenshots are never persisted or logged. The VR client
+clears the snapshot on connect and on disconnect, so a new session never opens
+the computer panel onto a previous session's pages.
 
 ## 6. WebSocket and frontend-action protocol
 

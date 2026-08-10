@@ -384,6 +384,16 @@ describe("VR furniture presentation helpers", () => {
     expect(Math.abs(plans.actionY) + 0.075).toBeLessThanOrEqual(plans.height / 2);
   });
 
+  it("makes the Browser panel taller with room for a screenshot", () => {
+    const standard = furniturePanelLayout("bookshelf");
+    const browser = furniturePanelLayout("browser_status");
+    expect(browser.width).toBeGreaterThan(standard.width);
+    expect(browser.height).toBeGreaterThan(standard.height);
+    expect(browser.textureHeight).toBeGreaterThan(standard.textureHeight);
+    expect(browser.maxLines).toBeGreaterThan(standard.maxLines);
+    expect(Math.abs(browser.closePosition.y) + 0.07).toBeLessThanOrEqual(browser.height / 2);
+  });
+
   it("faces panels inward from opposite walls without viewer tracking", () => {
     expect(furniturePanelRotationY(20, 1080)).toBe(Math.PI);
     expect(furniturePanelRotationY(1060, 1080)).toBe(0);
@@ -469,6 +479,38 @@ describe("VR furniture presentation helpers", () => {
       lines: [],
       decision: null,
     });
+  });
+
+  it("renders the latest browser activity with an image reference", () => {
+    const content = furniturePanelContent("browser_status", {
+      available: true,
+      tool: "browser_navigate",
+      url: "https://example.com",
+      text: "A short page summary the agent can read out loud.",
+      has_image: true,
+      image_url: "/api/furniture/browser/image",
+      updated_at: "2026-08-10T22:00:00+00:00",
+    });
+    expect(content.decision).toBeNull();
+    expect(content.lines).toContain("Tool: browser_navigate");
+    expect(content.lines).toContain("URL: https://example.com");
+    expect(content.lines).toContain("Updated: 2026-08-10 22:00:00 UTC");
+    expect(content.imageUrl).toBe("/api/furniture/browser/image");
+  });
+
+  it("wraps long browser results into a bounded line budget without an image", () => {
+    const content = furniturePanelContent("browser_status", {
+      available: true,
+      tool: "web_search",
+      url: null,
+      text: "one two three four five six seven eight nine ten eleven twelve",
+      has_image: false,
+      updated_at: null,
+    });
+    expect(content.imageUrl).toBeNull();
+    const bodyLines = content.lines.filter((line) => !line.startsWith("Tool:"));
+    expect(bodyLines.length).toBeGreaterThan(0);
+    expect(bodyLines.length).toBeLessThanOrEqual(4);
   });
 
   it("places the same contained texture on all four side faces", () => {
