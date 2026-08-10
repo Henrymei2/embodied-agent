@@ -30,23 +30,16 @@ The agent is initially doing something unrelated.
 Sequence
 A new email arrives.
 The agent notices the notification without being prompted.
-It walks to the computer and reads the email.
+It walks to the mailbox and reads the email.
 It realizes that the email affects an existing meeting or deadline.
 It walks to the calendar to inspect the conflict.
 It drafts a response and go to planning desk, leaving a pending action for the user.
 
-After sequence is finished, speak for example:
+After sequence is finished, the agent should report the result to speak for example:
 
 “The meeting was moved earlier and now conflicts with your review. I prepared a reply asking whether 3:30 works instead.”
 
-What It Demonstrates
-event-driven behavior,
-autonomous intention formation,
-cross-tool reasoning,
-persistent tasks,
-environment → intention → action.
-
-2. Remembering an Unfinished User Intention
+1. Remembering an Unfinished User Intention
 Setup
 
 Earlier daily memory:

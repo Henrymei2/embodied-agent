@@ -16,6 +16,10 @@ from src.open_llm_vtuber.browser_session import (
     clear_browser_session,
     record_browser_activity,
 )
+from src.open_llm_vtuber.authorization import (
+    ActionTransactionCoordinator,
+    ActionTransactionJournal,
+)
 from src.open_llm_vtuber.mcpp.tool_executor import ToolExecutor
 from src.open_llm_vtuber.mcpp.tool_manager import ToolManager
 from src.open_llm_vtuber.mcpp.types import FormattedTool
@@ -159,6 +163,14 @@ class _FakeTransaction:
         return self._result
 
 
+class _FakeMCP:
+    def __init__(self, result: dict) -> None:
+        self._result = result
+
+    async def call_tool(self, **kwargs) -> dict:
+        return self._result
+
+
 def _result(content_items: list[dict]) -> SimpleNamespace:
     text = next(
         (item.get("text", "") for item in content_items if item.get("type") == "text"),
@@ -283,6 +295,54 @@ def test_executor_does_not_record_other_servers_or_errors():
 
     asyncio.run(run_error())
     assert browser_snapshot()["available"] is False
+
+
+async def test_browser_snapshot_passes_the_real_transaction_coordinator(tmp_path):
+    """Regression for the VR report: browser tools were denied by authorization."""
+    manager = ToolManager(
+        initial_tools_dict={
+            "browser_snapshot": FormattedTool(
+                input_schema={},
+                related_server="playwright",
+            )
+        }
+    )
+    manager.get_reachable_objects = lambda: ["computer"]
+    coordinator = ActionTransactionCoordinator(
+        workspace_root=tmp_path,
+        client_uid="client-one",
+        tool_manager=manager,
+        journal=ActionTransactionJournal(tmp_path),
+    )
+    executor = ToolExecutor(
+        mcp_client=_FakeMCP(
+            {
+                "metadata": {},
+                "content_items": [
+                    {"type": "text", "text": "Accessible page snapshot"},
+                    {
+                        "type": "image",
+                        "data": base64.b64encode(_png_bytes()).decode("ascii"),
+                        "mimeType": "image/png",
+                    },
+                ],
+            }
+        ),
+        tool_manager=manager,
+        action_transactions=coordinator,
+    )
+
+    results = []
+    async for update in executor.execute_tools(
+        [{"id": "snap-one", "name": "browser_snapshot", "args": {}}],
+        caller_mode="Prompt",
+    ):
+        if update.get("type") == "final_tool_results":
+            results = update["results"]
+    assert results and results[0].get("is_error") is False
+    snapshot = browser_snapshot()
+    assert snapshot["tool"] == "browser_snapshot"
+    assert snapshot["has_image"] is True
 
 
 # ── default documents and legacy backfill ───────────────────────────────────

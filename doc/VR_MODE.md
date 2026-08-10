@@ -516,6 +516,11 @@ and page text or screenshots are never persisted or logged. The VR client
 clears the snapshot on connect and on disconnect, so a new session never opens
 the computer panel onto a previous session's pages.
 
+Browser and web-search tools are reviewed authorization capabilities:
+navigation, interaction, and reads are non-consequential (computer proximity
+is required, but no desk decision), while uploading a local file to a page
+keeps the explicit-approval boundary.
+
 ## 6. WebSocket and frontend-action protocol
 
 ### 6.1 Connection ownership

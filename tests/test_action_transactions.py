@@ -11,6 +11,7 @@ from src.open_llm_vtuber.authorization import (
     ActionTransactionJournal,
     AuthorizationJournalError,
 )
+from src.open_llm_vtuber.authorization.profiles import ACTION_PROFILES
 
 
 class _Manager:
@@ -200,6 +201,99 @@ async def test_unreviewed_dynamic_mutation_stays_blocked_even_if_user_approves(
     assert denied.is_error is True
     assert "no reviewed transaction adapter" in denied.text
     assert calls == 0
+
+
+def test_browser_and_search_tools_have_reviewed_profiles():
+    assert ACTION_PROFILES["browser_snapshot"].consequential is False
+    assert ACTION_PROFILES["browser_take_screenshot"].consequential is False
+    assert ACTION_PROFILES["web_search"].consequential is False
+    assert ACTION_PROFILES["browser_navigate"].consequential is False
+    assert ACTION_PROFILES["browser_file_upload"].side_effect_class == "external_state"
+
+
+async def test_browser_read_tool_commits_without_a_transaction(tmp_path):
+    coordinator = _coordinator(tmp_path)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {
+            "metadata": {},
+            "content_items": [{"type": "text", "text": "snapshot captured"}],
+        }
+
+    result = await coordinator.execute(
+        server_name="playwright",
+        capability="browser_snapshot",
+        tool_id="snapshot-one",
+        arguments={},
+        invoke=invoke,
+    )
+    assert result.is_error is False
+    assert calls == 1
+    assert "snapshot captured" in result.text
+    assert coordinator.journal.pending_snapshot()["pending_count"] == 0
+
+
+async def test_browser_interaction_commits_without_a_transaction(tmp_path):
+    coordinator = _coordinator(tmp_path)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {
+            "metadata": {},
+            "content_items": [{"type": "text", "text": "navigated"}],
+        }
+
+    result = await coordinator.execute(
+        server_name="playwright",
+        capability="browser_navigate",
+        tool_id="nav-one",
+        arguments={"url": "https://example.com"},
+        invoke=invoke,
+    )
+    assert result.is_error is False
+    assert calls == 1
+    assert coordinator.journal.pending_snapshot()["pending_count"] == 0
+
+
+async def test_browser_file_upload_stays_behind_explicit_confirmation(tmp_path):
+    coordinator = _coordinator(tmp_path)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {"metadata": {}, "content_items": []}
+
+    proposed = await coordinator.execute(
+        server_name="playwright",
+        capability="browser_file_upload",
+        tool_id="upload-one",
+        arguments={"file": "notes.txt"},
+        invoke=invoke,
+    )
+    assert proposed.is_error is True
+    assert "requires your approval" in proposed.text
+    assert calls == 0
+    _approve_pending(coordinator)
+
+    committed = await coordinator.execute(
+        server_name="playwright",
+        capability="browser_file_upload",
+        tool_id="upload-one",
+        arguments={"file": "notes.txt"},
+        invoke=invoke,
+    )
+    # The action executes after approval, but the Playwright adapter cannot
+    # return postcondition evidence, so the outcome stays unresolved — the
+    # upload never bypasses the review boundary.
+    assert committed.is_error is True
+    assert "could not be verified" in committed.text
+    assert calls == 1
 
 
 async def test_adapter_error_after_commit_is_unresolved_and_never_retried(tmp_path):

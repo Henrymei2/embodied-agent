@@ -224,6 +224,85 @@ ACTION_PROFILES: dict[str, ActionProfile] = {
         "draw_image", "local_state", "compensatable", "adapter_evidence",
         target_argument="prompt",
     ),
+    # Playwright browser session, gated on the computer. The browser is a
+    # shared, user-visible session confined to the local machine, and the
+    # agent's instructions stop it at CAPTCHAs, payments, private forms, and
+    # logins, so navigation and interaction are reviewed as non-consequential:
+    # they require proximity to the computer and otherwise run directly.
+    # Uploading a local file to a page stays behind the explicit-confirmation
+    # boundary, like other external sends.
+    "browser_navigate": _profile(
+        "browser_navigate", "none", "reversible", "none",
+        target_argument="url",
+    ),
+    "browser_navigate_back": _profile(
+        "browser_navigate_back", "none", "reversible", "none",
+    ),
+    "browser_snapshot": _profile(
+        "browser_snapshot", "none", "reversible", "none",
+    ),
+    "browser_click": _profile(
+        "browser_click", "none", "reversible", "none",
+        target_argument="element",
+    ),
+    "browser_hover": _profile(
+        "browser_hover", "none", "reversible", "none",
+        target_argument="element",
+    ),
+    "browser_drag": _profile(
+        "browser_drag", "none", "reversible", "none",
+    ),
+    "browser_select_option": _profile(
+        "browser_select_option", "none", "reversible", "none",
+    ),
+    "browser_type": _profile(
+        "browser_type", "none", "reversible", "none",
+        target_argument="text",
+    ),
+    "browser_press_key": _profile(
+        "browser_press_key", "none", "reversible", "none",
+    ),
+    "browser_fill_form": _profile(
+        "browser_fill_form", "none", "reversible", "none",
+    ),
+    "browser_take_screenshot": _profile(
+        "browser_take_screenshot", "none", "reversible", "none",
+    ),
+    "browser_run_code": _profile(
+        "browser_run_code", "none", "reversible", "none",
+    ),
+    "browser_wait_for": _profile(
+        "browser_wait_for", "none", "reversible", "none",
+    ),
+    "browser_evaluate": _profile(
+        "browser_evaluate", "none", "reversible", "none",
+    ),
+    "browser_handle_dialog": _profile(
+        "browser_handle_dialog", "none", "reversible", "none",
+    ),
+    "browser_file_upload": _profile(
+        "browser_file_upload", "external_state", "unknown", "adapter_evidence",
+        destination_service="mcp:playwright",
+    ),
+    "browser_console_messages": _profile(
+        "browser_console_messages", "none", "reversible", "none",
+    ),
+    "browser_network_requests": _profile(
+        "browser_network_requests", "none", "reversible", "none",
+    ),
+    "browser_tabs": _profile(
+        "browser_tabs", "none", "reversible", "none",
+    ),
+    "browser_close": _profile(
+        "browser_close", "none", "reversible", "none",
+    ),
+    "browser_resize": _profile(
+        "browser_resize", "none", "reversible", "none",
+    ),
+    # DuckDuckGo web search: read-only.
+    "web_search": _profile(
+        "web_search", "none", "reversible", "none",
+    ),
     # Embodied/frontend effects.
     "move_to": _profile(
         "move_to", "physical", "reversible", "frontend_ack",
