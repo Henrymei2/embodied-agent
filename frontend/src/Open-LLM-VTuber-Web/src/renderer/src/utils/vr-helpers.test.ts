@@ -6,6 +6,7 @@ import {
   furnitureInteractionReach,
   furnitureCenterSceneY,
   furnitureDecalLayouts,
+  furniturePanelContent,
   furniturePanelLayout,
   furniturePanelRotationY,
   browserEndpoints,
@@ -398,6 +399,76 @@ describe("VR furniture presentation helpers", () => {
 
   it("uses elevation as the furniture centre without adding half-height", () => {
     expect(furnitureCenterSceneY(165)).toBe(1.65);
+  });
+
+  it("targets the first pending plan and shows pending count and titles", () => {
+    const content = furniturePanelContent("plan_status", {
+      available: true,
+      pending: [
+        { plan_id: "plan-1", title: "Clean the room", status: "pending", created_at: "2026-08-10T00:00:00Z" },
+        { plan_id: "plan-2", title: "Write report", status: "pending", created_at: "2026-08-10T00:01:00Z" },
+      ],
+      pending_count: 2,
+      recent: null,
+    });
+    expect(content.decision).toEqual({ collection: "plans", id: "plan-1" });
+    expect(content.lines).toContain("Pending plans: 2");
+    expect(content.lines).toContain("• Clean the room");
+    expect(content.lines).toContain("• Write report");
+  });
+
+  it("stops targeting a plan after it was decided and shows the recent decision", () => {
+    const content = furniturePanelContent("plan_status", {
+      available: true,
+      pending: [],
+      pending_count: 0,
+      recent: {
+        plan_id: "plan-1",
+        title: "Clean the room",
+        status: "approved",
+        created_at: "2026-08-10T00:00:00Z",
+      },
+    });
+    expect(content.decision).toBeNull();
+    expect(content.lines).toContain("Pending plans: 0");
+    expect(content.lines).toContain("Recent: Clean the room — Approved");
+  });
+
+  it("targets the first pending skill slug and lists active skills when idle", () => {
+    const pending = furniturePanelContent("skill_status", {
+      available: true,
+      pending: [{ slug: "transcribe", name: "Transcribe meetings" }],
+      pending_count: 1,
+      active: [],
+      active_count: 0,
+    });
+    expect(pending.decision).toEqual({ collection: "skills", id: "transcribe" });
+    expect(pending.lines).toContain("Pending skills: 1");
+    expect(pending.lines).toContain("• Transcribe meetings");
+
+    const idle = furniturePanelContent("skill_status", {
+      available: true,
+      pending: [],
+      pending_count: 0,
+      active: [],
+      active_count: 3,
+    });
+    expect(idle.decision).toBeNull();
+    expect(idle.lines).toContain("Pending skills: 0");
+    expect(idle.lines).toContain("Active skills: 3");
+  });
+
+  it("falls back to generic summary lines for other providers without decisions", () => {
+    const content = furniturePanelContent("bookshelf", {
+      available: true,
+      books: 12,
+    });
+    expect(content.decision).toBeNull();
+    expect(content.lines).toContain("books: 12");
+    expect(furniturePanelContent("plan_status", null)).toEqual({
+      lines: [],
+      decision: null,
+    });
   });
 
   it("places the same contained texture on all four side faces", () => {

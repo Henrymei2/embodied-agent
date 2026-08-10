@@ -27,6 +27,7 @@ import {
   loadFurnitureModel,
 } from "@/utils/vr-furniture-models";
 import {
+  furniturePanelContent,
   floorToScene,
   furniturePanelLayout,
   furniturePanelRotationY,
@@ -111,7 +112,11 @@ interface PanelAction {
   collection: "plans" | "skills";
   id: string;
   decision: "approved" | "declined";
+  nodeId: string;
 }
+
+const FURNITURE_PANEL_REFRESH_MS = 3000;
+const INTERACTIVE_FURNITURE_PROVIDERS = new Set(["plan_status", "skill_status"]);
 
 const providerRoutes: Record<string, string> = {
   todo_list: "/api/furniture/todo",
@@ -403,16 +408,6 @@ function createSpatialAvatar(node: VrStageNode) {
   avatar.add(presenceLight);
   avatar.userData.visuals = { body, head, leftArm, rightArm, chest, halo };
   return avatar;
-}
-
-function summaryLines(value: unknown): string[] {
-  if (!value || typeof value !== "object") return [];
-  const entries = Object.entries(value as Record<string, unknown>);
-  return entries.slice(0, 4).map(([key, item]) => {
-    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") return `${key}: ${String(item)}`;
-    if (Array.isArray(item)) return `${key}: ${item.length} item(s)`;
-    return `${key}: available`;
-  });
 }
 
 export default function VrStage() {
@@ -812,6 +807,102 @@ export default function VrStage() {
       setOutline(mesh, selectionHighlightEnabled);
     };
 
+    const removePanelActions = (panel: THREE.Mesh) => {
+      [...panel.children].forEach((child) => {
+        if (child.userData.panelAction) {
+          panel.remove(child);
+          disposeObject(child);
+        }
+      });
+    };
+
+    const renderPanelContent = (
+      panel: THREE.Mesh,
+      liveData: Record<string, unknown> | null,
+      failed: boolean,
+    ) => {
+      const node = panel.userData.node as VrStageNode;
+      const provider = panel.userData.provider as string | undefined;
+      const windowConfig: NonNullable<VrStageNode["uiWindow"]> = node.uiWindow || {
+        title: node.label || node.id,
+        body: "No additional information is available for this furniture.",
+      };
+      const content = furniturePanelContent(provider, liveData);
+      const lines = [
+        windowConfig.title,
+        windowConfig.body || "",
+        ...content.lines,
+      ];
+      if (provider === "google_calendar_status" && liveData?.connected !== true) {
+        lines.splice(2, 0, "Exit VR to connect Google");
+      }
+      if (failed) lines.splice(2, 0, "Live data unavailable");
+      lines.push("Close hides this panel until you leave");
+      setPanelLines(panel, lines);
+      removePanelActions(panel);
+      if (content.decision) {
+        const { collection, id } = content.decision;
+        const layout = furniturePanelLayout(provider);
+        (["approved", "declined"] as const).forEach((decision, index) => {
+          const button = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.55, 0.15),
+            new THREE.MeshBasicMaterial({
+              map: canvasTexture([decision === "approved" ? "Approve" : "Decline"], 320, 96),
+              transparent: true,
+            }),
+          );
+          button.position.set(index === 0 ? -0.32 : 0.32, layout.actionY, 0.01);
+          button.userData.panelAction = {
+            collection,
+            id,
+            decision,
+            nodeId: node.id,
+          } satisfies PanelAction;
+          panel.add(button);
+        });
+      }
+    };
+
+    const loadPanelContent = async (
+      nodeId: string,
+      panel: THREE.Mesh,
+      generation: number,
+      keepOnFailure: boolean,
+    ) => {
+      const provider = panel.userData.provider as string | undefined;
+      const route = provider ? providerRoutes[provider] : undefined;
+      let liveData: Record<string, unknown> | null = null;
+      let failed = false;
+      if (route) {
+        try {
+          const response = await fetch(`${baseUrlRef.current}${route}`, {
+            headers: { Accept: "application/json" },
+          });
+          if (response.ok) {
+            liveData = await response.json() as Record<string, unknown>;
+          } else {
+            failed = true;
+          }
+        } catch (_error) {
+          failed = true;
+        }
+      }
+      if (
+        runtime.panels.get(nodeId) !== panel ||
+        runtime.panelGenerations.get(nodeId) !== generation
+      ) return;
+      if (failed && keepOnFailure) return;
+      renderPanelContent(panel, liveData, failed);
+    };
+
+    const refreshPanel = async (nodeId: string) => {
+      const panel = runtime.panels.get(nodeId);
+      if (!panel) return;
+      const generation = (runtime.panelGenerations.get(nodeId) || 0) + 1;
+      runtime.panelGenerations.set(nodeId, generation);
+      await loadPanelContent(nodeId, panel, generation, true);
+    };
+
     const openFurniturePanel = async (node: VrStageNode) => {
       if (runtime.panels.has(node.id) || runtime.dismissedPanels.has(node.id)) return;
       const windowConfig: NonNullable<VrStageNode["uiWindow"]> = node.uiWindow || {
@@ -821,19 +912,25 @@ export default function VrStage() {
       const layout = furniturePanelLayout(windowConfig.provider);
       const generation = (runtime.panelGenerations.get(node.id) || 0) + 1;
       runtime.panelGenerations.set(node.id, generation);
-      const lines = [windowConfig.title, windowConfig.body || "", "Loading…"];
-      const panelTexture = canvasTexture(
-        lines,
-        layout.textureWidth,
-        layout.textureHeight,
-        layout.maxLines,
-      );
       const panel = new THREE.Mesh(
         new THREE.PlaneGeometry(layout.width, layout.height),
-        new THREE.MeshBasicMaterial({ map: panelTexture, transparent: true, side: THREE.DoubleSide }),
+        new THREE.MeshBasicMaterial({
+          map: canvasTexture(
+            [windowConfig.title, windowConfig.body || "", "Loading…"],
+            layout.textureWidth,
+            layout.textureHeight,
+            layout.maxLines,
+          ),
+          transparent: true,
+          side: THREE.DoubleSide,
+        }),
       );
       const position = documentToScene(stageRef.current!, node.x, node.y);
-      panel.position.set(position.x, Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE), position.z);
+      panel.position.set(
+        position.x,
+        Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE),
+        position.z,
+      );
       panel.rotation.y = furniturePanelRotationY(
         node.y,
         stageRef.current!.room.depth,
@@ -853,46 +950,7 @@ export default function VrStage() {
       );
       scene.add(panel);
       runtime.panels.set(node.id, panel);
-
-      const route = windowConfig.provider ? providerRoutes[windowConfig.provider] : undefined;
-      let liveData: Record<string, unknown> | null = null;
-      if (route) {
-        try {
-          const response = await fetch(`${baseUrlRef.current}${route}`, { headers: { Accept: "application/json" } });
-          if (response.ok) {
-            liveData = await response.json() as Record<string, unknown>;
-            lines.splice(2, 0, ...summaryLines(liveData));
-            if (windowConfig.provider === "google_calendar_status" && liveData.connected !== true) {
-              lines.splice(2, 0, "Exit VR to connect Google");
-            }
-          }
-        } catch (_error) {
-          lines.splice(2, 0, "Live data unavailable");
-        }
-      }
-      if (
-        runtime.panels.get(node.id) !== panel ||
-        runtime.panelGenerations.get(node.id) !== generation
-      ) return;
-      lines.splice(lines.indexOf("Loading…"), 1, "Close hides this panel until you leave");
-      setPanelLines(panel, lines);
-      const pending = Array.isArray(liveData?.pending) ? liveData.pending[0] as Record<string, unknown> | undefined : undefined;
-      const collection = windowConfig.provider === "plan_status" ? "plans" : windowConfig.provider === "skill_status" ? "skills" : null;
-      const decisionId = collection === "plans" ? pending?.plan_id : pending?.slug;
-      if (collection && typeof decisionId === "string") {
-        (["approved", "declined"] as const).forEach((decision, index) => {
-          const button = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.55, 0.15),
-            new THREE.MeshBasicMaterial({
-              map: canvasTexture([decision === "approved" ? "Approve" : "Decline"], 320, 96),
-              transparent: true,
-            }),
-          );
-          button.position.set(index === 0 ? -0.32 : 0.32, layout.actionY, 0.01);
-          button.userData.panelAction = { collection, id: decisionId, decision } satisfies PanelAction;
-          panel.add(button);
-        });
-      }
+      await loadPanelContent(node.id, panel, generation, false);
     };
 
     const activatePanelAction = async (action: PanelAction) => {
@@ -903,6 +961,21 @@ export default function VrStage() {
           body: JSON.stringify({ decision: action.decision }),
         });
         if (!response.ok) throw new Error("Decision was rejected");
+        const panel = runtime.panels.get(action.nodeId);
+        if (!panel) return;
+        // Optimistic feedback: drop the buttons and show the decision right
+        // away, then let the authoritative refresh replace this text.
+        removePanelActions(panel);
+        const node = panel.userData.node as VrStageNode;
+        const noun = action.collection === "plans" ? "Plan" : "Skill";
+        const outcome = action.decision === "approved" ? "approved" : "declined";
+        setPanelLines(panel, [
+          node.uiWindow?.title || node.label || node.id,
+          node.uiWindow?.body || "",
+          `${noun} ${outcome} — refreshing…`,
+          "Close hides this panel until you leave",
+        ]);
+        void refreshPanel(action.nodeId);
       } catch (_error) {
         // The furniture panel remains open so the user can retry.
       }
@@ -1330,10 +1403,20 @@ export default function VrStage() {
       }
       renderer.render(scene, camera);
     };
+    const panelRefreshInterval = window.setInterval(() => {
+      [...runtime.panels.keys()].forEach((nodeId) => {
+        const panel = runtime.panels.get(nodeId);
+        const provider = panel?.userData.provider as string | undefined;
+        if (panel && provider && INTERACTIVE_FURNITURE_PROVIDERS.has(provider)) {
+          void refreshPanel(nodeId);
+        }
+      });
+    }, FURNITURE_PANEL_REFRESH_MS);
     renderer.setAnimationLoop(renderFrame);
     void renderer.xr.setSession(xrSession).then(() => renderer.xr.setFoveation(0.4));
 
     return () => {
+      window.clearInterval(panelRefreshInterval);
       renderer.setAnimationLoop(null);
       controllers.forEach((controller) => controller.removeEventListener("select", handleSelect as never));
       controllers.forEach((controller) => controller.removeEventListener("connected", handleConnected as never));

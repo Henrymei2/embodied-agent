@@ -81,6 +81,123 @@ export function furniturePanelLayout(provider?: string): FurniturePanelLayout {
     : STANDARD_FURNITURE_PANEL_LAYOUT;
 }
 
+export interface FurniturePanelDecisionTarget {
+  collection: "plans" | "skills";
+  id: string;
+}
+
+export interface FurniturePanelContent {
+  lines: string[];
+  decision: FurniturePanelDecisionTarget | null;
+}
+
+const DECISION_STATUS_LABELS: Record<string, string> = {
+  approved: "Approved",
+  declined: "Declined",
+  withdrawn: "Withdrawn",
+};
+
+function decisionStatusLabel(status: unknown) {
+  if (typeof status === "string" && DECISION_STATUS_LABELS[status]) {
+    return DECISION_STATUS_LABELS[status];
+  }
+  if (typeof status === "string" && status) {
+    return `${status.charAt(0).toUpperCase()}${status.slice(1)}`;
+  }
+  return "";
+}
+
+function furnitureItemTitle(item: Record<string, unknown>, idKey: string, titleKey: string) {
+  const title = item[titleKey];
+  if (typeof title === "string" && title) return title;
+  const id = item[idKey];
+  return typeof id === "string" ? id : "";
+}
+
+function genericFurniturePanelLines(liveData: Record<string, unknown> | null): string[] {
+  if (!liveData) return [];
+  return Object.entries(liveData).slice(0, 4).map(([key, item]) => {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+      return `${key}: ${String(item)}`;
+    }
+    if (Array.isArray(item)) return `${key}: ${item.length} item(s)`;
+    return `${key}: available`;
+  });
+}
+
+/**
+ * Turn a furniture window snapshot into panel text and, for approval
+ * providers, the next decision the user can make. Plan and skill windows
+ * render their own pending/recent lines so the desk reacts visibly when a
+ * plan has just been approved or declined.
+ */
+export function furniturePanelContent(
+  provider: string | undefined,
+  liveData: Record<string, unknown> | null,
+): FurniturePanelContent {
+  if (!liveData || typeof liveData !== "object") {
+    return { lines: [], decision: null };
+  }
+  if (provider !== "plan_status" && provider !== "skill_status") {
+    return { lines: genericFurniturePanelLines(liveData), decision: null };
+  }
+
+  const collection = provider === "plan_status" ? "plans" as const : "skills" as const;
+  const noun = collection === "plans" ? "plan" : "skill";
+  const pending = Array.isArray(liveData.pending)
+    ? liveData.pending.filter((item): item is Record<string, unknown> => (
+      Boolean(item) && typeof item === "object"
+    ))
+    : [];
+  const pendingCount = Number.isFinite(liveData.pending_count)
+    ? Number(liveData.pending_count)
+    : pending.length;
+  const firstPending = pending[0];
+  const decisionId = collection === "plans"
+    ? firstPending?.plan_id
+    : firstPending?.slug;
+  const decision = typeof decisionId === "string" && decisionId
+    ? { collection, id: decisionId }
+    : null;
+
+  if (liveData.available === false && typeof liveData.message === "string") {
+    return {
+      lines: [`${noun === "plan" ? "Plans" : "Skills"} unavailable: ${liveData.message}`],
+      decision,
+    };
+  }
+
+  const lines: string[] = [];
+  if (collection === "plans") {
+    lines.push(`Pending plans: ${pendingCount}`);
+    pending.slice(0, 2).forEach((item) => {
+      lines.push(`• ${furnitureItemTitle(item, "plan_id", "title")}`);
+    });
+    const recent = liveData.recent && typeof liveData.recent === "object"
+      ? liveData.recent as Record<string, unknown>
+      : null;
+    if (recent) {
+      const status = decisionStatusLabel(recent.status);
+      lines.push(
+        `Recent: ${furnitureItemTitle(recent, "plan_id", "title")}${status ? ` — ${status}` : ""}`,
+      );
+    } else {
+      lines.push("Recent: none");
+    }
+  } else {
+    lines.push(`Pending skills: ${pendingCount}`);
+    if (firstPending) {
+      lines.push(`• ${furnitureItemTitle(firstPending, "slug", "name")}`);
+    } else {
+      const activeCount = Number.isFinite(liveData.active_count)
+        ? Number(liveData.active_count)
+        : 0;
+      lines.push(`Active skills: ${activeCount}`);
+    }
+  }
+  return { lines, decision };
+}
+
 /** Keep wall-mounted panels facing into the room without tracking the viewer.
  * In floor coordinates the north/mailbox wall is the low-y half. */
 export function furniturePanelRotationY(nodeY: number, roomDepth: number) {
