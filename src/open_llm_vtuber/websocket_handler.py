@@ -237,6 +237,9 @@ class WebSocketHandler:
                 autonomy_settings,
                 presence,
             )
+            from .autonomy.welcome_back import register_welcome_session
+
+            register_welcome_session(client_uid, autonomy_settings)
 
         self.chat_group_manager.client_group_map[client_uid] = ""
         await self.send_group_update(websocket, client_uid)
@@ -498,7 +501,9 @@ class WebSocketHandler:
 
         if msg_type in {"text-input", "mic-audio-end", "object-interaction"}:
             from .autonomy.observation import mark_user_activity
+            from .autonomy.welcome_back import cancel_welcome_for_user
 
+            cancel_welcome_for_user(client_uid)
             mark_user_activity(client_uid)
 
         handler = self._message_handlers.get(msg_type)
@@ -661,6 +666,7 @@ class WebSocketHandler:
         from .autonomy.observation import clear_client_presence
         from .autonomy.presence import unregister_presence_ledger
         from .autonomy.screen_context import clear_screen_context
+        from .autonomy.welcome_back import unregister_welcome_session
         from .conversations.llm_request_queue import remove_queue
         from .physical_context import clear_physical_context
 
@@ -674,6 +680,7 @@ class WebSocketHandler:
                 "group map",
                 lambda uid: self.chat_group_manager.client_group_map.pop(uid, None),
             ),
+            ("welcome-back session", unregister_welcome_session),
             ("presence observation", clear_client_presence),
             ("screen context", clear_screen_context),
             ("VR physical context", clear_physical_context),
@@ -793,6 +800,13 @@ class WebSocketHandler:
         await websocket.send_text(
             json.dumps({"type": "history-data", "messages": messages})
         )
+        from .autonomy.welcome_back import maybe_queue_welcome
+
+        await maybe_queue_welcome(
+            client_uid,
+            context=context,
+            send=websocket.send_text,
+        )
 
     async def _handle_create_history(
         self, websocket: WebSocket, client_uid: str, data: WSMessage
@@ -813,6 +827,13 @@ class WebSocketHandler:
                         "history_uid": history_uid,
                     }
                 )
+            )
+            from .autonomy.welcome_back import maybe_queue_welcome
+
+            await maybe_queue_welcome(
+                client_uid,
+                context=context,
+                send=websocket.send_text,
             )
 
     async def _handle_delete_history(
@@ -1101,7 +1122,7 @@ class WebSocketHandler:
         from .autonomy.presence import get_presence_ledger
 
         try:
-            update_client_presence(client_uid, data)
+            signal = update_client_presence(client_uid, data)
         except ValueError as exc:
             logger.warning(
                 f"Rejected invalid presence context from {client_uid}: {exc}"
@@ -1123,6 +1144,14 @@ class WebSocketHandler:
                     }
                 )
             )
+        from .autonomy.welcome_back import observe_welcome_presence
+
+        await observe_welcome_presence(
+            client_uid,
+            user_present=signal.user_present,
+            context=self.client_contexts[client_uid],
+            send=websocket.send_text,
+        )
 
     async def _handle_screen_context(
         self, websocket: WebSocket, client_uid: str, data: WSMessage

@@ -85,7 +85,9 @@ scheduling, and consent-aware autonomous behavior.
   [the completed 3× autonomy roadmap](doc/AUTONOMY_LEVELS.md).
 - **Presence Contract:** autonomous actions spend a refillable attention budget,
   respect focus/snooze state, produce why-I-acted receipts, and learn bounded
-  preferences from explicit feedback.
+  preferences from explicit feedback. On first use and after a meaningful
+  return, the companion can open a grounded conversation from the same memory,
+  agenda, room, and furniture context used by autonomous planning.
 - **Multi-client-safe routing:** live frontend actions are bound to the exact
   client and the single configured character identity that initiated them.
 - **Survives a bad network:** a local TTS engine speaks when the remote one

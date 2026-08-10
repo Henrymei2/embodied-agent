@@ -34,8 +34,8 @@ Autonomous actions use a token-bucket budget:
 | Delivery | Cost | Example |
 | --- | ---: | --- |
 | Silent | 0.25 | Write a diary note or tidy the room |
-| Ask | 1.25 | Offer contextual help or ask permission |
-| Speak | 2.00 | Greet the user or share an observation |
+| Ask | 1.25 | Welcome the user with a contextual question |
+| Speak | 2.00 | Share an observation or completed result |
 
 The default budget is 6 points and refills at 1 point per hour. A planner tick
 still evaluates usefulness, novelty, intrusiveness, risk, and user settings.
@@ -74,10 +74,19 @@ system_config:
     attention_refill_per_hour: 1.0
     receipt_retention: 50
     default_snooze_minutes: 60
+    welcome_back_greeting_enabled: true
+    welcome_back_min_absence_minutes: 30
     report_retry_seconds: 60
     report_retry_limit: 5
     report_backlog_limit: 20
 ```
+
+The welcome-back greeting runs after chat history and a fresh visible-presence
+signal are both ready. It happens on first use and after a recorded absence of
+at least 30 minutes, so refreshes and short reconnects do not repeat it. In
+`enforced` mode focus, snooze, freshness, and budget remain gates. In
+`observe_only` mode those gate reasons are retained on the receipt but do not
+block the greeting; an actually absent user is never addressed.
 
 Completion delivery is backed by the agenda's persistent report outbox.
 Headless silent work can record its receipt immediately. User-facing reports

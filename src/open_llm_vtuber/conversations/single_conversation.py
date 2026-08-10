@@ -86,7 +86,8 @@ async def process_single_conversation(
         # dialogue loop. Raw text goes only to the governed private store; the
         # inspectable ledger receives opaque references and digests.
         skip_memory = bool(metadata and metadata.get("skip_memory", False))
-        if not skip_memory:
+        synthetic_user = bool(metadata and metadata.get("synthetic_user", False))
+        if not skip_memory and not synthetic_user:
             from ..study import conditions
 
             if conditions().memory:
@@ -114,8 +115,9 @@ async def process_single_conversation(
         )
 
         # Store user message (check if we should skip storing to history)
-        skip_history = metadata and metadata.get("skip_history", False)
-        if context.history_uid and not skip_history:
+        skip_history = bool(metadata and metadata.get("skip_history", False))
+        skip_user_history = skip_history or synthetic_user
+        if context.history_uid and not skip_user_history:
             store_message(
                 conf_uid=context.character_config.conf_uid,
                 history_uid=context.history_uid,
@@ -127,10 +129,13 @@ async def process_single_conversation(
                 name=context.character_config.human_name,
             )
 
-        if skip_history:
-            logger.debug("Skipping storing user input to history (proactive speak)")
+        if skip_user_history:
+            logger.debug("Skipping synthetic/private user input in chat history")
 
-        logger.info(f"User input: {input_text}")
+        if synthetic_user:
+            logger.info("Processing an internal companion-initiative prompt")
+        else:
+            logger.info(f"User input: {input_text}")
         if images:
             logger.info(f"With {len(images)} images")
 

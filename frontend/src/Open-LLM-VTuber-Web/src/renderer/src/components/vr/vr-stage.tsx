@@ -24,7 +24,6 @@ import {
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   headRelativeDelta,
-  horizontalBillboardTarget,
   inputSourcesByHand,
   isViewerPositionClear,
   pressedEdge,
@@ -40,6 +39,7 @@ import {
   clampCaptionText,
   viewerForwardFromPose,
   viewerPoseCamera,
+  viewerWorldPositionFromPose,
   VR_RAY_MAX_DISTANCE,
   loadVrSelectionHighlight,
 } from "@/utils/vr-helpers";
@@ -50,7 +50,6 @@ const DEAD_ZONE = 0.2;
 const SNAP_THRESHOLD = 0.7;
 const SNAP_REARM = 0.3;
 const SNAP_RADIANS = THREE.MathUtils.degToRad(30);
-const PANEL_FACING_DAMPING = 8;
 
 interface AvatarMotionRuntime extends VrAvatarMotionPlan {
   startedAt: number;
@@ -699,10 +698,6 @@ export default function VrStage() {
       );
       const position = documentToScene(stageRef.current!, node.x, node.y);
       panel.position.set(position.x, Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE), position.z);
-      const headset = viewerPoseCamera(renderer.xr.getCamera());
-      const headsetPosition = new THREE.Vector3();
-      headset.getWorldPosition(headsetPosition);
-      panel.lookAt(headsetPosition.x, panel.position.y, headsetPosition.z);
       panel.userData.panel = true;
       panel.userData.node = node;
       panel.userData.nodeId = node.id;
@@ -920,16 +915,16 @@ export default function VrStage() {
       const inputSources = inputSourcesByHand(xrSession.inputSources);
       const left = inputSources.left?.gamepad;
       const right = inputSources.right?.gamepad;
+      const referenceSpace = renderer.xr.getReferenceSpace();
+      const liveViewerPose = frame && referenceSpace
+        ? frame.getViewerPose(referenceSpace)
+        : null;
       if (!runtime.scenarioMenuOpen && left && left.axes.length >= 4 && currentStage) {
         const rawAxes = questLocomotionStick(left.axes[2] || 0, left.axes[3] || 0);
         const axes = rescaleThumbstick(rawAxes.x, rawAxes.y, DEAD_ZONE);
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        const viewerPose = frame && referenceSpace
-          ? frame.getViewerPose(referenceSpace)
-          : null;
-        const forward = viewerPose
+        const forward = liveViewerPose
           ? viewerForwardFromPose(
-            viewerPose.transform.orientation,
+            liveViewerPose.transform.orientation,
             rig.getWorldQuaternion(new THREE.Quaternion()),
           )
           : (() => {
@@ -1079,8 +1074,15 @@ export default function VrStage() {
         visuals.halo.rotation.z = time * 0.00012;
       }
       if (currentStage) {
-        const headsetPosition = viewerPoseCamera(renderer.xr.getCamera())
-          .getWorldPosition(new THREE.Vector3());
+        const rigOrientation = rig.getWorldQuaternion(new THREE.Quaternion());
+        const headsetPosition = liveViewerPose
+          ? viewerWorldPositionFromPose(
+            liveViewerPose.transform.position,
+            rig.position,
+            rigOrientation,
+          )
+          : viewerPoseCamera(renderer.xr.getCamera())
+            .getWorldPosition(new THREE.Vector3());
         const userPosition = {
           x: headsetPosition.x / SCALE + currentStage.room.width / 2,
           y: currentStage.room.depth / 2 - headsetPosition.z / SCALE,
@@ -1127,18 +1129,24 @@ export default function VrStage() {
             Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE),
             position.z,
           );
-          const facingTarget = horizontalBillboardTarget(panel.position, headsetPosition);
-          const target = facingQuaternion(panel.position, new THREE.Vector3(
-            facingTarget.x, facingTarget.y, facingTarget.z,
-          ));
-          panel.quaternion.slerp(target, 1 - Math.exp(-PANEL_FACING_DAMPING * dt));
         });
       }
       if (currentStage) {
+        const rigOrientation = rig.getWorldQuaternion(new THREE.Quaternion());
         const headset = viewerPoseCamera(renderer.xr.getCamera());
-        const headsetPosition = new THREE.Vector3();
-        const forward = headset.getWorldDirection(new THREE.Vector3());
-        headset.getWorldPosition(headsetPosition);
+        const headsetPosition = liveViewerPose
+          ? viewerWorldPositionFromPose(
+            liveViewerPose.transform.position,
+            rig.position,
+            rigOrientation,
+          )
+          : headset.getWorldPosition(new THREE.Vector3());
+        const forward = liveViewerPose
+          ? viewerForwardFromPose(
+            liveViewerPose.transform.orientation,
+            rigOrientation,
+          )
+          : headset.getWorldDirection(new THREE.Vector3());
         const pose = {
           x: headsetPosition.x / SCALE + currentStage.room.width / 2,
           y: currentStage.room.depth / 2 - headsetPosition.z / SCALE,

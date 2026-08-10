@@ -37,6 +37,25 @@ def test_latency_settings_default_to_fast_hard_limits():
     assert config.max_plausible_duration_seconds == 0.0
     assert settings.step_timeout_seconds == 30
     assert settings.max_plausible_duration_seconds == 0.0
+    assert config.welcome_back_greeting_enabled is True
+    assert config.welcome_back_min_absence_minutes == 30
+    assert settings.welcome_back_greeting_enabled is True
+    assert settings.welcome_back_min_absence_minutes == 30
+
+
+def test_welcome_back_absence_is_bounded():
+    assert (
+        AutonomySettings(
+            welcome_back_min_absence_minutes=0
+        ).welcome_back_min_absence_minutes
+        == 1
+    )
+    assert (
+        AutonomySettings(
+            welcome_back_min_absence_minutes=20_000
+        ).welcome_back_min_absence_minutes
+        == 10_080
+    )
 
 
 def test_plausible_duration_limit_is_bounded():

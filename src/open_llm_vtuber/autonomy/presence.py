@@ -22,7 +22,7 @@ from .observation import Observation
 from .settings import AutonomySettings
 
 _STATE_FILENAME = "presence_ledger.json"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 HELPFUL = "helpful"
 DISMISSED = "dismissed"
@@ -118,6 +118,9 @@ class PresenceLedger:
     budget_balance: float
     last_refill_at: str
     snoozed_until: Optional[str] = None
+    last_user_seen_at: Optional[str] = None
+    user_away_since: Optional[str] = None
+    last_welcome_back_at: Optional[str] = None
     direction_affinity: dict[str, float] = field(default_factory=dict)
     receipts: list[PresenceReceipt] = field(default_factory=list)
     schema_version: int = _SCHEMA_VERSION
@@ -175,6 +178,9 @@ class PresenceLedger:
                     ),
                     last_refill_at=str(raw.get("last_refill_at") or now.isoformat()),
                     snoozed_until=raw.get("snoozed_until"),
+                    last_user_seen_at=raw.get("last_user_seen_at"),
+                    user_away_since=raw.get("user_away_since"),
+                    last_welcome_back_at=raw.get("last_welcome_back_at"),
                     direction_affinity={
                         str(key): _clamp(float(value), -1.0, 1.0)
                         for key, value in raw.get("direction_affinity", {}).items()
@@ -214,6 +220,9 @@ class PresenceLedger:
             "budget_balance": round(self.budget_balance, 4),
             "last_refill_at": self.last_refill_at,
             "snoozed_until": self.snoozed_until,
+            "last_user_seen_at": self.last_user_seen_at,
+            "user_away_since": self.user_away_since,
+            "last_welcome_back_at": self.last_welcome_back_at,
             "direction_affinity": self.direction_affinity,
             "receipts": [receipt.to_dict() for receipt in self.receipts],
         }
@@ -290,6 +299,33 @@ class PresenceLedger:
             now=now,
         )
         return allowed, reason
+
+    def note_user_presence(
+        self, user_present: bool, *, now: Optional[datetime] = None
+    ) -> Optional[float]:
+        """Persist coarse return timing and report the just-ended absence."""
+        now = _as_utc(now)
+        absence_started = _parse_time(self.user_away_since)
+        previous_seen = _parse_time(self.last_user_seen_at)
+        absence_seconds: Optional[float] = None
+        if user_present:
+            start = absence_started or previous_seen
+            if start is not None:
+                absence_seconds = max(0.0, (now - start).total_seconds())
+            self.user_away_since = None
+        elif absence_started is None:
+            self.user_away_since = now.isoformat()
+        self.last_user_seen_at = now.isoformat()
+        self.save()
+        return absence_seconds
+
+    def mark_welcome_back_complete(self, *, now: Optional[datetime] = None) -> None:
+        self.last_welcome_back_at = _as_utc(now).isoformat()
+        self.save()
+
+    @property
+    def has_welcomed_user(self) -> bool:
+        return _parse_time(self.last_welcome_back_at) is not None
 
     def _gate_decision(
         self,

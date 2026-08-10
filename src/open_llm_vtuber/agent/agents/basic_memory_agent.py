@@ -418,7 +418,10 @@ class BasicMemoryAgent(AgentInterface):
             messages.append(user_message)
 
             skip_memory = False
-            if input_data.metadata and input_data.metadata.get("skip_memory", False):
+            if input_data.metadata and (
+                input_data.metadata.get("skip_memory", False)
+                or input_data.metadata.get("synthetic_user", False)
+            ):
                 skip_memory = True
 
             if not skip_memory:
@@ -776,7 +779,10 @@ class BasicMemoryAgent(AgentInterface):
             # Persistent memory: let the prior context compact (topic change /
             # buffer full) before recording the new user turn, then refresh the
             # memory block injected into the system prompt for this turn.
-            if self._memory_manager:
+            synthetic_user = bool(
+                input_data.metadata and input_data.metadata.get("synthetic_user", False)
+            )
+            if self._memory_manager and not synthetic_user:
                 user_text = self._to_text_prompt(input_data)
                 if user_text:
                     try:

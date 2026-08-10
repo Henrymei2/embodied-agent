@@ -45,6 +45,12 @@ class AutonomyConfig(I18nMixin):
         "enforced", alias="presence_mode"
     )
     headless_enabled: bool = Field(True, alias="headless_enabled")
+    welcome_back_greeting_enabled: bool = Field(
+        True, alias="welcome_back_greeting_enabled"
+    )
+    welcome_back_min_absence_minutes: int = Field(
+        30, ge=1, le=10080, alias="welcome_back_min_absence_minutes"
+    )
     lease_ttl_seconds: float = Field(30.0, ge=5, le=300)
     lease_renew_seconds: float = Field(10.0, ge=1, le=150)
     lease_retry_seconds: float = Field(2.0, ge=0.25, le=60)
@@ -121,6 +127,12 @@ class AutonomyConfig(I18nMixin):
         ),
         "headless_enabled": Description(
             en="Keep safe autonomous continuity while no client is connected"
+        ),
+        "welcome_back_greeting_enabled": Description(
+            en="Welcome the user after a meaningful return"
+        ),
+        "welcome_back_min_absence_minutes": Description(
+            en="Minutes away before another welcome-back greeting is eligible"
         ),
         "lease_ttl_seconds": Description(en="Cross-process workspace lease lifetime"),
         "lease_renew_seconds": Description(en="Workspace lease renewal cadence"),

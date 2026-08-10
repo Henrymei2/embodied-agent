@@ -47,6 +47,11 @@ system_config:
     enabled: true
     presence_mode: enforced
     headless_enabled: true
+    # Welcome the user on first use, or after they have been away this long.
+    # The greeting still follows Presence gates in enforced mode; observe_only
+    # records a gate override and continues.
+    welcome_back_greeting_enabled: true
+    welcome_back_min_absence_minutes: 30
     lease_ttl_seconds: 30
     lease_renew_seconds: 10
     lease_retry_seconds: 2

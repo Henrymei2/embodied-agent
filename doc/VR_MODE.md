@@ -160,20 +160,20 @@ root while moving only the camera rig leaves the ray behind at its initial
 world position and makes interaction disagree with locomotion.
 
 Furniture panels are driven by proximity rather than selecting fixed furniture.
-A panel opens when either the user or agent enters the furniture's semantic
-reach: an explicit bounded `reach`, or 60 cm beyond the furniture's largest
-half-span. It remains visible through a 25 cm exit buffer and closes once both
-occupants leave that buffered area. Multiple panels may be visible when the
-user and agent are near different furniture. Furniture without a configured
-`uiWindow` still opens a generic panel naming the object and stating that no
-additional data is available.
+A panel opens when either the user or agent enters 150% of the furniture's
+semantic reach: an explicit bounded `reach`, or 60 cm beyond the furniture's
+largest half-span. It remains visible through a further 25 cm exit buffer and
+closes once both occupants leave that buffered area. Multiple panels may be
+visible when the user and agent are near different furniture. Furniture without
+a configured `uiWindow` still opens a generic panel naming the object and
+stating that no additional data is available.
 
-A panel is positioned above or beside its furniture and smoothly tracks the
-headset around the vertical axis. Selecting its enlarged Close control hides
-that panel until both occupants leave the buffered area; returning later opens
-it again. Opening the VR test-scenario menu temporarily hides furniture panels.
-Fixed furniture is not trigger-selectable and does not receive a selectable
-hover highlight.
+A panel is positioned above or beside its furniture with a fixed room-relative
+orientation; it does not rotate toward the headset. Selecting its enlarged
+Close control hides that panel until both occupants leave the buffered area;
+returning later opens it again. Opening the VR test-scenario menu temporarily
+hides furniture panels. Fixed furniture is not trigger-selectable and does not
+receive a selectable hover highlight.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,

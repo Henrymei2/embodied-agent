@@ -33,6 +33,14 @@ ENTRY_STATUSES = {
     *TERMINAL_STATUSES,
 }
 REPORT_POLICIES = {"silent", "if_noteworthy", "on_completion", "ask_first"}
+MOTIVATION_TYPES = {
+    "curiosity",
+    "care",
+    "housekeeping",
+    "growth",
+    "social",
+    "work",
+}
 REPORT_STATUSES = {"pending", "delivering", "delivered", "failed"}
 EVENT_STATUSES = {"pending", "claimed", "acknowledged", "dead_letter"}
 STEP_KINDS = {
@@ -606,8 +614,7 @@ class AgendaStore:
                 and entry.metadata.get("trigger_foreground")
                 and entry.report_policy != "silent"
                 and not any(
-                    report.entry_id == entry_id
-                    and report.report_key == "completion"
+                    report.entry_id == entry_id and report.report_key == "completion"
                     for report in state.reports
                 )
             ):
@@ -767,8 +774,7 @@ class AgendaStore:
                 (
                     report
                     for report in state.reports
-                    if report.entry_id == entry_id
-                    and report.report_key == report_key
+                    if report.entry_id == entry_id and report.report_key == report_key
                 ),
                 None,
             )
@@ -833,8 +839,7 @@ class AgendaStore:
                 )
                 report_key = f"decision:{transaction_id}"
                 if not any(
-                    report.entry_id == entry_id
-                    and report.report_key == report_key
+                    report.entry_id == entry_id and report.report_key == report_key
                     for report in state.reports
                 ):
                     state.reports.append(
@@ -977,8 +982,7 @@ class AgendaStore:
                 (
                     report
                     for report in state.reports
-                    if report.entry_id == entry_id
-                    and report.report_key == cleaned_key
+                    if report.entry_id == entry_id and report.report_key == cleaned_key
                 ),
                 None,
             )
@@ -1822,6 +1826,7 @@ def create_entry(
     time_budget_seconds: int,
     status: str = "queued",
     report_policy: str = "silent",
+    motivation_type: str | None = None,
     **kwargs: Any,
 ) -> AgendaEntry:
     return AgendaEntry(
@@ -1830,7 +1835,10 @@ def create_entry(
         title=title,
         description=description,
         origin=origin,
-        motivation=Motivation(type=origin, evidence_refs=evidence_refs),
+        motivation=Motivation(
+            type=motivation_type or origin,
+            evidence_refs=evidence_refs,
+        ),
         status=status,
         completion_condition=CompletionCondition(completion_condition),
         budget=ResourceBudget(time_budget_seconds),

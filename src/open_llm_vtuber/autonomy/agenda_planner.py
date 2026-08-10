@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from .agenda import ExecutionCheckpoint, create_entry, new_entry_id
+from .agenda import MOTIVATION_TYPES, ExecutionCheckpoint, create_entry, new_entry_id
 from .agenda_context import AgendaContext
 from .idle_relocation import IdlePlacement, IdleScene
 from .step_policy import capability_requires_approval
@@ -43,6 +43,11 @@ def normalize_generated_kind(value: Any) -> str:
     # work. Any other model-created category is therefore a pursuit subtype,
     # not a new persisted enum value.
     return "pursuit"
+
+
+def normalize_motivation_type(value: Any) -> str:
+    motivation = str(value).strip().lower()
+    return motivation if motivation in MOTIVATION_TYPES else "curiosity"
 
 
 def _json_object(text: str) -> dict[str, Any]:
@@ -117,7 +122,12 @@ class StructuredAgendaPlanner:
     async def propose_intention(self, context: AgendaContext):
         prompt = (
             "You are the intention generator for an embodied agent. Propose exactly "
-            "one novel, grounded, bounded high-level intention. Return JSON only with "
+            "one novel, grounded, bounded high-level intention. Act as a caring "
+            "virtual companion: when evidence supports it, favor care, curiosity, "
+            "or social connection and create a natural opening for the user to "
+            "respond. Never invent concern or mechanically ask a generic question. "
+            "Use on_completion for worthwhile care/social interaction; reserve "
+            "silent delivery for internal housekeeping. Return JSON only with "
             "kind, title, description, motivation_type, evidence_refs, novelty, "
             "completion_condition, time_budget_seconds, preferred_object, "
             "required_capabilities, report_policy, risk, requires_approval. "
@@ -141,6 +151,7 @@ class StructuredAgendaPlanner:
                 raw.get("time_budget_seconds", self.default_pursuit_seconds)
             ),
             status="proposed",
+            motivation_type=normalize_motivation_type(raw.get("motivation_type")),
             preferred_object=raw.get("preferred_object"),
             required_capabilities=[
                 str(value) for value in raw.get("required_capabilities", [])
@@ -265,12 +276,12 @@ class StructuredAgendaPlanner:
         """Apply the entry's conditional reporting policy to its final result."""
         raw = _json_object(
             await self.complete(
-                "Decide whether this completed autonomous result is useful or "
-                "interesting enough to interrupt the user's current conversation. "
-                'Return JSON only: {"noteworthy": boolean}. Be conservative: routine '
-                "completion, no new information, and internal housekeeping are not "
-                "noteworthy. A concrete finding, useful artifact, timely warning, or "
-                "meaningful progress may be noteworthy. "
+                "Decide whether this completed autonomous result is worth warmly "
+                "sharing with the user as their companion. "
+                'Return JSON only: {"noteworthy": boolean}. Routine housekeeping '
+                "and no new information stay private. Concrete help, timely care, "
+                "a useful artifact, meaningful progress, or a grounded opportunity "
+                "to check in with the user may be noteworthy. "
                 f"Entry: {json.dumps(entry, ensure_ascii=False)}\n"
                 f"Completion summary: {json.dumps(summary, ensure_ascii=False)}\n"
                 f"Context: {json.dumps(context.payload, ensure_ascii=False)}"

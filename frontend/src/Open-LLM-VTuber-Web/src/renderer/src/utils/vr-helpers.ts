@@ -33,6 +33,7 @@ export const VR_RAY_MAX_DISTANCE = 3;
 export const VR_SELECTION_HIGHLIGHT_KEY = "vrSelectionHighlightEnabled";
 export const DEFAULT_VR_SELECTION_HIGHLIGHT = true;
 export const FURNITURE_PANEL_EXIT_BUFFER_CM = 25;
+export const FURNITURE_PANEL_REACH_MULTIPLIER = 1.5;
 
 export interface FurniturePanelNode extends FloorAabbNode {
   reach?: number;
@@ -88,7 +89,7 @@ export function furnitureInteractionReach(
   const declared = typeof node.reach === "number" && Number.isFinite(node.reach) && node.reach > 0
     ? node.reach
     : derived;
-  return Math.min(reachCeiling, declared);
+  return Math.min(reachCeiling, declared) * FURNITURE_PANEL_REACH_MULTIPLIER;
 }
 
 function withinFurnitureDistance(
@@ -166,13 +167,6 @@ export function nextEmailPage(currentPage: number, bodyLength: number, pageSize 
   return (currentPage + 1) % (pages + 1);
 }
 
-export function horizontalBillboardTarget(
-  panel: Vector3Like,
-  viewer: Vector3Like,
-): Vector3Like {
-  return { x: viewer.x, y: panel.y, z: viewer.z };
-}
-
 export interface HandedInputSource {
   handedness: string;
   gamepad?: Gamepad | null;
@@ -228,6 +222,22 @@ export function viewerForwardFromPose(
   return magnitude
     ? { x: forward.x / magnitude, z: forward.z / magnitude }
     : { x: 0, z: 0 };
+}
+
+/** Compose the current XRFrame viewer position with the locomotion rig. The
+ * renderer camera is updated later in the frame, so it cannot authoritatively
+ * drive same-frame proximity checks. */
+export function viewerWorldPositionFromPose(
+  viewerPosition: Vector3Like,
+  rigPosition: Vector3Like,
+  rigOrientation: QuaternionLike,
+) {
+  const rotated = rotateVector(viewerPosition, rigOrientation);
+  return {
+    x: rigPosition.x + rotated.x,
+    y: rigPosition.y + rotated.y,
+    z: rigPosition.z + rotated.z,
+  };
 }
 
 /**

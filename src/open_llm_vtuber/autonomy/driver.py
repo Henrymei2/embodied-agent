@@ -37,7 +37,10 @@ def _agenda_step_instruction(entry, checkpoint) -> str:
     return (
         "Execute exactly this validated agenda step. Do not expand its scope. "
         "Use furniture movement and tools normally, respecting every approval "
-        "and proximity gate. Return a concise execution result.\n"
+        "and proximity gate. Return a concise execution result. When this is a "
+        "care or social intention whose result will be shared, phrase the result "
+        "warmly as a companion and, when there is a useful next step, end with one "
+        "natural question the user can easily answer.\n"
         f"Intention: {entry.title}\nCompletion condition: "
         f"{entry.completion_condition.description}\nValidated step: "
         f"{json.dumps(asdict(checkpoint), ensure_ascii=False)}\n"

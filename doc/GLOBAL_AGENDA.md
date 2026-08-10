@@ -515,6 +515,13 @@ Continuous private behavior must not imply continuous demands on the user's
 attention. Receipts, focus mode, snooze, affinity, and attention budgets remain
 in force.
 
+The live companion also owns a bounded welcome-back action. It uses the same
+agenda context as intention planning—including recent memory and compact,
+read-only furniture snapshots—and normally opens one grounded, caring topic
+with an easy question. First use is eligible immediately; later greetings
+require a recorded absence of 30 minutes. A real user turn preempts and
+fulfills the opening instead of allowing a delayed greeting to follow it.
+
 ## Implemented module boundaries
 
 ```text

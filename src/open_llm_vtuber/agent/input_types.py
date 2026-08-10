@@ -86,6 +86,8 @@ class BatchInput(BaseInput):
             - 'proactive_speak': Boolean flag indicating if this is a proactive speak input
             - 'skip_memory': Boolean flag indicating if this input should be skipped in AI's internal memory
             - 'skip_history': Boolean flag indicating if this input should be skipped in local history storage
+            - 'synthetic_user': Internal instruction is not a real user turn; omit
+              it from memory/history while retaining the assistant reply
     """
 
     texts: List[TextData]

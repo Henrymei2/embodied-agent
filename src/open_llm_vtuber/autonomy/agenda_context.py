@@ -9,6 +9,9 @@ from typing import Any
 
 from .agenda import AgendaStore
 
+_FURNITURE_ITEM_LIMIT = 5
+_FURNITURE_STRING_LIMIT = 600
+
 
 @dataclass
 class AgendaContext:
@@ -44,6 +47,108 @@ def _memory_passages(
     return passages, references
 
 
+def _furniture_snapshots() -> tuple[dict[str, Any], set[str]]:
+    """Read the same compact, path-free views shown by furniture windows."""
+    from ..furniture_state import (
+        bookshelf_snapshot,
+        drawing_board_snapshot,
+        plan_snapshot,
+        reading_snapshot,
+        scheduler_events_snapshot,
+        timer_snapshot,
+        todo_snapshot,
+    )
+    from ..skill_state import skill_snapshot
+
+    readers = {
+        "todo": lambda: todo_snapshot(_FURNITURE_ITEM_LIMIT),
+        "timers": lambda: timer_snapshot(_FURNITURE_ITEM_LIMIT),
+        "bookshelf": lambda: bookshelf_snapshot(_FURNITURE_ITEM_LIMIT),
+        "reading": reading_snapshot,
+        "plans": lambda: plan_snapshot(_FURNITURE_ITEM_LIMIT),
+        "drawing_board": drawing_board_snapshot,
+        "scheduler": scheduler_events_snapshot,
+        "skills": lambda: skill_snapshot(_FURNITURE_ITEM_LIMIT),
+    }
+    snapshots: dict[str, Any] = {}
+    refs: set[str] = set()
+    for name, reader in readers.items():
+        try:
+            snapshot = _bounded_furniture_value(reader())
+            if isinstance(snapshot, dict) and snapshot.get("available") is False:
+                snapshot = {"available": False}
+            if name == "scheduler" and isinstance(snapshot, dict):
+                events = snapshot.get("events", [])
+                snapshot = {
+                    **snapshot,
+                    "events": events[:_FURNITURE_ITEM_LIMIT]
+                    if isinstance(events, list)
+                    else [],
+                    "remaining": max(
+                        0,
+                        int(snapshot.get("count", 0)) - _FURNITURE_ITEM_LIMIT,
+                    ),
+                }
+            snapshots[name] = snapshot
+            if _has_furniture_content(snapshot):
+                refs.add(f"furniture:{name}")
+        except (OSError, TypeError, ValueError):
+            snapshots[name] = {"available": False}
+    return snapshots, refs
+
+
+def _bounded_furniture_value(value: Any, depth: int = 0) -> Any:
+    """Keep user-authored furniture data useful without unbounded prompts."""
+    if depth >= 6:
+        return None
+    if isinstance(value, str):
+        return value[:_FURNITURE_STRING_LIMIT]
+    if isinstance(value, list):
+        return [
+            _bounded_furniture_value(item, depth + 1)
+            for item in value[:_FURNITURE_ITEM_LIMIT]
+        ]
+    if isinstance(value, dict):
+        return {
+            str(key)[:80]: _bounded_furniture_value(item, depth + 1)
+            for key, item in list(value.items())[:30]
+        }
+    return (
+        value
+        if isinstance(value, (int, float, bool)) or value is None
+        else str(value)[:_FURNITURE_STRING_LIMIT]
+    )
+
+
+def _has_furniture_content(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict) or snapshot.get("available") is False:
+        return False
+    if snapshot.get("session") or snapshot.get("recent") or snapshot.get("drawing"):
+        return True
+    for key in (
+        "open_count",
+        "count",
+        "pending_count",
+        "active_count",
+        "finished_count",
+    ):
+        value = snapshot.get(key)
+        if isinstance(value, (int, float)) and value > 0:
+            return True
+    return any(
+        isinstance(snapshot.get(key), list) and bool(snapshot[key])
+        for key in (
+            "items",
+            "timers",
+            "books",
+            "pending",
+            "active",
+            "events",
+            "skills",
+        )
+    )
+
+
 def build_agenda_context(
     store: AgendaStore,
     *,
@@ -55,6 +160,8 @@ def build_agenda_context(
     state = store.load()
     recent = sorted(state.entries, key=lambda item: item.created_at, reverse=True)[:20]
     memory, refs = _memory_passages(store.root)
+    furniture_state, furniture_refs = _furniture_snapshots()
+    refs.update(furniture_refs)
     for entry in recent:
         refs.add(f"agenda:{entry.id}")
     inbox = [event for event in state.inbox if event.status in {"pending", "claimed"}][
@@ -93,7 +200,9 @@ def build_agenda_context(
         from ..client_registry import get_client_context
 
         client_context = get_client_context(client_uid)
-        conf_uid = getattr(getattr(client_context, "character_config", None), "conf_uid", "")
+        conf_uid = getattr(
+            getattr(client_context, "character_config", None), "conf_uid", ""
+        )
         physical_context = (
             consume_physical_prompt(conf_uid)
             if execution_mode == "live" and conf_uid
@@ -112,6 +221,7 @@ def build_agenda_context(
             "recent_entries": [asdict(item) for item in recent],
             "rejections": [asdict(item) for item in state.rejections[-10:]],
             "memory_passages": memory,
+            "furniture_state": furniture_state,
             "external_events": [
                 {
                     "id": event.id,

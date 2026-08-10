@@ -37,7 +37,7 @@ const wallCorkboard: FurnitureModelAsset = {
 export const FURNITURE_MODEL_ASSETS: Readonly<
   Record<string, FurnitureModelAsset>
 > = {
-  archive_shelf: { src: `${VR_MODEL_ROOT}/archive-shelf.glb` },
+  archive_shelf: { src: `${VR_MODEL_ROOT}/archive-shelf.glb`, rotationY: Math.PI },
   bed: { src: `${VR_MODEL_ROOT}/bed.glb`, rotationY: Math.PI / 2 },
   bookshelf: { src: `${VR_MODEL_ROOT}/bookshelf.glb`, rotationY: Math.PI },
   calendar: wallCorkboard,

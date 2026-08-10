@@ -95,6 +95,37 @@ async def test_idle_planner_receives_bounded_room_and_returns_structured_choice(
     assert "choose where an embodied agent should wait" in prompts[0]
 
 
+async def test_intention_planner_preserves_companion_motivation():
+    async def complete(prompt: str) -> str:
+        assert "caring virtual companion" in prompt
+        return """{
+          "kind": "pursuit",
+          "title": "Check in about the current book",
+          "description": "Ask what stood out in the current chapter.",
+          "motivation_type": "care",
+          "evidence_refs": ["furniture:reading"],
+          "novelty": "The reading session changed.",
+          "completion_condition": "A grounded check-in is prepared.",
+          "time_budget_seconds": 60,
+          "preferred_object": "reading_chair",
+          "required_capabilities": [],
+          "report_policy": "on_completion",
+          "risk": "low",
+          "requires_approval": false
+        }"""
+
+    context = AgendaContext(
+        payload={"furniture_state": {"reading": {"session": {"title": "Book"}}}},
+        evidence_refs={"furniture:reading"},
+        capabilities=set(),
+        object_names={"reading_chair"},
+    )
+    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+
+    assert entry.motivation.type == "care"
+    assert entry.report_policy == "on_completion"
+
+
 def test_invalid_idle_choice_falls_back_to_sofa_then_staying_put():
     invalid = IdlePlacement("invented_corner", "It sounded comfortable.")
 

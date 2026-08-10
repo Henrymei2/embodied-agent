@@ -78,6 +78,43 @@ async def test_report_false_turn_is_genuinely_silent(monkeypatch):
     assert sent == []
 
 
+async def test_synthetic_companion_turn_persists_only_assistant_history(monkeypatch):
+    stored = []
+    context = _context()
+    context.history_uid = "history"
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.study.log_turn_finished",
+        lambda _length: None,
+    )
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.conversations.single_conversation.store_message",
+        lambda **kwargs: stored.append(kwargs),
+    )
+
+    async def collect_output(**_kwargs):
+        return "Welcome back—what would feel good to do next?"
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.conversations.single_conversation.process_agent_output",
+        collect_output,
+    )
+
+    async def send(_payload: str) -> None:
+        return None
+
+    result = await process_single_conversation(
+        context=context,
+        websocket_send=send,
+        client_uid="welcome-client",
+        user_input="internal context that must not be stored",
+        metadata={"synthetic_user": True},
+    )
+
+    assert result.success is True
+    assert [message["role"] for message in stored] == ["ai"]
+    assert stored[0]["content"] == "Welcome back—what would feel good to do next?"
+
+
 async def test_higher_priority_user_work_preempts_background_work():
     queue = ClientRequestQueue("priority-test")
     queue.start()

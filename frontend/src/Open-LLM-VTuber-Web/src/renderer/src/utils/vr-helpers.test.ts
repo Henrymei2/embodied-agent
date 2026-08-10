@@ -9,7 +9,6 @@ import {
   furniturePanelLayout,
   browserEndpoints,
   headRelativeDelta,
-  horizontalBillboardTarget,
   inputSourcesByHand,
   isViewerPositionClear,
   pointInsideAabb,
@@ -28,6 +27,7 @@ import {
   validateVrStageShape,
   viewerForwardFromPose,
   viewerPoseCamera,
+  viewerWorldPositionFromPose,
   withRendererMode,
 } from "./vr-helpers";
 
@@ -188,6 +188,21 @@ describe("Quest controller helpers", () => {
     expect(combined.z).toBeCloseTo(-1);
   });
 
+  it("composes current-frame headset position with rig translation and yaw", () => {
+    const rigYaw = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      Math.PI / 2,
+    );
+    const position = viewerWorldPositionFromPose(
+      { x: 0, y: 1.7, z: -1 },
+      { x: 4, y: 0, z: 2 },
+      rigYaw,
+    );
+    expect(position.x).toBeCloseTo(3);
+    expect(position.y).toBeCloseTo(1.7);
+    expect(position.z).toBeCloseTo(2);
+  });
+
   it("resolves controllers by handedness regardless of source order", () => {
     const right = { handedness: "right" };
     const left = { handedness: "left" };
@@ -243,9 +258,9 @@ describe("VR furniture presentation helpers", () => {
     { id: "shelf", x: 400, y: 100, width: 120, depth: 40 },
   ];
 
-  it("uses the semantic furniture reach with the scene ceiling", () => {
-    expect(furnitureInteractionReach(furniture[0], 150)).toBe(110);
-    expect(furnitureInteractionReach({ ...furniture[0], reach: 140 }, 120)).toBe(120);
+  it("expands the ceiling-bounded semantic furniture reach by fifty percent", () => {
+    expect(furnitureInteractionReach(furniture[0], 150)).toBe(165);
+    expect(furnitureInteractionReach({ ...furniture[0], reach: 140 }, 120)).toBe(180);
   });
 
   it("opens independent panels when either the user or agent is near", () => {
@@ -262,7 +277,7 @@ describe("VR furniture presentation helpers", () => {
   it("keeps visible panels through the exit buffer, then closes them independently", () => {
     const buffered = updateFurniturePanelProximity(
       furniture,
-      { x: 100, y: 225 },
+      { x: 100, y: 280 },
       null,
       150,
       { visible: new Set(["desk", "shelf"]), dismissed: new Set() },
@@ -271,7 +286,7 @@ describe("VR furniture presentation helpers", () => {
 
     const outside = updateFurniturePanelProximity(
       furniture,
-      { x: 100, y: 236 },
+      { x: 100, y: 291 },
       null,
       150,
       buffered,
@@ -317,13 +332,6 @@ describe("VR furniture presentation helpers", () => {
     expect(plans.maxLines).toBeGreaterThan(standard.maxLines);
     expect(Math.abs(plans.closePosition.y) + 0.07).toBeLessThanOrEqual(plans.height / 2);
     expect(Math.abs(plans.actionY) + 0.075).toBeLessThanOrEqual(plans.height / 2);
-  });
-
-  it("keeps furniture panels level while targeting the viewer", () => {
-    expect(horizontalBillboardTarget(
-      { x: 1, y: 1.4, z: 2 },
-      { x: 5, y: 2.1, z: -3 },
-    )).toEqual({ x: 5, y: 1.4, z: -3 });
   });
 
   it("uses explicit close controls and reserves body triggers for email paging", () => {
