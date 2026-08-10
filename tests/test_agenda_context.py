@@ -77,3 +77,25 @@ def test_one_broken_furniture_snapshot_does_not_drop_the_context(monkeypatch, tm
     assert context.payload["furniture_state"]["todo"]["available"] is False
     assert "furniture:todo" not in context.evidence_refs
     assert "memory_passages" in context.payload
+
+
+def test_agenda_context_carries_compact_tool_schemas(tmp_path):
+    context = build_agenda_context(
+        AgendaStore(tmp_path),
+        client_uid="client",
+        tool_schemas={
+            "get_email": {
+                "required": ["message_id"],
+                "properties": {"message_id": "string"},
+                "additionalProperties": False,
+            }
+        },
+    )
+
+    assert context.payload["tool_schemas"]["get_email"]["required"] == ["message_id"]
+
+
+def test_agenda_context_defaults_tool_schemas_to_empty(tmp_path):
+    context = build_agenda_context(AgendaStore(tmp_path), client_uid="client")
+
+    assert context.payload["tool_schemas"] == {}

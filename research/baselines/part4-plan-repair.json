@@ -167,7 +167,7 @@
   "contract_revision": "2026-08-03.2",
   "fixture_id": "part4-repair-held-out-v1",
   "fixture_sha256": "315baad28e88d571468e93f288b8595e2b626cc70ed57581a0cfe7b9384b3096",
-  "implementation_digest": "09bf8678806a7549da76bd3f4935b6a9648dbca85399a9383e816ccf9f08be3d",
+  "implementation_digest": "4c356f347cee90e108bc628992fbaf3520dea6b2e913eebaee74893352188fdd",
   "scenario_count": 8,
   "schema_version": 1,
   "seed": 0

@@ -23,6 +23,8 @@ class AutonomySettings:
     idle_max_seconds: int = 600
     planner_retry_limit: int = 3
     planner_retry_backoff_seconds: float = 2.0
+    retry_backoff_seconds: float = 2.0
+    max_retry_backoff_seconds: float = 30.0
     planner_circuit_failure_threshold: int = 3
     planner_circuit_max_seconds: int = 1800
     step_timeout_seconds: int = 30
@@ -115,6 +117,19 @@ class AutonomySettings:
             self,
             "planner_retry_backoff_seconds",
             max(0.0, min(60.0, float(self.planner_retry_backoff_seconds))),
+        )
+        object.__setattr__(
+            self,
+            "retry_backoff_seconds",
+            max(0.0, min(60.0, float(self.retry_backoff_seconds))),
+        )
+        object.__setattr__(
+            self,
+            "max_retry_backoff_seconds",
+            max(
+                self.retry_backoff_seconds,
+                min(300.0, float(self.max_retry_backoff_seconds)),
+            ),
         )
         object.__setattr__(
             self,
@@ -268,6 +283,10 @@ class AutonomySettings:
             planner_retry_limit=int(getattr(cfg, "planner_retry_limit", 3)),
             planner_retry_backoff_seconds=float(
                 getattr(cfg, "planner_retry_backoff_seconds", 2)
+            ),
+            retry_backoff_seconds=float(getattr(cfg, "retry_backoff_seconds", 2)),
+            max_retry_backoff_seconds=float(
+                getattr(cfg, "max_retry_backoff_seconds", 30)
             ),
             planner_circuit_failure_threshold=int(
                 getattr(cfg, "planner_circuit_failure_threshold", 3)

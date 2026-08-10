@@ -72,14 +72,17 @@ ACTION_PROFILES: dict[str, ActionProfile] = {
         target_argument="path",
     ),
     "execute_bash": _profile(
-        "execute_bash", "local_state", "unknown", "adapter_evidence"
+        # Runs inside the container sandbox, so its workspace-confined effects
+        # are recoverable rather than unknown: commands commit on session
+        # authority instead of requiring a desk decision.
+        "execute_bash", "local_state", "compensatable", "adapter_evidence"
     ),
     "write_file": _profile(
         "write_file", "local_state", "compensatable", "local_path",
         target_argument="path",
     ),
     "append_to_file": _profile(
-        "append_to_file", "local_state", "unknown", "local_path",
+        "append_to_file", "local_state", "compensatable", "local_path",
         target_argument="path",
     ),
     "edit_file": _profile(
@@ -155,7 +158,7 @@ ACTION_PROFILES: dict[str, ActionProfile] = {
         target_argument="todo_id",
     ),
     "complete_todo": _profile(
-        "complete_todo", "local_state", "unknown", "adapter_evidence",
+        "complete_todo", "local_state", "reversible", "adapter_evidence",
         target_argument="todo_id",
     ),
     "remove_todo": _profile(
@@ -183,7 +186,7 @@ ACTION_PROFILES: dict[str, ActionProfile] = {
         target_argument="title", compensation_capability="withdraw_plan",
     ),
     "revise_plan": _profile(
-        "revise_plan", "local_state", "unknown", "adapter_evidence",
+        "revise_plan", "local_state", "compensatable", "adapter_evidence",
         target_argument="plan_id",
     ),
     "withdraw_plan": _profile(

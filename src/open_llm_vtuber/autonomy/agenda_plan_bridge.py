@@ -83,11 +83,18 @@ class AgendaPlanBridge:
         activity: ActivityExecutor,
         *,
         lease_seconds: float = 30.0,
+        retry_backoff_seconds: float = 0.0,
+        max_retry_backoff_seconds: float = 30.0,
     ) -> None:
         self.agenda_store = agenda_store
         self.activity = activity
         self.store = ResumablePlanStore(agenda_store.root)
-        self.executor = ResumablePlanExecutor(self.store, lease_seconds=lease_seconds)
+        self.executor = ResumablePlanExecutor(
+            self.store,
+            lease_seconds=lease_seconds,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_retry_backoff_seconds=max_retry_backoff_seconds,
+        )
 
     def ensure_plan(
         self,

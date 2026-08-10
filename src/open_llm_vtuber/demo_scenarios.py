@@ -80,7 +80,7 @@ EMAIL_CHANGES_PLAN = ScenarioDefinition(
         "A simulated unread email arrives while the agent is occupied.",
         "The agent suspends interruptible background work and investigates at the mailbox/computer.",
         "The agent checks the conflicting calendar review and prepares a proposed reply.",
-        "Any external write remains behind the normal approval boundary.",
+        "Irreversible or communicative changes remain behind the approval boundary.",
     ),
     demonstrates=(
         "event-driven behavior",

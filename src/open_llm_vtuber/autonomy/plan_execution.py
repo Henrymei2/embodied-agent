@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 from dataclasses import dataclass
@@ -177,10 +178,17 @@ class ResumablePlanExecutor:
         *,
         lease_seconds: float = 30.0,
         max_passes: int = 512,
+        retry_backoff_seconds: float = 0.0,
+        max_retry_backoff_seconds: float = 30.0,
     ) -> None:
         self.store = store
         self.lease_seconds = max(1.0, min(300.0, float(lease_seconds)))
         self.max_passes = max(1, min(10_000, int(max_passes)))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
+        self.max_retry_backoff_seconds = max(
+            self.retry_backoff_seconds,
+            min(300.0, float(max_retry_backoff_seconds)),
+        )
 
     async def resume_once(
         self,
@@ -395,7 +403,24 @@ class ResumablePlanExecutor:
         repair_planner: RepairPlanner | None = None,
         crash_hook: CrashHook | None = None,
     ) -> ResumablePlan:
+        last_step_id: str | None = None
         for _ in range(self.max_passes):
+            current = self.store.get(plan_id)
+            if (
+                self.retry_backoff_seconds > 0
+                and current is not None
+                and current.state == "running"
+                and current.current_step is not None
+                and current.current_step.state == "ready"
+                and current.current_step.attempts >= 1
+                and current.current_step.step_id == last_step_id
+            ):
+                step = current.current_step
+                delay = min(
+                    self.max_retry_backoff_seconds,
+                    self.retry_backoff_seconds * (2 ** max(0, step.attempts - 1)),
+                )
+                await asyncio.sleep(delay)
             result = await self.resume_once(
                 plan_id,
                 owner_id=owner_id,
@@ -408,6 +433,9 @@ class ResumablePlanExecutor:
             )
             plan = self.store.get(plan_id)
             assert plan is not None
+            last_step_id = (
+                plan.current_step.step_id if plan.current_step is not None else None
+            )
             if result.disposition in {
                 "terminal",
                 "blocked",

@@ -61,6 +61,10 @@ system_config:
     idle_max_seconds: 600
     planner_retry_limit: 3
     planner_retry_backoff_seconds: 2
+    # Base (and ceiling for the exponential) delay before re-executing a failed
+    # activity step. Retries no longer replay instantly with identical input.
+    retry_backoff_seconds: 2
+    max_retry_backoff_seconds: 30
     planner_circuit_failure_threshold: 3
     planner_circuit_max_seconds: 1800
     # Hard timeout after an autonomous Agent/tool step leaves the request queue.

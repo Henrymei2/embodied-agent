@@ -1,7 +1,11 @@
 """Planning tools for the embodied companion.
 
 These tools belong to the `writing desk`: the agent has to walk there to draft or
-revise a plan. Plans live in `<workspace>/plans/plans.json`.
+revise a plan. Plans live in `<workspace>/plans/plans.json`. Use the desk only
+for consequential plans — multi-step work that is hard to reverse or that
+commits the user externally. Routine reversible actions (archiving mail, local
+commands, todos, timers, notes, calendar and drive changes) run directly and do
+not need a plan.
 
 A plan is a proposal, not a decision. Every new plan starts `pending`, and only
 the user can approve or decline it — from the hover window on the writing desk,
@@ -81,11 +85,13 @@ def _find(plans: list[dict[str, Any]], plan_id: str) -> int:
 
 @mcp.tool()
 def write_plan(title: str, goal: str, steps: list[str], notes: str = "") -> str:
-    """Draft a plan for the user to approve. Requires standing at the writing desk.
+    """Draft a consequential plan for the user to approve. Requires standing at the writing desk.
 
-    The plan is saved as `pending` and appears on the writing desk, where the
-    user approves or declines it. Do not start work that needs approval until
-    `list_plans` reports the plan as approved.
+    Reserve this for plans that are hard to reverse or commit the user
+    externally; routine reversible actions do not need a plan. The plan is saved
+    as `pending` and appears on the writing desk, where the user approves or
+    declines it. Do not start work that needs approval until `list_plans`
+    reports the plan as approved.
 
     Args:
         title: Short name for the plan.

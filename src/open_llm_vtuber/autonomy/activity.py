@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Awaitable, Callable
 
+from loguru import logger
+
 from .agenda import AgendaEntry, AgendaStore, ExecutionCheckpoint
 from .action_context import AgendaApprovalRequired
 
@@ -179,11 +181,27 @@ class ActivityExecutor:
                             )
                         raise
                     actual_pacing_sleep = loop.time() - pacing_started
+                total_seconds = (
+                    queue_wait_seconds + execution_seconds + actual_pacing_sleep
+                )
                 if span is not None:
                     span.set_attribute(
                         "agenda.pacing_sleep_seconds",
                         round(actual_pacing_sleep, 6),
                     )
+                    span.set_attribute(
+                        "agenda.step_total_seconds",
+                        round(total_seconds, 6),
+                    )
+                logger.info(
+                    f"agenda.step_timing step={checkpoint.step_id} "
+                    f"kind={checkpoint.kind} "
+                    f"capability={checkpoint.required_capability or ''} "
+                    f"queue_wait_s={queue_wait_seconds:.3f} "
+                    f"execution_s={execution_seconds:.3f} "
+                    f"pacing_s={actual_pacing_sleep:.3f} "
+                    f"total_s={total_seconds:.3f}"
+                )
         except AgendaApprovalRequired as exc:
             checkpoint.state = "planned"
             checkpoint.result_summary = str(exc)[:1000]

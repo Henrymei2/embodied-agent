@@ -35,9 +35,11 @@ scheduling, and consent-aware autonomous behavior.
   (Open Library), then read locally cached, public-domain full text at the
   `reading chair` (Project Gutenberg via Gutendex), with resumable progress
   and agent-written reading notes.
-- **Plans the user approves:** the agent drafts proposals at the `writing
-  desk`; only the user can approve or decline them from the hover window —
-  there is no tool that lets the agent authorize its own plan.
+- **Plans the user approves:** the agent drafts consequential proposals at the
+  `writing desk` (multi-step work that is hard to reverse or commits the user
+  externally); routine reversible actions run directly without a plan. Only the
+  user can approve or decline a plan from the hover window — there is no tool
+  that lets the agent authorize its own plan.
 - **Idling:** the agent can sit at the `sofa` to represent "nothing to do
   right now" without blocking messages, timers, or scheduled tasks.
 - **Skills the agent writes for itself:** at the `tool rack` it drafts a

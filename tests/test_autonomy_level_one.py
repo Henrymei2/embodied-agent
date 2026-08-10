@@ -156,7 +156,7 @@ async def test_queue_returns_autonomous_result_and_cancels_by_step_id():
 
 def test_step_policy_derives_effects_and_requires_real_approval():
     policy = StepPolicy(
-        capabilities={"read_file", "execute_bash"},
+        capabilities={"read_file", "execute_bash", "delete_path"},
         object_names={"computer"},
         capability_objects={
             "read_file": "computer",
@@ -178,22 +178,77 @@ def test_step_policy_derives_effects_and_requires_real_approval():
     assert read.side_effecting is False
     assert read.interruptible is True
 
+    # Sandboxed commands are routine and run directly without an approved plan.
     shell = ExecutionCheckpoint(
         step_id="shell",
         kind="invoke_tool",
         state="planned",
         required_capability="execute_bash",
     )
-    assert not policy.validate(entry, shell).accepted
+    assert policy.validate(entry, shell).accepted
+    assert shell.side_effecting is True
+    assert shell.interruptible is False
+
+    destructive = ExecutionCheckpoint(
+        step_id="destructive",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="delete_path",
+    )
+    assert not policy.validate(entry, destructive).accepted
 
     approved = _pursuit(
         requires_approval=True,
         plan_id="plan-1",
         metadata={"approval_status": "approved"},
     )
-    assert policy.validate(approved, shell).accepted
-    assert shell.side_effecting is True
-    assert shell.interruptible is False
+    assert policy.validate(approved, destructive).accepted
+    assert destructive.side_effecting is True
+    assert destructive.interruptible is False
+
+
+def test_approval_gate_covers_only_irreversible_and_communicative_capabilities():
+    from src.open_llm_vtuber.autonomy.step_policy import capability_requires_approval
+
+    for gated in (
+        "delete_path",
+        "send_email",
+        "remove_calendar_event",
+        "remove_todo",
+        "cancel_timer",
+        "remove_task",
+        "withdraw_plan",
+        "retire_skill",
+        "remove_from_shelf",
+        "save_reading_note",
+        "finish_book",
+        "remove_object",
+    ):
+        assert capability_requires_approval(gated), gated
+
+    for direct in (
+        "archive_email",
+        "mark_email_read",
+        "mark_email_unread",
+        "execute_bash",
+        "edit_file",
+        "write_file",
+        "append_to_file",
+        "create_directory",
+        "move_path",
+        "download_file",
+        "add_calendar_event",
+        "update_calendar_event",
+        "add_todo",
+        "complete_todo",
+        "set_timer",
+        "schedule_task",
+        "draft_skill",
+        "draw_image",
+        "move_object",
+        "place_object",
+    ):
+        assert not capability_requires_approval(direct), direct
 
 
 def test_browser_tabs_is_an_audited_read_only_capability():
@@ -213,6 +268,83 @@ def test_browser_tabs_is_an_audited_read_only_capability():
     assert checkpoint.required_object == "computer"
     assert checkpoint.side_effecting is False
     assert checkpoint.interruptible is True
+
+
+def test_step_policy_rejects_arguments_that_mismatch_tool_schema():
+    policy = StepPolicy(
+        capabilities={"get_email", "search_emails", "move_to"},
+        object_names={"mailbox"},
+        capability_objects={
+            "get_email": "mailbox",
+            "search_emails": "mailbox",
+        },
+        tool_schemas={
+            "get_email": {
+                "required": ["message_id"],
+                "properties": {"message_id": "string"},
+                "additionalProperties": False,
+            },
+            "search_emails": {
+                "required": [],
+                "properties": {"query": "string", "limit": "integer"},
+                "additionalProperties": False,
+            },
+        },
+    )
+    entry = _pursuit()
+
+    bad = ExecutionCheckpoint(
+        step_id="bad-args",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="get_email",
+        arguments={
+            "email_id": "94bff83f9ff5270b5bff233944be828d98b2b61442d2c4aa652c74428ce08997"
+        },
+    )
+    verdict = policy.validate(entry, bad)
+    assert not verdict.accepted
+    assert "message_id" in verdict.reason
+
+    good = ExecutionCheckpoint(
+        step_id="good-args",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="get_email",
+        arguments={
+            "message_id": "94bff83f9ff5270b5bff233944be828d98b2b61442d2c4aa652c74428ce08997"
+        },
+    )
+    assert policy.validate(entry, good).accepted
+
+    bad_search = ExecutionCheckpoint(
+        step_id="bad-search",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="search_emails",
+        arguments={"max_results": 5},
+    )
+    assert not policy.validate(entry, bad_search).accepted
+
+    good_search = ExecutionCheckpoint(
+        step_id="good-search",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="search_emails",
+        arguments={"query": "is:unread", "limit": 5},
+    )
+    assert policy.validate(entry, good_search).accepted
+
+    # Non-tool steps keep their advisory free-form arguments.
+    move = ExecutionCheckpoint(
+        step_id="move",
+        kind="move_to_object",
+        state="planned",
+        required_capability="move_to",
+        required_object="mailbox",
+        arguments={"object": "mailbox"},
+    )
+    assert policy.validate(entry, move).accepted
 
 
 def test_agenda_execution_instruction_includes_tool_and_furniture():

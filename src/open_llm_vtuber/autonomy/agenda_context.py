@@ -155,6 +155,7 @@ def build_agenda_context(
     client_uid: str,
     capabilities: set[str] | None = None,
     object_names: set[str] | None = None,
+    tool_schemas: dict[str, dict] | None = None,
     execution_mode: str = "live",
 ) -> AgendaContext:
     state = store.load()
@@ -259,6 +260,7 @@ def build_agenda_context(
             ),
             "capabilities": sorted(capabilities or set()),
             "objects": sorted(object_names or set()),
+            "tool_schemas": dict(tool_schemas or {}),
         },
         evidence_refs=refs,
         capabilities=capabilities or set(),

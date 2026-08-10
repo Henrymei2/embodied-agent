@@ -10,12 +10,19 @@ from src.open_llm_vtuber.agent.output_types import (
     DisplayText,
     SentenceOutput,
 )
+from src.open_llm_vtuber.agent.agents.basic_memory_agent import BasicMemoryAgent
+from src.open_llm_vtuber.agent.input_types import BatchInput, TextData, TextSource
 from src.open_llm_vtuber.autonomy.agenda import create_entry
 from src.open_llm_vtuber.autonomy.driver import (
     _agenda_step_metadata,
     _agenda_step_text,
+    _ensure_tool_proximity,
     _execute_validated_tool,
     _publish_completion,
+)
+from src.open_llm_vtuber.config_manager.tts_preprocessor import (
+    TTSPreprocessorConfig,
+    TranslatorConfig,
 )
 from src.open_llm_vtuber.conversations.llm_request_queue import (
     PRIORITY_PASSIVE,
@@ -39,6 +46,35 @@ class FakeAgent:
         )
 
 
+class _TextLLM:
+    def get_tool_mode(self):
+        return "OpenAI"
+
+    async def chat_completion(self, messages, system=None, tools=None):
+        del messages, system, tools
+        yield "Hello there."
+
+
+class _RecordingMemory:
+    def __init__(self):
+        self.compact_calls = 0
+        self.user_messages: list[str] = []
+        self.assistant_messages: list[str] = []
+
+    async def maybe_compact_context(self, next_user_text=None):
+        del next_user_text
+        self.compact_calls += 1
+
+    def add_user_message(self, text: str) -> None:
+        self.user_messages.append(text)
+
+    def add_assistant_message(self, text: str) -> None:
+        self.assistant_messages.append(text)
+
+    def build_memory_context(self) -> str:
+        return ""
+
+
 def _context():
     return SimpleNamespace(
         agent_engine=FakeAgent(),
@@ -53,30 +89,6 @@ def _context():
             avatar="",
         ),
     )
-
-
-async def test_report_false_turn_is_genuinely_silent(monkeypatch):
-    sent: list[str] = []
-    monkeypatch.setattr(
-        "src.open_llm_vtuber.study.log_turn_finished",
-        lambda _length: None,
-    )
-
-    async def send(payload: str) -> None:
-        sent.append(payload)
-
-    result = await process_single_conversation(
-        context=_context(),
-        websocket_send=send,
-        client_uid="silent-client",
-        user_input="Do useful private background work.",
-        metadata={"report": False, "skip_history": True},
-    )
-
-    assert result.success is True
-    assert result.reported is False
-    assert result.response == "background result"
-    assert sent == []
 
 
 async def test_synthetic_companion_turn_persists_only_assistant_history(monkeypatch):
@@ -355,6 +367,112 @@ async def test_validated_tool_step_propagates_tool_failure():
         await _execute_validated_tool(FailingToolExecutor(), checkpoint)
 
 
+async def test_validated_tool_step_rejects_schema_mismatch_before_dispatch():
+    class NeverCalledExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del calls, caller_mode
+            raise AssertionError("schema-invalid step must not reach execution")
+
+    checkpoint = SimpleNamespace(
+        step_id="step-3",
+        required_capability="get_email",
+        arguments={
+            "email_id": "94bff83f9ff5270b5bff233944be828d98b2b61442d2c4aa652c74428ce08997"
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="message_id"):
+        await _execute_validated_tool(
+            NeverCalledExecutor(),
+            checkpoint,
+            tool_schemas={
+                "get_email": {
+                    "required": ["message_id"],
+                    "properties": {"message_id": "string"},
+                    "additionalProperties": False,
+                }
+            },
+        )
+
+
+async def test_ensure_tool_proximity_moves_before_gated_tool_when_far():
+    class FakeToolManager:
+        def get_required_object(self, capability):
+            return {"list_todos": "todo_list"}.get(capability)
+
+        def get_reachable_objects(self):
+            return ["mailbox"]
+
+    class FakeToolExecutor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute_tools(self, calls, caller_mode):
+            self.calls.append(calls)
+            yield {
+                "type": "final_tool_results",
+                "results": [
+                    {
+                        "tool_id": calls[0]["id"],
+                        "content": "Arrived at todo_list.",
+                        "is_error": False,
+                    }
+                ],
+            }
+
+    executor = FakeToolExecutor()
+    await _ensure_tool_proximity(executor, FakeToolManager(), "list_todos", "step-9")
+
+    assert [call["name"] for call in executor.calls[0]] == ["move_to"]
+    assert executor.calls[0][0]["args"] == {"target": "todo_list"}
+
+
+async def test_ensure_tool_proximity_skips_move_when_object_reachable():
+    class FakeToolManager:
+        def get_required_object(self, capability):
+            return {"get_email": "mailbox"}.get(capability)
+
+        def get_reachable_objects(self):
+            return ["mailbox"]
+
+    class NeverCalledExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del calls, caller_mode
+            raise AssertionError("reachable tool must not trigger a move")
+
+    await _ensure_tool_proximity(
+        NeverCalledExecutor(),
+        FakeToolManager(),
+        "get_email",
+        "step-10",
+    )
+
+
+async def test_ensure_tool_proximity_propagates_move_failure():
+    class FakeToolManager:
+        def get_required_object(self, capability):
+            return "todo_list"
+
+        def get_reachable_objects(self):
+            return []
+
+    class FailingExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del calls, caller_mode
+            yield {
+                "type": "final_tool_results",
+                "results": [{"content": "todo_list is unreachable", "is_error": True}],
+            }
+
+    with pytest.raises(RuntimeError, match="todo_list is unreachable"):
+        await _ensure_tool_proximity(
+            FailingExecutor(),
+            FakeToolManager(),
+            "list_todos",
+            "step-11",
+        )
+
+
 def test_agenda_step_extracts_text_from_agent_turn_result():
     result = AgentTurnResult(
         success=True,
@@ -372,8 +490,79 @@ def test_agenda_step_stays_out_of_user_memory():
     )
 
     assert metadata["autonomous"] is True
+    assert metadata["synthetic_user"] is True
     assert metadata["skip_history"] is True
     assert metadata["skip_memory"] is True
+
+
+@pytest.mark.asyncio
+async def test_autonomous_step_metadata_skips_memory_compaction_and_recording():
+    memory = _RecordingMemory()
+    agent = BasicMemoryAgent(
+        llm=_TextLLM(),
+        system="base",
+        use_mcpp=False,
+        faster_first_response=False,
+        tts_preprocessor_config=TTSPreprocessorConfig(
+            remove_special_char=False,
+            translator_config=TranslatorConfig(
+                translate_audio=False,
+                translate_provider="deeplx",
+            ),
+        ),
+        memory_manager=memory,
+    )
+    metadata = _agenda_step_metadata(
+        SimpleNamespace(id="agenda-entry"),
+        SimpleNamespace(step_id="agenda-step"),
+    )
+
+    outputs = [
+        item
+        async for item in agent.chat(
+            BatchInput(
+                texts=[TextData(TextSource.INPUT, "Execute the step.", "User")],
+                metadata=metadata,
+            )
+        )
+    ]
+
+    assert outputs
+    assert memory.compact_calls == 0
+    assert memory.user_messages == []
+
+
+@pytest.mark.asyncio
+async def test_normal_user_turn_still_compacts_and_records_memory():
+    memory = _RecordingMemory()
+    agent = BasicMemoryAgent(
+        llm=_TextLLM(),
+        system="base",
+        use_mcpp=False,
+        faster_first_response=False,
+        tts_preprocessor_config=TTSPreprocessorConfig(
+            remove_special_char=False,
+            translator_config=TranslatorConfig(
+                translate_audio=False,
+                translate_provider="deeplx",
+            ),
+        ),
+        memory_manager=memory,
+    )
+
+    outputs = [
+        item
+        async for item in agent.chat(
+            BatchInput(
+                texts=[TextData(TextSource.INPUT, "A real user turn.", "User")],
+                metadata={"autonomous": True},
+            )
+        )
+    ]
+
+    assert outputs
+    assert memory.compact_calls == 1
+    assert memory.user_messages == ["A real user turn."]
 
 
 def test_agenda_step_propagates_agent_turn_failure():

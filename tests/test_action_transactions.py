@@ -83,7 +83,7 @@ async def test_exact_confirmation_commit_verification_and_duplicate_suppression(
         invoke=invoke,
     )
     assert proposed.is_error is True
-    assert "Approval required" in proposed.text
+    assert "requires your approval" in proposed.text
     assert proposed.metadata["action_transaction"]["state"] == (
         "pending_confirmation"
     )
@@ -164,7 +164,7 @@ async def test_confirmation_binds_exact_arguments_but_can_link_a_new_delivery_id
 
     assert committed.is_error is False
     assert changed.is_error is True
-    assert "Approval required" in changed.text
+    assert "requires your approval" in changed.text
     assert len(coordinator.journal.list_transactions()) == 2
     assert coordinator.journal.pending_snapshot()["pending_count"] == 1
 
@@ -508,3 +508,87 @@ async def test_journal_rejects_rehashed_unknown_attempt_fields(tmp_path):
 
     with pytest.raises(AuthorizationJournalError, match="attempt fields"):
         ActionTransactionJournal(tmp_path)
+
+
+async def test_reversible_external_actions_commit_without_user_confirmation(
+    tmp_path,
+):
+    async def verifier(_descriptor, _profile, _arguments, _result):
+        return {"verified": True, "kind": "adapter_evidence", "evidence_digest": "a" * 64}
+
+    coordinator = _coordinator(tmp_path, verifier=verifier)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {"metadata": {}, "content_items": [{"type": "text", "text": "ok"}]}
+
+    for capability, arguments in (
+        ("archive_email", {"message_id": "m1"}),
+        ("mark_email_read", {"message_id": "m1"}),
+    ):
+        result = await coordinator.execute(
+            server_name="gmail",
+            capability=capability,
+            tool_id=f"direct-{capability}",
+            arguments=arguments,
+            invoke=invoke,
+        )
+        assert result.is_error is False, capability
+
+    assert calls == 2
+    assert coordinator.journal.pending_snapshot()["pending_count"] == 0
+
+
+async def test_sandboxed_commands_commit_without_user_confirmation(tmp_path):
+    async def verifier(_descriptor, _profile, _arguments, _result):
+        return {"verified": True, "kind": "adapter_evidence", "evidence_digest": "a" * 64}
+
+    coordinator = _coordinator(tmp_path, verifier=verifier)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {"metadata": {}, "content_items": [{"type": "text", "text": "ok"}]}
+
+    result = await coordinator.execute(
+        server_name="bash",
+        capability="execute_bash",
+        tool_id="run-1",
+        arguments={"command": "echo hi"},
+        invoke=invoke,
+    )
+    assert result.is_error is False
+    assert calls == 1
+    assert coordinator.journal.pending_snapshot()["pending_count"] == 0
+
+
+async def test_communicative_and_irreversible_actions_still_need_confirmation(
+    tmp_path,
+):
+    coordinator = _coordinator(tmp_path)
+    calls = 0
+
+    async def invoke():
+        nonlocal calls
+        calls += 1
+        return {"metadata": {}, "content_items": [{"type": "text", "text": "ok"}]}
+
+    for capability, arguments in (
+        ("send_email", {"to": "a@example.com", "subject": "Hi", "body": "Hello"}),
+        ("delete_path", {"path": "notes/demo.txt"}),
+    ):
+        result = await coordinator.execute(
+            server_name="gmail" if capability == "send_email" else "bash",
+            capability=capability,
+            tool_id=f"blocked-{capability}",
+            arguments=arguments,
+            invoke=invoke,
+        )
+        assert result.is_error is True, capability
+        assert "requires your approval" in result.text, capability
+        assert calls == 0, capability
+
+    assert coordinator.journal.pending_snapshot()["pending_count"] == 2

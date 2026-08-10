@@ -12,7 +12,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "test:vr": "vitest run src/renderer/src/utils/vr-helpers.test.ts src/renderer/src/utils/vr-furniture-models.test.ts src/renderer/src/utils/audio-manager.test.ts src/renderer/src/context/vr-stage-context.test.ts src/renderer/src/context/renderer-mode-context.test.ts src/renderer/src/context/vr-scenario-context.test.ts",
+    "test:vr": "vitest run src/renderer/src/utils/vr-helpers.test.ts src/renderer/src/utils/vr-furniture-models.test.ts src/renderer/src/utils/vr-avatar.test.ts src/renderer/src/utils/audio-manager.test.ts src/renderer/src/context/vr-stage-context.test.ts src/renderer/src/context/renderer-mode-context.test.ts src/renderer/src/context/vr-scenario-context.test.ts",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "electron-vite build",

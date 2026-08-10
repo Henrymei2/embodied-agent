@@ -81,7 +81,9 @@ adapter. Restart and reconnect preserve both records.
 ## User authority and outcome evidence
 
 Reversible local and embodied actions can use a reviewed session grant, so
-navigation and drafting do not cause approval fatigue. External,
+navigation and drafting do not cause approval fatigue. Reversible external
+writes (archiving or reading email, calendar and drive changes) commit on the
+same session authority, so routine work does not stop at the desk. Only
 communication, irreversible, and unknown effects require short-lived exact
 confirmation at the writing desk's trusted user-only route. Expired authority
 returns to pending.

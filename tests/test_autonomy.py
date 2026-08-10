@@ -58,6 +58,16 @@ def test_welcome_back_absence_is_bounded():
     )
 
 
+def test_activity_retry_backoff_is_bounded():
+    settings = AutonomySettings(retry_backoff_seconds=90, max_retry_backoff_seconds=1)
+
+    assert settings.retry_backoff_seconds == 60
+    assert settings.max_retry_backoff_seconds == 60
+
+    assert AutonomySettings().retry_backoff_seconds == 2.0
+    assert AutonomySettings().max_retry_backoff_seconds == 30.0
+
+
 def test_plausible_duration_limit_is_bounded():
     assert (
         AutonomySettings(

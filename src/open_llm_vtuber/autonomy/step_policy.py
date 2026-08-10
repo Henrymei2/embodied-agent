@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 from .agenda import AgendaEntry, ExecutionCheckpoint
+from .tool_schemas import validate_tool_arguments
 
 
 _READ_ONLY_PREFIXES = (
@@ -25,22 +27,24 @@ _READ_ONLY_CAPABILITIES = {
     "browser_tabs",
 }
 
-# These capabilities can create consequential or hard-to-reverse effects.
-# Unknown tools fail safe as side-effecting, but only this narrower set requires
-# an approved plan before autonomous execution.
+# Only irreversible or communicative capabilities require an approved plan
+# before autonomous execution. Reversible external writes and sandboxed local
+# work (archiving mail, calendar/drive edits, commands, todos, timers, notes)
+# run directly; unknown tools still fail safe as side-effecting, but they are
+# not part of this plan gate.
 _APPROVAL_REQUIRED = {
-    "add_calendar_event",
-    "append_to_file",
-    "create_directory",
+    "cancel_timer",
     "delete_path",
-    "download_file",
-    "edit_file",
-    "execute_bash",
-    "move_path",
+    "finish_book",
     "remove_calendar_event",
+    "remove_from_shelf",
+    "remove_object",
+    "remove_task",
+    "remove_todo",
+    "retire_skill",
+    "save_reading_note",
     "send_email",
-    "update_calendar_event",
-    "write_file",
+    "withdraw_plan",
 }
 
 
@@ -64,11 +68,13 @@ class StepPolicy:
         capabilities: set[str],
         object_names: set[str],
         capability_objects: dict[str, str] | None = None,
+        tool_schemas: Mapping[str, dict] | None = None,
         connected_client: bool = True,
     ) -> None:
         self.capabilities = capabilities
         self.object_names = object_names
         self.capability_objects = capability_objects or {}
+        self.tool_schemas = dict(tool_schemas or {})
         self.connected_client = connected_client
 
     def validate(
@@ -86,6 +92,14 @@ class StepPolicy:
             return StepVerdict(False, "tool steps require a named capability")
         if capability and capability not in self.capabilities:
             return StepVerdict(False, f"unavailable capability: {capability}")
+        if checkpoint.kind == "invoke_tool" and capability in self.tool_schemas:
+            argument_error = validate_tool_arguments(
+                capability,
+                checkpoint.arguments,
+                self.tool_schemas,
+            )
+            if argument_error:
+                return StepVerdict(False, argument_error)
 
         expected_object = (
             self.capability_objects.get(capability) if capability else None

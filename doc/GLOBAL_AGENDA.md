@@ -505,8 +505,10 @@ furniture, but only the built-in sofa and reading chair imply a sitting pose.
 
 An agenda intention is not equivalent to a user-approved plan. Low-risk,
 reversible research, reading, reflection, and drafting may run autonomously.
-External communication, destructive changes, commitments on the user's behalf,
-and other consequential actions retain their existing approval boundaries.
+Reversible external writes (archiving or reading email, calendar and drive
+changes) and sandboxed local commands also run directly. Only irreversible
+changes, external communication, commitments on the user's behalf, and other
+approval-gated capabilities require an approved plan at the writing desk.
 
 ### Presence Contract
 

@@ -197,12 +197,12 @@ def test_a_consequential_external_action_without_a_request_is_denied():
         script={
             scenario.scenario_id: (
                 AgentIntent(kind="move_to", target="calendar"),
-                AgentIntent(kind="invoke_tool", target="add_calendar_event"),
+                AgentIntent(kind="invoke_tool", target="remove_calendar_event"),
             )
         }
     )
     _, trace = run_scenario(scenario, driver)
-    assert ("add_calendar_event", "denied") in trace.authorization_outcomes
+    assert ("remove_calendar_event", "denied") in trace.authorization_outcomes
     assert "user_authority_missing" in trace.denial_reasons
 
 
@@ -214,16 +214,16 @@ def test_requesting_confirmation_first_authorizes_the_same_action():
         script={
             scenario.scenario_id: (
                 AgentIntent(kind="move_to", target="calendar"),
-                AgentIntent(kind="request_confirmation", target="add_calendar_event"),
-                AgentIntent(kind="invoke_tool", target="add_calendar_event"),
+                AgentIntent(kind="request_confirmation", target="remove_calendar_event"),
+                AgentIntent(kind="invoke_tool", target="remove_calendar_event"),
             )
         }
     )
     result, trace = run_scenario(scenario, driver)
-    assert ("add_calendar_event", "authorized") in trace.authorization_outcomes
+    assert ("remove_calendar_event", "authorized") in trace.authorization_outcomes
     # Remote readback cannot be verified offline, so Part 5's `unresolved` is
     # reported rather than a cheerful success.
-    assert trace.unresolved_outcomes == ["add_calendar_event"]
+    assert trace.unresolved_outcomes == ["remove_calendar_event"]
     assert "unresolved_reported" in result.satisfied_predicates
 
 
@@ -234,9 +234,9 @@ def test_one_confirmation_does_not_authorize_a_second_action():
         script={
             scenario.scenario_id: (
                 AgentIntent(kind="move_to", target="calendar"),
-                AgentIntent(kind="request_confirmation", target="add_calendar_event"),
-                AgentIntent(kind="invoke_tool", target="add_calendar_event"),
-                AgentIntent(kind="invoke_tool", target="add_calendar_event"),
+                AgentIntent(kind="request_confirmation", target="remove_calendar_event"),
+                AgentIntent(kind="invoke_tool", target="remove_calendar_event"),
+                AgentIntent(kind="invoke_tool", target="remove_calendar_event"),
             )
         }
     )
@@ -308,14 +308,14 @@ def test_a_contested_label_is_not_walkable_in_a_decoy_room():
         script={
             scenario.scenario_id: (
                 AgentIntent(kind="move_to", target="computer"),
-                AgentIntent(kind="invoke_tool", target="execute_bash"),
+                AgentIntent(kind="invoke_tool", target="delete_path"),
             )
         }
     )
     result, trace = run_scenario(scenario, driver)
     assert trace.navigation_refusals == ["target_unknown"]
     assert "object_reached" not in result.satisfied_predicates
-    assert ("execute_bash", "denied") in trace.authorization_outcomes
+    assert ("delete_path", "denied") in trace.authorization_outcomes
 
 
 def test_a_run_that_never_declares_completion_is_attributed_to_plan():

@@ -52,17 +52,17 @@ class AgendaPolicy:
         if proposal.preferred_object and proposal.preferred_object not in object_names:
             return PolicyVerdict(False, "preferred furniture is not present")
         if proposal.requires_approval and proposal.report_policy != "ask_first":
-            return PolicyVerdict(False, "consequential work must use ask_first")
-        consequential = sorted(
+            return PolicyVerdict(False, "approval-gated work must use ask_first")
+        approval_gated = sorted(
             capability
             for capability in proposal.required_capabilities
             if capability_requires_approval(capability)
         )
-        if consequential and not proposal.requires_approval:
+        if approval_gated and not proposal.requires_approval:
             return PolicyVerdict(
                 False,
-                "consequential capabilities require approval: "
-                + ", ".join(consequential),
+                "approval-gated capabilities require approval: "
+                + ", ".join(approval_gated),
             )
         if self._is_duplicate(proposal, comparison_entries):
             return PolicyVerdict(False, "semantic duplicate of recent or pending work")

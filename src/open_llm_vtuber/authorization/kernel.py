@@ -279,15 +279,15 @@ class AuthorizationKernel:
     @staticmethod
     def _required_authority(descriptor: ActionDescriptor) -> str:
         requested = AUTHORITY_LEVELS.index(descriptor.required_user_authority)
-        policy_minimum = 0
-        if descriptor.side_effect_class in {"local_state", "physical"}:
-            policy_minimum = 1
-        if descriptor.side_effect_class in {
-            "external_state",
-            "communication",
-        }:
-            policy_minimum = 2
+        # Any consequential effect needs at least session authority; only
+        # communicative, irreversible, or unknown-effect actions escalate to
+        # an explicit user decision at the writing desk. Reversible external
+        # writes (archiving mail, calendar/drive edits) commit on session
+        # authority like local work.
+        policy_minimum = 1 if descriptor.side_effect_class != "none" else 0
         if descriptor.reversibility in {"irreversible", "unknown"}:
+            policy_minimum = 2
+        elif descriptor.side_effect_class == "communication":
             policy_minimum = 2
         return AUTHORITY_LEVELS[max(requested, policy_minimum)]
 

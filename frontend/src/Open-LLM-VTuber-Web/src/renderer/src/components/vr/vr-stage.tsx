@@ -53,6 +53,12 @@ import {
   VR_RAY_MAX_DISTANCE,
   loadVrSelectionHighlight,
 } from "@/utils/vr-helpers";
+import {
+  AVATAR_HEAD_SITTING_Y,
+  AVATAR_HEAD_STANDING_Y,
+  createSpatialAvatar,
+  type VrAvatarVisuals,
+} from "@/utils/vr-avatar";
 
 const SCALE = 0.01;
 const MOVE_SPEED = 1.5;
@@ -316,98 +322,6 @@ function activityBubbleTexture(label: string) {
   texture.magFilter = THREE.LinearFilter;
   texture.needsUpdate = true;
   return texture;
-}
-
-function createSpatialAvatar(node: VrStageNode) {
-  const avatar = new THREE.Group();
-  avatar.name = "spatial-companion";
-  const shell = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(node.color), roughness: 0.28, metalness: 0.16,
-  });
-  const porcelain = new THREE.MeshStandardMaterial({
-    color: 0xf1f5ff, roughness: 0.22, metalness: 0.08,
-  });
-  const darkGlass = new THREE.MeshStandardMaterial({
-    color: 0x0b1020, roughness: 0.12, metalness: 0.5,
-  });
-  const glow = new THREE.MeshStandardMaterial({
-    color: 0xc7d2fe, emissive: 0x818cf8, emissiveIntensity: 2.1, roughness: 0.18,
-  });
-
-  const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(0.42, 48),
-    new THREE.MeshBasicMaterial({ color: 0x05070d, transparent: true, opacity: 0.23, depthWrite: false }),
-  );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = 0.006;
-  avatar.add(shadow);
-
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.43, 8, 20), shell);
-  body.position.y = 0.72;
-  body.castShadow = true;
-  avatar.add(body);
-  const chest = new THREE.Mesh(new THREE.CircleGeometry(0.075, 32), glow);
-  chest.position.set(0, 0.77, 0.255);
-  avatar.add(chest);
-
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 40, 24), porcelain);
-  head.scale.set(1.04, 0.9, 0.92);
-  head.position.y = 1.25;
-  head.castShadow = true;
-  avatar.add(head);
-  // A shallow spherical visor follows the head instead of floating as a flat
-  // plane in front of it. The slightly larger radius prevents z-fighting while
-  // preserving the same silhouette and material treatment.
-  const face = new THREE.Mesh(
-    new THREE.SphereGeometry(
-      0.347,
-      32,
-      12,
-      Math.PI / 2 - 0.64,
-      1.28,
-      Math.PI / 2 - 0.31,
-      0.62,
-    ),
-    darkGlass,
-  );
-  face.scale.copy(head.scale);
-  face.position.y = 1.25;
-  avatar.add(face);
-  const leftEye = new THREE.Mesh(new THREE.CircleGeometry(0.035, 24), glow);
-  leftEye.position.set(-0.09, 1.27, 0.307);
-  avatar.add(leftEye);
-  const rightEye = leftEye.clone();
-  rightEye.position.x = 0.09;
-  avatar.add(rightEye);
-
-  const armGeometry = new THREE.CapsuleGeometry(0.065, 0.33, 6, 14);
-  const leftArm = new THREE.Mesh(armGeometry, porcelain);
-  leftArm.position.set(-0.34, 0.72, 0);
-  leftArm.rotation.z = -0.12;
-  leftArm.castShadow = true;
-  avatar.add(leftArm);
-  const rightArm = leftArm.clone();
-  rightArm.position.x = 0.34;
-  rightArm.rotation.z = 0.12;
-  avatar.add(rightArm);
-
-  const legGeometry = new THREE.CapsuleGeometry(0.075, 0.25, 6, 14);
-  const leftLeg = new THREE.Mesh(legGeometry, shell);
-  leftLeg.position.set(-0.12, 0.26, 0);
-  leftLeg.castShadow = true;
-  avatar.add(leftLeg);
-  const rightLeg = leftLeg.clone();
-  rightLeg.position.x = 0.12;
-  avatar.add(rightLeg);
-
-  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.43, 0.008, 8, 64), glow);
-  halo.position.set(0, 1.25, -0.13);
-  avatar.add(halo);
-  const presenceLight = new THREE.PointLight(0x818cf8, 0.65, 2.4, 2);
-  presenceLight.position.set(0, 1.05, 0.35);
-  avatar.add(presenceLight);
-  avatar.userData.visuals = { body, head, leftArm, rightArm, chest, halo };
-  return avatar;
 }
 
 export default function VrStage() {
@@ -1266,21 +1180,14 @@ export default function VrStage() {
         }
       }
       if (runtime.avatar) {
-        const visuals = runtime.avatar.userData.visuals as {
-          body: THREE.Mesh;
-          head: THREE.Mesh;
-          leftArm: THREE.Mesh;
-          rightArm: THREE.Mesh;
-          chest: THREE.Mesh;
-          halo: THREE.Mesh;
-        };
+        const visuals = runtime.avatar.userData.visuals as VrAvatarVisuals;
         const moving = runtime.avatar.userData.walking === true;
         const offering = transientRef.current.some((entity) => entity.state === "offered");
         const seated = runtime.avatar.userData.pose === "sitting";
         const pulse = Math.sin(time * 0.0026);
         const stride = Math.sin(time * 0.009);
         visuals.body.position.y = (seated ? 0.52 : 0.72) + pulse * 0.012;
-        visuals.head.position.y = (seated ? 1.05 : 1.25) + pulse * 0.018;
+        visuals.head.position.y = (seated ? AVATAR_HEAD_SITTING_Y : AVATAR_HEAD_STANDING_Y) + pulse * 0.018;
         visuals.leftArm.rotation.x = moving ? stride * 0.42 : pulse * 0.035;
         visuals.rightArm.rotation.x = offering ? -1.15 : moving ? -stride * 0.42 : -pulse * 0.035;
         visuals.rightArm.rotation.z = offering ? -0.38 : 0.12;

@@ -775,6 +775,95 @@ async def test_invalid_repair_is_terminal_instead_of_stuck_repairing(tmp_path):
     assert final.transitions[-1].reason_code == "repair_rejected"
 
 
+@pytest.mark.asyncio
+async def test_retryable_failures_back_off_exponentially(monkeypatch, tmp_path):
+    store = ResumablePlanStore(tmp_path, clock=lambda: NOW)
+    store.create(
+        build_plan(
+            plan_id="backoff-plan",
+            intention_record_id="intention:backoff",
+            goal_ref="goal:backoff",
+            work_class="background",
+            steps=[
+                build_plan_step(
+                    step_id="step-retry",
+                    action_ref="calendar.read",
+                    arguments={},
+                    side_effecting=False,
+                    risk="low",
+                    estimated_cost=1,
+                    max_attempts=3,
+                )
+            ],
+            deadline_at=(NOW + timedelta(hours=1)).isoformat(),
+            retry_budget=3,
+            repair_budget=1,
+            cost_budget=5,
+            created_at=NOW.isoformat(),
+        )
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.plan_execution.asyncio.sleep",
+        fake_sleep,
+    )
+
+    async def always_fail(_step, _idempotency_key):
+        raise ConnectionError("transient failure")
+
+    async def abandon_repair(_plan_value, _failed):
+        return None
+
+    final = await ResumablePlanExecutor(
+        store,
+        retry_backoff_seconds=0.5,
+        max_retry_backoff_seconds=2.0,
+    ).run_to_stable(
+        "backoff-plan",
+        owner_id="owner-a",
+        fencing_token=1,
+        action=always_fail,
+        condition_probe=lambda _ref: True,
+        repair_planner=abandon_repair,
+    )
+
+    assert sleeps == [0.5, 1.0]
+    assert final.state == "failed"
+    assert final.transitions[-1].reason_code == "repair_declined"
+
+
+@pytest.mark.asyncio
+async def test_retry_backoff_is_disabled_by_default(monkeypatch, tmp_path):
+    store = ResumablePlanStore(tmp_path, clock=lambda: NOW)
+    store.create(_plan(side_effecting=False))
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.plan_execution.asyncio.sleep",
+        fake_sleep,
+    )
+
+    async def always_fail(_step, _idempotency_key):
+        raise ConnectionError("transient failure")
+
+    await ResumablePlanExecutor(store).run_to_stable(
+        "plan-one",
+        owner_id="owner-a",
+        fencing_token=1,
+        action=always_fail,
+        condition_probe=lambda _ref: True,
+    )
+
+    assert sleeps == []
+
+
 def test_deadline_sweep_expires_orphans_but_preserves_unknown_effects(tmp_path):
     current = NOW
     store = ResumablePlanStore(tmp_path, clock=lambda: current)

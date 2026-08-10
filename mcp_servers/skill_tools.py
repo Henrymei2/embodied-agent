@@ -248,8 +248,9 @@ def revise_skill(
 def retire_skill(slug: str, reason: str = "") -> str:
     """Stop using a skill. Requires standing at the tool rack.
 
-    Retiring only ever removes a capability, so it needs no approval. The file
-    is kept, and a retired skill can be replaced with a fresh draft.
+    Retiring removes a capability and is irreversible, so it is reviewed like
+    other irreversible changes. The file is kept, and a retired skill can be
+    replaced with a fresh draft.
 
     Args:
         slug: The skill to retire.

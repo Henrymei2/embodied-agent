@@ -17,6 +17,7 @@ from .agenda_planner import StructuredAgendaPlanner
 from .executive import AgendaExecutive, register_executive, unregister_executive
 from .idle_relocation import idle_scene_snapshot, relocate_for_idle
 from .settings import AutonomySettings
+from .tool_schemas import build_tool_schema_manifest, validate_tool_arguments
 
 
 def _agenda_step_text(result: AgentTurnResult | str) -> str:
@@ -54,13 +55,67 @@ def _agenda_step_metadata(entry, checkpoint) -> dict:
         "agenda_entry_id": entry.id,
         "agenda_step_id": checkpoint.step_id,
         "autonomous": True,
+        "synthetic_user": True,
         "report": False,
         "skip_history": True,
         "skip_memory": True,
     }
 
 
-async def _execute_validated_tool(tool_executor, checkpoint) -> str:
+async def _run_tool_calls(tool_executor, calls: list[dict]) -> list[dict]:
+    """Run validated tool calls and raise on the first tool-level error."""
+    final_results: list[dict] | None = None
+    async for update in tool_executor.execute_tools(calls, caller_mode="Prompt"):
+        if update.get("type") == "final_tool_results":
+            final_results = update.get("results", [])
+    if not final_results:
+        raise RuntimeError("Tool execution returned no result.")
+    for result in final_results:
+        if result.get("is_error"):
+            content = str(result.get("content", "")).strip()
+            raise RuntimeError(content or "Tool execution failed.")
+    return final_results
+
+
+async def _ensure_tool_proximity(
+    tool_executor,
+    tool_manager,
+    capability: str,
+    step_id: str,
+) -> None:
+    """Move to a tool's required object before execution when it is out of reach.
+
+    The agenda planner is not given the agent's live position, so a validated
+    step can name a gated tool while the agent stands elsewhere.  Deterministic
+    proximity handling restores the "walk before using a gated tool" property
+    without another planner round trip.
+    """
+    if tool_executor is None or tool_manager is None or not capability:
+        return
+    required_object = tool_manager.get_required_object(capability)
+    if not required_object:
+        return
+    reachable = set(tool_manager.get_reachable_objects())
+    if required_object in reachable:
+        return
+    await _run_tool_calls(
+        tool_executor,
+        [
+            {
+                "id": f"agenda_tool_{step_id}_move",
+                "name": "move_to",
+                "args": {"target": required_object},
+            }
+        ],
+    )
+
+
+async def _execute_validated_tool(
+    tool_executor,
+    checkpoint,
+    *,
+    tool_schemas: dict[str, dict] | None = None,
+) -> str:
     """Execute an already-authorized tool choice without another LLM turn."""
     capability = str(checkpoint.required_capability or "").strip()
     if not capability:
@@ -68,22 +123,22 @@ async def _execute_validated_tool(tool_executor, checkpoint) -> str:
     if tool_executor is None:
         raise RuntimeError("Validated tool step cannot run without ToolExecutor.")
 
-    final_results: list[dict] | None = None
+    if tool_schemas:
+        argument_error = validate_tool_arguments(
+            capability,
+            dict(checkpoint.arguments or {}),
+            tool_schemas,
+        )
+        if argument_error:
+            raise RuntimeError(argument_error)
     call = {
         "id": f"agenda_tool_{checkpoint.step_id}",
         "name": capability,
         "args": dict(checkpoint.arguments or {}),
     }
-    async for update in tool_executor.execute_tools([call], caller_mode="Prompt"):
-        if update.get("type") == "final_tool_results":
-            final_results = update.get("results", [])
-
-    if not final_results:
-        raise RuntimeError(f"Tool '{capability}' returned no execution result.")
+    final_results = await _run_tool_calls(tool_executor, [call])
     result = final_results[0]
     content = str(result.get("content", "")).strip()
-    if result.get("is_error"):
-        raise RuntimeError(content or f"Tool '{capability}' failed.")
     return content or f"Tool '{capability}' completed successfully."
 
 
@@ -197,8 +252,17 @@ async def agenda_loop(
 
         async def execute_step():
             if checkpoint.kind == "invoke_tool":
+                tool_executor = getattr(context, "tool_executor", None)
+                await _ensure_tool_proximity(
+                    tool_executor,
+                    tool_manager,
+                    str(checkpoint.required_capability or "").strip(),
+                    checkpoint.step_id,
+                )
                 return await _execute_validated_tool(
-                    getattr(context, "tool_executor", None), checkpoint
+                    tool_executor,
+                    checkpoint,
+                    tool_schemas=tool_schemas,
                 )
             instruction = _agenda_step_instruction(entry, checkpoint)
             return await process_single_conversation(
@@ -269,6 +333,11 @@ async def agenda_loop(
 
     tool_manager = getattr(context.agent_engine, "_tool_manager", None)
     capabilities = set(getattr(tool_manager, "tools", {}).keys())
+    tool_schemas = (
+        build_tool_schema_manifest(tool_manager.tools)
+        if tool_manager is not None
+        else {}
+    )
     from ..mcpp.tool_manager import (
         PROXIMITY_REQUIREMENTS,
         SERVER_PROXIMITY_REQUIREMENTS,
@@ -321,6 +390,7 @@ async def agenda_loop(
         capabilities=capabilities,
         object_names=object_names,
         capability_objects=capability_objects,
+        tool_schemas=tool_schemas,
         report_result=reporter.deliver if reporter is not None else None,
         connected_client=connected_client,
         lease_handle=lease_handle,

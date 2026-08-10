@@ -137,9 +137,14 @@ class ActionTransactionCoordinator:
         external_destination = None
         if profile.side_effect_class in {"external_state", "communication"}:
             external_destination = _opaque_ref("destination", destination_value)
+        # Only irreversible or communicative actions demand an explicit
+        # decision at the writing desk. Reversible external writes and
+        # sandboxed local work commit on session authority instead, so routine
+        # actions (archiving mail, calendar/drive edits, local commands) do
+        # not need user approval first.
         required_authority = (
             "explicit_confirmation"
-            if profile.side_effect_class in {"external_state", "communication"}
+            if profile.side_effect_class == "communication"
             or profile.reversibility in {"irreversible", "unknown"}
             else "session"
         )
@@ -228,7 +233,7 @@ class ActionTransactionCoordinator:
                 )
             if status == "pending_confirmation":
                 return self._error(
-                    f"Approval required for exact action {descriptor.action_id}. "
+                    "This consequential action requires your approval. "
                     "Review it at the writing desk, then retry the same action.",
                     transaction_id=transaction["transaction_id"],
                     state="pending_confirmation",
@@ -435,9 +440,16 @@ class ActionTransactionCoordinator:
     ) -> AuthorizationContext:
         reachable = frozenset(self.tool_manager.get_reachable_objects())
 
-        destination_allowed = bool(
-            confirmation is not None
-            and confirmation.descriptor_digest == descriptor.digest
+        # Session-authority actions carry the reviewed destination from their
+        # profile (a fixed service or a supplied argument), so the destination
+        # is trusted without a confirmation. Actions that still require an
+        # explicit decision bind their destination to that exact confirmation.
+        destination_allowed = (
+            descriptor.required_user_authority == "session"
+            or (
+                confirmation is not None
+                and confirmation.descriptor_digest == descriptor.digest
+            )
         )
         return AuthorizationContext(
             requesting_actor="agent",

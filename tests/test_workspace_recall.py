@@ -13,6 +13,15 @@ from src.open_llm_vtuber.workspace.workspace_prompt_builder import (
 )
 
 
+def test_rule_template_scopes_planning_to_consequential_work():
+    from src.open_llm_vtuber.workspace.workspace_manager import ROOT_FILES
+
+    rule = ROOT_FILES["RULE.md"]
+    assert "Do not begin work that needs approval until `list_plans`" in rule
+    assert "Routine reversible" in rule
+    assert "run directly without a plan or approval" in rule
+
+
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("EMBODIED_AGENT_EMBEDDINGS", "off")

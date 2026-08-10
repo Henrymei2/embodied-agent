@@ -116,6 +116,88 @@ def test_confirmation_is_bound_to_exact_action_and_time(confirmation_change):
     assert "authority" in _failed_checks(decision)
 
 
+def test_reversible_external_action_commits_on_session_authority():
+    """Routine reversible external writes (archiving mail, calendar/drive
+    edits) do not need a desk decision: session authority is enough."""
+    descriptor = _descriptor(
+        capability="archive_email",
+        side_effect_class="external_state",
+        reversibility="reversible",
+        required_user_authority="session",
+        spatial_requirement="mailbox",
+    )
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(
+            descriptor,
+            confirmation=None,
+            granted_capabilities=frozenset({"archive_email"}),
+            session_authorities=frozenset({"archive_email"}),
+        ),
+    )
+    assert decision.outcome == "authorized"
+    assert decision.may_commit is True
+
+
+def test_communication_cannot_commit_on_session_authority():
+    descriptor = _descriptor(
+        side_effect_class="communication",
+        reversibility="reversible",
+        required_user_authority="session",
+    )
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(descriptor, confirmation=None),
+    )
+    assert decision.may_commit is False
+    assert "authority" in _failed_checks(decision)
+
+
+def test_irreversible_action_cannot_commit_on_session_authority():
+    descriptor = _descriptor(
+        capability="delete_path",
+        side_effect_class="local_state",
+        reversibility="irreversible",
+        required_user_authority="session",
+        spatial_requirement=None,
+        external_destination=None,
+    )
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(
+            descriptor,
+            confirmation=None,
+            granted_capabilities=frozenset({"delete_path"}),
+            session_authorities=frozenset({"delete_path"}),
+        ),
+    )
+    assert decision.may_commit is False
+    assert "authority" in _failed_checks(decision)
+
+
+def test_unknown_effect_action_cannot_commit_on_session_authority():
+    descriptor = _descriptor(
+        capability="mystery_tool",
+        side_effect_class="external_state",
+        reversibility="unknown",
+        required_user_authority="session",
+        spatial_requirement=None,
+        external_destination="corpus:external-destination",
+    )
+    decision = AuthorizationKernel().evaluate(
+        descriptor,
+        _context(
+            descriptor,
+            confirmation=None,
+            granted_capabilities=frozenset({"mystery_tool"}),
+            session_authorities=frozenset({"mystery_tool"}),
+            allowed_external_destinations=frozenset({"corpus:external-destination"}),
+        ),
+    )
+    assert decision.may_commit is False
+    assert "authority" in _failed_checks(decision)
+
+
 def test_indirect_prompt_injection_cannot_create_grants_or_confirmation():
     descriptor = _descriptor(
         target_ref=(

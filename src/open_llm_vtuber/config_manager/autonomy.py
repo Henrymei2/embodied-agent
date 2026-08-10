@@ -60,6 +60,8 @@ class AutonomyConfig(I18nMixin):
     idle_max_seconds: int = Field(600, ge=5, le=7200)
     planner_retry_limit: int = Field(3, ge=1, le=10)
     planner_retry_backoff_seconds: float = Field(2.0, ge=0, le=60)
+    retry_backoff_seconds: float = Field(2.0, ge=0, le=60)
+    max_retry_backoff_seconds: float = Field(30.0, ge=1, le=300)
     planner_circuit_failure_threshold: int = Field(3, ge=1, le=20)
     planner_circuit_max_seconds: int = Field(1800, ge=10, le=14400)
     step_timeout_seconds: int = Field(30, ge=5, le=3600)
@@ -146,6 +148,12 @@ class AutonomyConfig(I18nMixin):
         "planner_retry_limit": Description(en="Rejected proposals allowed per pass"),
         "planner_retry_backoff_seconds": Description(
             en="Delay between planner retries"
+        ),
+        "retry_backoff_seconds": Description(
+            en="Base delay before re-executing a failed activity step"
+        ),
+        "max_retry_backoff_seconds": Description(
+            en="Ceiling for the exponential activity-step retry delay"
         ),
         "planner_circuit_failure_threshold": Description(
             en="Failed planning passes before opening the circuit"

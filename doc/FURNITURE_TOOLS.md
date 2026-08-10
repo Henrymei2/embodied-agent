@@ -107,6 +107,11 @@ works without a second timer implementation. Reading also seats the avatar.
 
 ## Plans
 
+The writing desk is reserved for consequential plans — multi-step work that is
+hard to reverse or that commits the user externally. Routine reversible actions
+(archiving or reading email, local commands, todos, timers, notes, calendar and
+drive changes) run directly without a plan or approval.
+
 A plan is a proposal. `write_plan` stores it as `pending`, and the only way it
 becomes `approved` or `declined` is the user pressing a button in the writing
 desk's hover window, which posts to `/api/furniture/plans/{id}/decision`. There

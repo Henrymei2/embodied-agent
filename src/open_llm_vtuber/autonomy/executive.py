@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import time
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable, Optional
@@ -59,6 +60,7 @@ class AgendaExecutive:
         capabilities: Optional[set[str]] = None,
         object_names: Optional[set[str]] = None,
         capability_objects: Optional[dict[str, str]] = None,
+        tool_schemas: Optional[dict[str, dict]] = None,
         report_result: Optional[Callable[[AgendaEntry, str], Awaitable[object]]] = None,
         connected_client: bool = True,
         lease_handle: LeaseHandle | None = None,
@@ -74,6 +76,7 @@ class AgendaExecutive:
         self.capabilities = capabilities or set()
         self.object_names = object_names or set()
         self.capability_objects = capability_objects or {}
+        self.tool_schemas = dict(tool_schemas or {})
         self.connected_client = connected_client
         self.lease_handle = lease_handle
         self.room_snapshot = room_snapshot
@@ -83,6 +86,7 @@ class AgendaExecutive:
             capabilities=self.capabilities,
             object_names=self.object_names,
             capability_objects=self.capability_objects,
+            tool_schemas=self.tool_schemas,
             connected_client=connected_client,
         )
         self.tracer = AutonomyTracer(
@@ -101,6 +105,8 @@ class AgendaExecutive:
             store,
             self.activity,
             lease_seconds=settings.lease_ttl_seconds,
+            retry_backoff_seconds=settings.retry_backoff_seconds,
+            max_retry_backoff_seconds=settings.max_retry_backoff_seconds,
         )
         self.fair_scheduler = FairPlanScheduler(
             starvation_seconds=max(60.0, settings.fallback_reconsideration_seconds)
@@ -961,12 +967,21 @@ class AgendaExecutive:
                         ),
                     },
                 ) as span:
+                    planner_started = time.perf_counter()
                     if handling_policy is not None and handling_policy.foreground:
                         proposal = await self.planner.propose_triggered_intention(
                             context, claimed_event, handling_policy
                         )
                     else:
                         proposal = await self.planner.propose_intention(context)
+                    planner_seconds = time.perf_counter() - planner_started
+                    span.set_attribute(
+                        "agenda.planner_duration_seconds",
+                        round(planner_seconds, 6),
+                    )
+                    logger.info(
+                        f"agenda.planner_timing kind=propose seconds={planner_seconds:.3f}"
+                    )
                     proposal.metadata.setdefault("trace_id", span.trace_id)
             except Exception as exc:
                 reason = (
@@ -1243,6 +1258,7 @@ class AgendaExecutive:
             client_uid=self.client_uid,
             capabilities=self.capabilities,
             object_names=self.object_names,
+            tool_schemas=self.tool_schemas,
             execution_mode="live" if self.connected_client else "headless",
         )
         existing_plan = self.plan_bridge.restore_plan_reference(entry)
@@ -1278,8 +1294,18 @@ class AgendaExecutive:
                 "agenda.planner.next_step",
                 trace_id=entry.metadata.get("trace_id"),
                 attributes={"agenda.entry_id": entry.id},
-            ):
+            ) as span:
+                planner_started = time.perf_counter()
                 checkpoint = await self.planner.next_step(asdict(entry), context)
+                planner_seconds = time.perf_counter() - planner_started
+                span.set_attribute(
+                    "agenda.planner_duration_seconds",
+                    round(planner_seconds, 6),
+                )
+                logger.info(
+                    f"agenda.planner_timing kind=next_step entry={entry.id} "
+                    f"seconds={planner_seconds:.3f}"
+                )
             verdict = self.step_policy.validate(entry, checkpoint)
             if not verdict.accepted:
                 if verdict.retryable:
@@ -1433,9 +1459,19 @@ class AgendaExecutive:
             "agenda.planner.evaluate_completion",
             trace_id=entry.metadata.get("trace_id"),
             attributes={"agenda.entry_id": entry.id},
-        ):
+        ) as span:
+            planner_started = time.perf_counter()
             complete, summary = await self.planner.evaluate_completion(
                 asdict(entry), [result]
+            )
+            planner_seconds = time.perf_counter() - planner_started
+            span.set_attribute(
+                "agenda.planner_duration_seconds",
+                round(planner_seconds, 6),
+            )
+            logger.info(
+                f"agenda.planner_timing kind=evaluate_completion entry={entry.id} "
+                f"seconds={planner_seconds:.3f}"
             )
         target = "completed" if complete else "queued"
         self.store.absorb_resumable_plan(
