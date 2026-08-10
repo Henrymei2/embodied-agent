@@ -37,6 +37,7 @@ class QueueExecutionTimeout(TimeoutError):
         *,
         queue_wait_seconds: float,
         execution_seconds: float,
+        timeout_stage: str = "execution",
     ) -> None:
         super().__init__(
             f"queued work timed out after {timeout_seconds:g}s of execution"
@@ -44,7 +45,7 @@ class QueueExecutionTimeout(TimeoutError):
         self.timeout_seconds = timeout_seconds
         self.queue_wait_seconds = queue_wait_seconds
         self.execution_seconds = execution_seconds
-        self.timeout_stage = "execution"
+        self.timeout_stage = str(timeout_stage or "execution")
 
 
 @dataclass(order=True)
@@ -196,6 +197,7 @@ class ClientRequestQueue:
         entry_id: Optional[str] = None,
         work_class: str = "autonomous",
         execution_timeout_seconds: Optional[float] = None,
+        timeout_stage: str = "execution",
         on_started: Optional[Callable[[], None]] = None,
     ) -> Any:
         """Enqueue work and return its result to the lifecycle that owns it.
@@ -206,7 +208,12 @@ class ClientRequestQueue:
         """
         loop = asyncio.get_running_loop()
         result: asyncio.Future = loop.create_future()
+        disposed: asyncio.Future = loop.create_future()
         queued_at = loop.time()
+
+        def mark_disposed(_status: str, _error: Optional[BaseException]) -> None:
+            if not disposed.done():
+                disposed.set_result(None)
 
         async def tracked_work():
             started_at = loop.time()
@@ -225,6 +232,7 @@ class ClientRequestQueue:
                     float(execution_timeout_seconds),
                     queue_wait_seconds=queue_wait_seconds,
                     execution_seconds=loop.time() - started_at,
+                    timeout_stage=timeout_stage,
                 )
                 if not result.done():
                     result.set_exception(timeout_error)
@@ -246,16 +254,24 @@ class ClientRequestQueue:
             priority=priority,
             label=label,
             dedupe_key=dedupe_key,
+            on_done=mark_disposed,
             entry_id=entry_id,
             work_class=work_class,
         )
         if not accepted:
             raise RuntimeError(f"duplicate queued work: {dedupe_key}")
         try:
-            return await result
+            value = await result
         except asyncio.CancelledError:
             self.cancel_work(dedupe_key)
             raise
+        except BaseException:
+            # tracked_work publishes its exception before the worker reaches
+            # _dispose_item.  Do not let a retry race the still-live dedupe key.
+            await disposed
+            raise
+        await disposed
+        return value
 
     def cancel_work(self, dedupe_key: str) -> bool:
         """Cancel current or not-yet-started work by its stable key."""

@@ -38,6 +38,23 @@ export interface VrScenarioStateMessage {
   error?: string;
 }
 
+export type VrScenarioMenuPage = "catalog" | "confirm" | "status";
+export type VrScenarioMenuAction = "details" | "back" | "status" | "start" | "cancel";
+
+export const initialVrScenarioMenuPage = (
+  activeRun: VrScenarioRun | null,
+): VrScenarioMenuPage => activeRun ? "status" : "catalog";
+
+export const nextVrScenarioMenuPage = (
+  current: VrScenarioMenuPage,
+  action: VrScenarioMenuAction,
+): VrScenarioMenuPage => {
+  if (action === "details") return "confirm";
+  if (action === "back") return "catalog";
+  if (action === "status" || action === "start") return "status";
+  return current;
+};
+
 interface VrScenarioValue extends VrScenarioStateMessage {
   receiveState: (message: VrScenarioStateMessage) => void;
   refresh: () => void;

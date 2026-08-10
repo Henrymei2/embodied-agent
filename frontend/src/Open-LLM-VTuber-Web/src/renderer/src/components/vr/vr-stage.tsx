@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@chakra-ui/react";
 import { FiX } from "react-icons/fi";
+import { useTranslation } from "react-i18next";
 import * as THREE from "three";
 import {
   useVrStage, VrAvatarMotionPlan, VrStageNode, VrTransientEntity,
@@ -10,9 +11,16 @@ import { useVAD } from "@/context/vad-context";
 import { useSubtitle } from "@/context/subtitle-context";
 import { useAgentActivity } from "@/context/agent-activity-context";
 import { useWebSocket } from "@/context/websocket-context";
-import { useVrScenario } from "@/context/vr-scenario-context";
+import {
+  initialVrScenarioMenuPage,
+  nextVrScenarioMenuPage,
+  useVrScenario,
+  VrScenarioMenuAction,
+  VrScenarioMenuPage,
+} from "@/context/vr-scenario-context";
 import { wsService } from "@/services/websocket-service";
 import { audioManager } from "@/utils/audio-manager";
+import { currentActivityLabel } from "@/utils/agent-activity-presentation";
 import {
   fitFurnitureModel,
   furnitureModelAsset,
@@ -21,6 +29,7 @@ import {
 import {
   floorToScene,
   furniturePanelLayout,
+  furniturePanelRotationY,
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   headRelativeDelta,
@@ -73,6 +82,10 @@ interface VrRuntime {
   controllers: THREE.XRTargetRaySpace[];
   hud: THREE.Mesh;
   hudTexture: THREE.Texture;
+  systemHud: THREE.Mesh;
+  systemHudTexture: THREE.Texture;
+  activityBubble: THREE.Mesh;
+  activityBubbleTexture: THREE.Texture;
   turnArmed: boolean;
   xPressed: boolean;
   lastFrame: number;
@@ -89,7 +102,7 @@ interface VrRuntime {
   scenarioMenu: THREE.Group;
   scenarioPanel: THREE.Mesh;
   scenarioMenuOpen: boolean;
-  scenarioPage: "catalog" | "confirm";
+  scenarioPage: VrScenarioMenuPage;
   aPressed: boolean;
   renderScenarioMenu: () => void;
 }
@@ -261,6 +274,45 @@ function captionTexture(caption: string, status: string) {
   return texture;
 }
 
+function activityBubbleTexture(label: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 256;
+  const context = canvas.getContext("2d")!;
+  const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  background.addColorStop(0, "rgba(15, 23, 42, 0.96)");
+  background.addColorStop(1, "rgba(7, 12, 24, 0.94)");
+  roundedRect(context, 8, 8, canvas.width - 16, canvas.height - 16, 112);
+  context.fillStyle = background;
+  context.fill();
+  context.strokeStyle = "rgba(199, 210, 254, 0.55)";
+  context.lineWidth = 5;
+  context.stroke();
+  context.beginPath();
+  context.arc(82, canvas.height / 2, 15, 0, Math.PI * 2);
+  context.fillStyle = "#a5b4fc";
+  context.shadowColor = "rgba(129, 140, 248, 0.9)";
+  context.shadowBlur = 24;
+  context.fill();
+  context.shadowBlur = 0;
+  context.fillStyle = "#f8fafc";
+  context.font = "650 58px system-ui, sans-serif";
+  const maxTextWidth = canvas.width - 170;
+  let visibleLabel = label;
+  while (visibleLabel.length > 1 && context.measureText(visibleLabel).width > maxTextWidth) {
+    visibleLabel = visibleLabel.slice(0, -1);
+  }
+  if (visibleLabel !== label) visibleLabel = `${visibleLabel.trimEnd()}…`;
+  context.fillText(visibleLabel, 128, 150);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function createSpatialAvatar(node: VrStageNode) {
   const avatar = new THREE.Group();
   avatar.name = "spatial-companion";
@@ -364,6 +416,7 @@ function summaryLines(value: unknown): string[] {
 }
 
 export default function VrStage() {
+  const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<VrRuntime | null>(null);
   const { stage, motionPlan, transients, propStates, setUserPose, updateTransient, removeTransient, updatePropState } = useVrStage();
@@ -372,7 +425,7 @@ export default function VrStage() {
   const { xrSession, leaveVr } = useRendererMode();
   const { micOn, startMic, stopMic } = useVAD();
   const micRef = useRef(micOn);
-  const { subtitleText } = useSubtitle();
+  const { subtitleText, showSubtitle } = useSubtitle();
   const { activity } = useAgentActivity();
   const { baseUrl, wsState } = useWebSocket();
   const scenarioState = useVrScenario();
@@ -382,9 +435,12 @@ export default function VrStage() {
   const stopMicRef = useRef(stopMic);
   const micStatusTimerRef = useRef<number | null>(null);
   const warningTimerRef = useRef<number | null>(null);
+  const audioWarningTimerRef = useRef<number | null>(null);
+  const playbackHideTimerRef = useRef<number | null>(null);
   const [micStatus, setMicStatus] = useState<string | null>(null);
   const [vrWarning, setVrWarning] = useState<string | null>(null);
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
+  const [audioPlaying, setAudioPlaying] = useState(false);
   const initialMicOnRef = useRef(micOn);
   const selectionHighlightEnabled = loadVrSelectionHighlight();
 
@@ -413,10 +469,41 @@ export default function VrStage() {
   useEffect(() => () => {
     if (micStatusTimerRef.current !== null) window.clearTimeout(micStatusTimerRef.current);
     if (warningTimerRef.current !== null) window.clearTimeout(warningTimerRef.current);
+    if (audioWarningTimerRef.current !== null) window.clearTimeout(audioWarningTimerRef.current);
+    if (playbackHideTimerRef.current !== null) window.clearTimeout(playbackHideTimerRef.current);
   }, []);
 
   useEffect(() => audioManager.subscribe((state) => {
-    setAudioWarning(state.state === "error" ? state.message : null);
+    if (state.state === "playing") {
+      if (playbackHideTimerRef.current !== null) {
+        window.clearTimeout(playbackHideTimerRef.current);
+        playbackHideTimerRef.current = null;
+      }
+      if (audioWarningTimerRef.current !== null) {
+        window.clearTimeout(audioWarningTimerRef.current);
+        audioWarningTimerRef.current = null;
+      }
+      setAudioWarning(null);
+      setAudioPlaying(true);
+      return;
+    }
+    if (state.state === "error") {
+      if (playbackHideTimerRef.current !== null) window.clearTimeout(playbackHideTimerRef.current);
+      playbackHideTimerRef.current = null;
+      setAudioPlaying(false);
+      setAudioWarning(state.message);
+      if (audioWarningTimerRef.current !== null) window.clearTimeout(audioWarningTimerRef.current);
+      audioWarningTimerRef.current = window.setTimeout(() => {
+        setAudioWarning(null);
+        audioWarningTimerRef.current = null;
+      }, 3000);
+      return;
+    }
+    if (playbackHideTimerRef.current !== null) window.clearTimeout(playbackHideTimerRef.current);
+    playbackHideTimerRef.current = window.setTimeout(() => {
+      setAudioPlaying(false);
+      playbackHideTimerRef.current = null;
+    }, 120);
   }), []);
 
   useEffect(() => {
@@ -485,11 +572,43 @@ export default function VrStage() {
     const hudTexture = captionTexture("Preparing your companion space", "Connecting");
     const hud = new THREE.Mesh(
       new THREE.PlaneGeometry(1.12, 0.28),
-      new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, depthTest: false }),
+      new THREE.MeshBasicMaterial({
+        map: hudTexture, transparent: true, depthTest: false, depthWrite: false,
+      }),
     );
     hud.position.set(0, -0.48, -1.62);
     hud.renderOrder = 100;
+    hud.visible = false;
+    hud.raycast = () => undefined;
     camera.add(hud);
+
+    const systemHudTexture = captionTexture("Preparing your companion space", "Connecting");
+    const systemHud = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.225),
+      new THREE.MeshBasicMaterial({
+        map: systemHudTexture, transparent: true, depthTest: false, depthWrite: false,
+      }),
+    );
+    systemHud.position.set(0, 0.42, -1.65);
+    systemHud.renderOrder = 110;
+    systemHud.raycast = () => undefined;
+    camera.add(systemHud);
+
+    const initialActivityBubbleTexture = activityBubbleTexture("");
+    const activityBubble = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.92, 0.184),
+      new THREE.MeshBasicMaterial({
+        map: initialActivityBubbleTexture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    activityBubble.renderOrder = 90;
+    activityBubble.visible = false;
+    activityBubble.raycast = () => undefined;
+    scene.add(activityBubble);
 
     const scenarioMenu = new THREE.Group();
     scenarioMenu.position.set(0, 0, -1.55);
@@ -511,6 +630,8 @@ export default function VrStage() {
       scene, renderer, camera, rig, furniture, transientRoot, avatar: null,
       panels: new Map(),
       raycaster: new THREE.Raycaster(undefined, undefined, 0, VR_RAY_MAX_DISTANCE), controllers, hud, hudTexture,
+      systemHud, systemHudTexture,
+      activityBubble, activityBubbleTexture: initialActivityBubbleTexture,
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
       collisionNodes: [],
       panelGenerations: new Map(), dismissedPanels: new Set(),
@@ -576,7 +697,7 @@ export default function VrStage() {
       const definition = state.scenarios[0];
       const run = state.active_run;
       let lines: string[];
-      if (run) {
+      if (run && runtime.scenarioPage === "status") {
         lines = [
           definition?.title || "VR test scenario",
           "SIMULATED · LIVE STATUS, NOT A SCORE",
@@ -586,7 +707,10 @@ export default function VrStage() {
           "A closes this menu. Right trigger selects a control.",
         ];
         if (["preparing", "waiting_event", "planning", "running", "awaiting_approval", "cancelling"].includes(run.phase)) {
-          addScenarioButton(run.phase === "cancelling" ? "Stopping…" : "Cancel", "cancel", 0, 0xffb4a2);
+          addScenarioButton("Scenarios", "back", -0.34, 0xffffff);
+          addScenarioButton(run.phase === "cancelling" ? "Stopping…" : "Cancel", "cancel", 0.34, 0xffb4a2);
+        } else {
+          addScenarioButton("Scenarios", "back", 0, 0xffffff);
         }
       } else if (runtime.scenarioPage === "confirm" && definition) {
         lines = [
@@ -599,15 +723,27 @@ export default function VrStage() {
         addScenarioButton("Back", "back", -0.34, 0xffffff);
         addScenarioButton("Start", "start", 0.34, 0xa7f3d0);
       } else if (definition) {
+        const active = run && ["preparing", "waiting_event", "planning", "running", "awaiting_approval", "cancelling"].includes(run.phase);
         lines = [
+          "VR test scenarios",
           definition.title,
           "SIMULATED",
           definition.summary,
           ...definition.sequence.slice(0, 4).map((item, index) => `${index + 1}. ${item}`),
           `Shows: ${definition.demonstrates.slice(0, 3).join(" · ")}`,
-          "Select Details to review the reset and start.",
+          ...(run ? [`Last run: ${run.phase.replace(/_/g, " ")}`] : []),
+          active
+            ? "A scenario is running. View its status or cancel it there."
+            : "Select Details to review the reset and start.",
         ];
-        addScenarioButton("Details", "details", 0, 0xa5f3fc);
+        if (active) {
+          addScenarioButton("View status", "status", 0, 0xa5f3fc);
+        } else if (run) {
+          addScenarioButton("Details", "details", -0.34, 0xa5f3fc);
+          addScenarioButton("Last result", "status", 0.34, 0xffffff);
+        } else {
+          addScenarioButton("Details", "details", 0, 0xa5f3fc);
+        }
       } else {
         lines = ["VR test scenarios", "Loading scenario catalogue…"];
       }
@@ -698,6 +834,10 @@ export default function VrStage() {
       );
       const position = documentToScene(stageRef.current!, node.x, node.y);
       panel.position.set(position.x, Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE), position.z);
+      panel.rotation.y = furniturePanelRotationY(
+        node.y,
+        stageRef.current!.room.depth,
+      );
       panel.userData.panel = true;
       panel.userData.node = node;
       panel.userData.nodeId = node.id;
@@ -773,10 +913,9 @@ export default function VrStage() {
       if (controller.userData.handedness !== "right") return;
       const hit = rayHitFromController(controller);
       if (!hit) return;
-      const scenarioAction = hit.object.userData.scenarioAction as string | undefined;
+      const scenarioAction = hit.object.userData.scenarioAction as VrScenarioMenuAction | undefined;
       if (scenarioAction) {
-        if (scenarioAction === "details") runtime.scenarioPage = "confirm";
-        if (scenarioAction === "back") runtime.scenarioPage = "catalog";
+        runtime.scenarioPage = nextVrScenarioMenuPage(runtime.scenarioPage, scenarioAction);
         if (scenarioAction === "start") {
           const definition = scenarioStateRef.current.scenarios[0];
           if (definition) scenarioStateRef.current.start(definition.id);
@@ -977,7 +1116,7 @@ export default function VrStage() {
             micStatusTimerRef.current = window.setTimeout(() => {
               setMicStatus(null);
               micStatusTimerRef.current = null;
-            }, 1500);
+            }, 3000);
           }
           runtime.xPressed = pressed;
         }
@@ -989,7 +1128,9 @@ export default function VrStage() {
           runtime.scenarioMenu.visible = runtime.scenarioMenuOpen;
           if (runtime.scenarioMenuOpen) {
             closeAllPanels();
-            runtime.scenarioPage = "catalog";
+            runtime.scenarioPage = initialVrScenarioMenuPage(
+              scenarioStateRef.current.active_run,
+            );
             scenarioStateRef.current.refresh();
             runtime.renderScenarioMenu();
           }
@@ -1072,6 +1213,27 @@ export default function VrStage() {
         visuals.rightArm.rotation.z = offering ? -0.38 : 0.12;
         visuals.chest.scale.setScalar(1 + Math.max(0, pulse) * 0.08);
         visuals.halo.rotation.z = time * 0.00012;
+
+        if (runtime.activityBubble.visible) {
+          const bubblePosition = runtime.avatar.getWorldPosition(new THREE.Vector3());
+          bubblePosition.y += seated ? 1.48 : 1.7;
+          runtime.activityBubble.position.copy(bubblePosition);
+          const rigOrientation = rig.getWorldQuaternion(new THREE.Quaternion());
+          const headsetPosition = liveViewerPose
+            ? viewerWorldPositionFromPose(
+              liveViewerPose.transform.position,
+              rig.position,
+              rigOrientation,
+            )
+            : viewerPoseCamera(renderer.xr.getCamera())
+              .getWorldPosition(new THREE.Vector3());
+          runtime.activityBubble.quaternion.copy(
+            facingQuaternion(
+              bubblePosition,
+              new THREE.Vector3(headsetPosition.x, headsetPosition.y, headsetPosition.z),
+            ),
+          );
+        }
       }
       if (currentStage) {
         const rigOrientation = rig.getWorldQuaternion(new THREE.Quaternion());
@@ -1128,6 +1290,10 @@ export default function VrStage() {
             position.x,
             Math.min(2.25, (node.elevation + node.height / 2 + 45) * SCALE),
             position.z,
+          );
+          panel.rotation.y = furniturePanelRotationY(
+            node.y,
+            currentStage.room.depth,
           );
         });
       }
@@ -1570,23 +1736,51 @@ export default function VrStage() {
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
-    const activityText = activity.phase === "idle" ? "" : activity.phase.replace(/-/g, " ");
-    const shouldShow = Boolean(subtitleText.trim() || activityText || micStatus || vrWarning || audioWarning || wsState !== "OPEN");
+    const activityText = currentActivityLabel(activity, {
+      thinking: t("agentActivity.thinking"),
+      planning: t("agentActivity.planningNext"),
+      unknownTool: t("agentActivity.unknownTask"),
+    });
+    runtime.activityBubble.visible = Boolean(activityText);
+    if (!activityText) return;
+    const next = activityBubbleTexture(activityText);
+    (runtime.activityBubble.material as THREE.MeshBasicMaterial).map = next;
+    (runtime.activityBubble.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    runtime.activityBubbleTexture.dispose();
+    runtime.activityBubbleTexture = next;
+  }, [activity, t, xrSession]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const spokenCaption = audioPlaying && showSubtitle ? subtitleText.trim() : "";
+    const shouldShow = Boolean(micStatus || spokenCaption);
     runtime.hud.visible = shouldShow;
     if (!shouldShow) return;
-    const status = [
-      wsState === "OPEN" ? "Connected" : wsState.toLowerCase(),
-      activityText,
-      micStatus,
-      vrWarning,
-      audioWarning,
-    ].filter(Boolean).join(" · ");
-    const caption = audioWarning || subtitleText.trim() || vrWarning || micStatus || activityText || "Reconnecting to your companion";
+    const status = micStatus ? "Microphone" : "Speaking";
+    const caption = micStatus || spokenCaption;
     const next = captionTexture(caption, status);
     (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
+    (runtime.hud.material as THREE.MeshBasicMaterial).needsUpdate = true;
     runtime.hudTexture.dispose();
     runtime.hudTexture = next;
-  }, [subtitleText, activity, micStatus, vrWarning, audioWarning, wsState]);
+  }, [subtitleText, showSubtitle, audioPlaying, micStatus, xrSession]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const warning = audioWarning
+      || vrWarning
+      || (wsState !== "OPEN" ? "Reconnecting to your companion" : "");
+    runtime.systemHud.visible = Boolean(warning);
+    if (!warning) return;
+    const status = audioWarning ? "Audio" : vrWarning ? "VR" : wsState.toLowerCase();
+    const next = captionTexture(warning, status);
+    (runtime.systemHud.material as THREE.MeshBasicMaterial).map = next;
+    (runtime.systemHud.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    runtime.systemHudTexture.dispose();
+    runtime.systemHudTexture = next;
+  }, [audioWarning, vrWarning, wsState, xrSession]);
 
   return (
     <>

@@ -60,6 +60,33 @@ def _agenda_step_metadata(entry, checkpoint) -> dict:
     }
 
 
+async def _execute_validated_tool(tool_executor, checkpoint) -> str:
+    """Execute an already-authorized tool choice without another LLM turn."""
+    capability = str(checkpoint.required_capability or "").strip()
+    if not capability:
+        raise RuntimeError("Validated tool step is missing its capability.")
+    if tool_executor is None:
+        raise RuntimeError("Validated tool step cannot run without ToolExecutor.")
+
+    final_results: list[dict] | None = None
+    call = {
+        "id": f"agenda_tool_{checkpoint.step_id}",
+        "name": capability,
+        "args": dict(checkpoint.arguments or {}),
+    }
+    async for update in tool_executor.execute_tools([call], caller_mode="Prompt"):
+        if update.get("type") == "final_tool_results":
+            final_results = update.get("results", [])
+
+    if not final_results:
+        raise RuntimeError(f"Tool '{capability}' returned no execution result.")
+    result = final_results[0]
+    content = str(result.get("content", "")).strip()
+    if result.get("is_error"):
+        raise RuntimeError(content or f"Tool '{capability}' failed.")
+    return content or f"Tool '{capability}' completed successfully."
+
+
 async def _publish_completion(
     *,
     send,
@@ -167,9 +194,13 @@ async def agenda_loop(
                 lease_handle,
                 minimum_remaining_seconds=1,
             )
-        instruction = _agenda_step_instruction(entry, checkpoint)
 
         async def execute_step():
+            if checkpoint.kind == "invoke_tool":
+                return await _execute_validated_tool(
+                    getattr(context, "tool_executor", None), checkpoint
+                )
+            instruction = _agenda_step_instruction(entry, checkpoint)
             return await process_single_conversation(
                 context=context,
                 websocket_send=send,
@@ -200,6 +231,11 @@ async def agenda_loop(
                 entry_id=entry.id,
                 work_class="autonomous",
                 execution_timeout_seconds=checkpoint.timeout_seconds,
+                timeout_stage=(
+                    "tool_execution"
+                    if checkpoint.kind == "invoke_tool"
+                    else "agent_generation"
+                ),
                 on_started=mark_started,
             )
             if action_scope.pending_transaction_id is not None:

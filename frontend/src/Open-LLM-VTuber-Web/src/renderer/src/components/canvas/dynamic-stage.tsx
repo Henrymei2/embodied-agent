@@ -21,6 +21,7 @@ import { useWebSocket } from "@/context/websocket-context";
 import { useChatHistory } from "@/context/chat-history-context";
 import { useAgentActivity } from "@/context/agent-activity-context";
 import type { AgentActivityTool } from "@/context/agent-activity-context";
+import { friendlyToolName } from "@/utils/agent-activity-presentation";
 import { useTranslation } from "react-i18next";
 import {
   accent,
@@ -39,44 +40,6 @@ const HOVER_DELAY_MS = 250;
 // Matches CLICK_COOLDOWN_SECONDS in src/open_llm_vtuber/object_interaction.py.
 const OBJECT_CLICK_COOLDOWN_MS = 3000;
 const CLOSE_DELAY_MS = 140;
-
-const FRIENDLY_VERBS: Record<string, string> = {
-  get: "Getting",
-  list: "Listing",
-  search: "Searching",
-  find: "Finding",
-  fetch: "Fetching",
-  read: "Reading",
-  load: "Loading",
-  check: "Checking",
-  create: "Creating",
-  add: "Adding",
-  update: "Updating",
-  edit: "Editing",
-  delete: "Deleting",
-  remove: "Removing",
-  send: "Sending",
-  move: "Moving",
-  open: "Opening",
-  close: "Closing",
-  set: "Setting",
-  run: "Running",
-};
-
-export function friendlyToolName(toolName: string, unknownLabel: string) {
-  if (!toolName || toolName === "unknown_task") return unknownLabel;
-  const words = toolName
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[_-]+/g, " ")
-    .trim()
-    .toLowerCase()
-    .split(/\s+/);
-  const verb = FRIENDLY_VERBS[words[0]];
-  if (verb) return `${verb} ${words.slice(1).join(" ") || "task"}`;
-  return words.map((word, index) => (
-    index === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word
-  )).join(" ");
-}
 
 function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
   const { t } = useTranslation();

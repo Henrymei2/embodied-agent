@@ -7,6 +7,7 @@ import {
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   furniturePanelLayout,
+  furniturePanelRotationY,
   browserEndpoints,
   headRelativeDelta,
   inputSourcesByHand,
@@ -30,6 +31,11 @@ import {
   viewerWorldPositionFromPose,
   withRendererMode,
 } from "./vr-helpers";
+import {
+  currentActivityLabel,
+  friendlyToolName,
+  selectCurrentActivityTool,
+} from "./agent-activity-presentation";
 
 describe("VR spatial helpers", () => {
   it("defaults VR selection highlighting on and parses a persisted opt-out", () => {
@@ -40,11 +46,54 @@ describe("VR spatial helpers", () => {
   });
 
   it("keeps captions within a compact headset-safe line budget", () => {
+    expect(clampCaptionText("Short caption", 20, 2)).toEqual(["Short caption"]);
     expect(clampCaptionText("A concise spatial caption that stays below the companion", 20, 2)).toEqual([
-      "A concise spatial",
-      "caption that stays…",
+      "…caption that stays",
+      "below the companion",
     ]);
     expect(clampCaptionText("   ")).toEqual([]);
+  });
+
+  it("keeps the end of long unbroken captions", () => {
+    expect(clampCaptionText("abcdefghijklmnopqrstuvwx", 8, 2)).toEqual([
+      "…jklmnop",
+      "qrstuvwx",
+    ]);
+    expect(clampCaptionText("这是一个没有空格而且需要持续显示后半部分的长字幕", 6, 2)).toEqual([
+      "…续显示后半",
+      "部分的长字幕",
+    ]);
+  });
+
+  it("selects and labels the current agent activity", () => {
+    const tools = [
+      { tool_id: "done", tool_name: "read_notes", status: "completed" as const },
+      { tool_id: "queued", tool_name: "create_reminder", status: "pending" as const },
+      { tool_id: "active", tool_name: "search_web", status: "running" as const },
+    ];
+    expect(selectCurrentActivityTool(tools)?.tool_id).toBe("active");
+    expect(selectCurrentActivityTool(tools.filter((tool) => tool.status !== "running"))?.tool_id).toBe("queued");
+    expect(selectCurrentActivityTool([
+      tools[0],
+      { tool_id: "latest", tool_name: "send_email", status: "completed" as const },
+    ])?.tool_id).toBe("latest");
+    expect(friendlyToolName("search_web", "Unknown task")).toBe("Searching web");
+    expect(currentActivityLabel(
+      { phase: "tools", tools },
+      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+    )).toBe("Searching web…");
+    expect(currentActivityLabel(
+      { phase: "planning", tools: [] },
+      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+    )).toBe("Planning…");
+    expect(currentActivityLabel(
+      { phase: "thinking", tools: [] },
+      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+    )).toBe("Thinking…");
+    expect(currentActivityLabel(
+      { phase: "idle", tools: [] },
+      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+    )).toBeNull();
   });
 
   it("derives secure browser endpoints and registers renderer mode", () => {
@@ -332,6 +381,11 @@ describe("VR furniture presentation helpers", () => {
     expect(plans.maxLines).toBeGreaterThan(standard.maxLines);
     expect(Math.abs(plans.closePosition.y) + 0.07).toBeLessThanOrEqual(plans.height / 2);
     expect(Math.abs(plans.actionY) + 0.075).toBeLessThanOrEqual(plans.height / 2);
+  });
+
+  it("faces panels inward from opposite walls without viewer tracking", () => {
+    expect(furniturePanelRotationY(20, 1080)).toBe(Math.PI);
+    expect(furniturePanelRotationY(1060, 1080)).toBe(0);
   });
 
   it("uses explicit close controls and reserves body triggers for email paging", () => {

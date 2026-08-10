@@ -68,11 +68,21 @@ The audio queue distinguishes autoplay rejection, an empty payload, decode
 failure, and an ordinary playback failure. Every failure completes its queue
 item and playback handshake so one bad segment cannot strand later speech.
 
-Subtitle, connection, activity, microphone, and transient error messages use a
-compact, high-resolution camera-relative ribbon below the center of view. It
-is limited to three lines, truncates safely, and disappears while idle so it
-cannot obscure the companion. Only the latest subtitle and current activity
-are visible; VR mode has no full chat history.
+Spoken subtitles use a compact, high-resolution camera-relative ribbon below
+the center of view. The ribbon is visible only while audio is actually playing
+and, independently, for three seconds after the user toggles the microphone.
+Long responses retain the latest three wrapped lines, marking omitted earlier
+text with an ellipsis, so the caption advances instead of remaining on its
+opening words. Connection and transient audio or VR failures use a separate
+warning surface and therefore cannot keep the subtitle ribbon visible.
+
+Agent activity is world-anchored above the companion instead of sharing the
+subtitle ribbon. The bubble follows the avatar, stays level while facing the
+headset, and shows thinking, planning, or the most relevant current tool call.
+For a tool batch it prefers a running tool, then a pending tool, then the most
+recent tool, and renders the same friendly tool name used in normal mode. The
+bubble hides on the idle activity event and never exposes tool arguments or
+results. VR mode has no full chat history.
 
 VR mode excludes the normal sidebar and footer, text entry, direct fixed-
 furniture grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.
@@ -134,7 +144,11 @@ not overwrite the preference merely because an XR session ends.
 
 Right A uses an independent rising-edge latch. While the scenario menu is
 open, locomotion and snap turning are suspended, its controls take raycast
-priority, and the right trigger selects Details, Start, Back, or Cancel. The
+priority, and the right trigger selects Details, Start, Scenarios, View status,
+Last result, Back, or Cancel. Every run-status page exposes **Scenarios** so the
+user can return to the catalogue without closing the menu; an active catalogue
+entry links back to live status, while a terminal entry allows either reviewing
+the last result or opening Details to start again. The
 first shipped entry is **An Email Changes the Agent's Plan**. It is visibly
 marked simulated, confirms that the VR room and unfinished autonomous work
 will reset, and reports live agenda phases without presenting a pass score.
@@ -169,11 +183,12 @@ a configured `uiWindow` still opens a generic panel naming the object and
 stating that no additional data is available.
 
 A panel is positioned above or beside its furniture with a fixed room-relative
-orientation; it does not rotate toward the headset. Selecting its enlarged
-Close control hides that panel until both occupants leave the buffered area;
-returning later opens it again. Opening the VR test-scenario menu temporarily
-hides furniture panels. Fixed furniture is not trigger-selectable and does not
-receive a selectable hover highlight.
+orientation. North- and south-wall panels use opposite rotations so their
+textured front faces point inward, but they do not rotate toward the headset.
+Selecting an enlarged Close control hides that panel until both occupants leave
+the buffered area; returning later opens it again. Opening the VR test-scenario
+menu temporarily hides furniture panels. Fixed furniture is not trigger-
+selectable and does not receive a selectable hover highlight.
 
 Panel content is rendered to local canvas textures and raycast as Three.js
 planes; DOM Overlay is not required. Reuse the existing read routes for todo,

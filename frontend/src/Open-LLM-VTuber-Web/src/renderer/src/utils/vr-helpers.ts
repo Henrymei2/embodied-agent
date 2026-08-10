@@ -81,6 +81,12 @@ export function furniturePanelLayout(provider?: string): FurniturePanelLayout {
     : STANDARD_FURNITURE_PANEL_LAYOUT;
 }
 
+/** Keep wall-mounted panels facing into the room without tracking the viewer.
+ * In floor coordinates the north/mailbox wall is the low-y half. */
+export function furniturePanelRotationY(nodeY: number, roomDepth: number) {
+  return nodeY < roomDepth / 2 ? Math.PI : 0;
+}
+
 export function furnitureInteractionReach(
   node: Pick<FurniturePanelNode, "width" | "depth" | "reach">,
   reachCeiling: number,
@@ -314,18 +320,13 @@ export function furnitureDecalLayouts(
   ] as const;
 }
 
-/**
- * Break spoken captions into a small number of headset-safe lines. The final
- * line is truncated rather than allowing a panel to grow into the companion's
- * sight line.
- */
+/** Keep the latest headset-safe lines so a long spoken response advances. */
 export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3) {
   const words = value.trim().split(/\s+/).filter(Boolean);
   if (!words.length || maxCharacters < 2 || maxLines < 1) return [];
 
   const lines: string[] = [];
   let current = "";
-  let consumed = 0;
   for (const word of words) {
     const fragments = word.length > maxCharacters
       ? word.match(new RegExp(`.{1,${maxCharacters}}`, "g")) || [word]
@@ -334,27 +335,19 @@ export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3
       const candidate = current ? `${current} ${fragment}` : fragment;
       if (candidate.length <= maxCharacters) {
         current = candidate;
-        consumed += 1;
         continue;
       }
       if (current) lines.push(current);
-      if (lines.length === maxLines) break;
       current = fragment;
-      consumed += 1;
     }
-    if (lines.length === maxLines) break;
   }
-  if (lines.length < maxLines && current) lines.push(current);
+  if (current) lines.push(current);
 
-  const fragmentCount = words.reduce(
-    (total, word) => total + Math.max(1, Math.ceil(word.length / maxCharacters)),
-    0,
-  );
-  if (consumed < fragmentCount && lines.length) {
-    const last = lines.length - 1;
-    lines[last] = `${lines[last].slice(0, Math.max(1, maxCharacters - 1)).trimEnd()}…`;
+  const visible = lines.slice(-maxLines);
+  if (lines.length > maxLines && visible.length) {
+    visible[0] = `…${visible[0].slice(-(maxCharacters - 1))}`;
   }
-  return lines;
+  return visible;
 }
 
 export function browserEndpoints(location: Pick<Location, "protocol" | "host">) {

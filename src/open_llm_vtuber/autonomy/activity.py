@@ -112,7 +112,7 @@ class ActivityExecutor:
                             operation, timeout=checkpoint.timeout_seconds
                         )
                     )
-                except asyncio.TimeoutError as exc:
+                except (asyncio.TimeoutError, TimeoutError) as exc:
                     if span is not None:
                         span.set_attribute(
                             "agenda.queue_wait_seconds",
@@ -196,7 +196,7 @@ class ActivityExecutor:
                 summary=scope.summary,
             )
             raise
-        except asyncio.TimeoutError as exc:
+        except (asyncio.TimeoutError, TimeoutError) as exc:
             checkpoint.state = "uncertain" if checkpoint.side_effecting else "planned"
             checkpoint.result_summary = (
                 f"Step timed out after {checkpoint.timeout_seconds} seconds."

@@ -14,6 +14,7 @@ from src.open_llm_vtuber.autonomy.agenda import create_entry
 from src.open_llm_vtuber.autonomy.driver import (
     _agenda_step_metadata,
     _agenda_step_text,
+    _execute_validated_tool,
     _publish_completion,
 )
 from src.open_llm_vtuber.conversations.llm_request_queue import (
@@ -248,6 +249,110 @@ async def test_execution_timeout_reports_queue_and_execution_timings():
     finally:
         queue.stop()
         await asyncio.sleep(0)
+
+
+async def test_timed_out_work_is_disposed_before_caller_can_retry():
+    queue = ClientRequestQueue("execution-timeout-retry-test")
+    queue.start()
+
+    async def slow_work() -> None:
+        await asyncio.Event().wait()
+
+    async def quick_work() -> str:
+        return "retried"
+
+    try:
+        with pytest.raises(QueueExecutionTimeout) as caught:
+            await queue.enqueue_and_wait(
+                coro_factory=slow_work,
+                priority=PRIORITY_PASSIVE,
+                label="slow-work",
+                dedupe_key="stable-step",
+                execution_timeout_seconds=0.01,
+                timeout_stage="tool_execution",
+            )
+        assert caught.value.timeout_stage == "tool_execution"
+
+        assert (
+            await queue.enqueue_and_wait(
+                coro_factory=quick_work,
+                priority=PRIORITY_PASSIVE,
+                label="retried-work",
+                dedupe_key="stable-step",
+                execution_timeout_seconds=1,
+            )
+            == "retried"
+        )
+    finally:
+        queue.stop()
+        await asyncio.sleep(0)
+
+
+async def test_validated_tool_step_executes_exact_call_without_agent_turn():
+    class FakeToolExecutor:
+        def __init__(self):
+            self.calls = []
+
+        async def execute_tools(self, calls, caller_mode):
+            self.calls.append((calls, caller_mode))
+            yield {"type": "tool_call_status", "status": "running"}
+            yield {
+                "type": "final_tool_results",
+                "results": [
+                    {
+                        "tool_id": calls[0]["id"],
+                        "content": "Found the unread message.",
+                        "is_error": False,
+                    }
+                ],
+            }
+
+    executor = FakeToolExecutor()
+    checkpoint = SimpleNamespace(
+        step_id="step-1",
+        required_capability="search_emails",
+        arguments={"query": "is:unread", "max_results": 5},
+    )
+
+    result = await _execute_validated_tool(executor, checkpoint)
+
+    assert result == "Found the unread message."
+    assert executor.calls == [
+        (
+            [
+                {
+                    "id": "agenda_tool_step-1",
+                    "name": "search_emails",
+                    "args": {"query": "is:unread", "max_results": 5},
+                }
+            ],
+            "Prompt",
+        )
+    ]
+
+
+async def test_validated_tool_step_propagates_tool_failure():
+    class FailingToolExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del calls, caller_mode
+            yield {
+                "type": "final_tool_results",
+                "results": [
+                    {
+                        "content": "mailbox unavailable",
+                        "is_error": True,
+                    }
+                ],
+            }
+
+    checkpoint = SimpleNamespace(
+        step_id="step-2",
+        required_capability="search_emails",
+        arguments={},
+    )
+
+    with pytest.raises(RuntimeError, match="mailbox unavailable"):
+        await _execute_validated_tool(FailingToolExecutor(), checkpoint)
 
 
 def test_agenda_step_extracts_text_from_agent_turn_result():

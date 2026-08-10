@@ -21,6 +21,7 @@ from src.open_llm_vtuber.autonomy.activity import (
     ActivityRunResult,
     ActivityStepTimeout,
 )
+from src.open_llm_vtuber.conversations.llm_request_queue import QueueExecutionTimeout
 
 
 def pursuit(**overrides):
@@ -378,6 +379,72 @@ async def test_activity_trace_records_content_free_latency_breakdown(
     assert 0 <= attributes["agenda.pacing_sleep_seconds"] < 0.01
     assert attributes["agenda.execution_timeout_seconds"] == 30
     assert "private result" not in repr(attributes)
+
+
+@pytest.mark.asyncio
+async def test_activity_timeout_trace_records_tool_stage_and_timings(tmp_path):
+    class Span:
+        def __init__(self):
+            self.attributes = {}
+
+        def set_attribute(self, key, value):
+            self.attributes[key] = value
+
+    class TraceContext:
+        def __init__(self, span):
+            self.span = span
+
+        def __enter__(self):
+            return self.span
+
+        def __exit__(self, *_args):
+            return False
+
+    class Tracer:
+        def __init__(self):
+            self.last_span = Span()
+
+        def span(self, *_args, **_kwargs):
+            return TraceContext(self.last_span)
+
+    store = AgendaStore(tmp_path)
+    entry = pursuit(status="active")
+    store.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="timed-out-tool",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="search_emails",
+        plausible_duration_seconds=15,
+        timeout_seconds=30,
+    )
+
+    async def times_out(_entry, _checkpoint):
+        raise QueueExecutionTimeout(
+            30,
+            queue_wait_seconds=1.25,
+            execution_seconds=30.0,
+            timeout_stage="tool_execution",
+        )
+
+    tracer = Tracer()
+    executor = ActivityExecutor(
+        store,
+        times_out,
+        lambda _payload: _noop(),
+        tracer=tracer,
+        run_step_enforces_timeout=True,
+    )
+
+    with pytest.raises(ActivityStepTimeout):
+        await executor.execute(entry, checkpoint)
+
+    attributes = tracer.last_span.attributes
+    assert attributes["agenda.queue_wait_seconds"] == 1.25
+    assert attributes["agenda.execution_seconds"] == 30.0
+    assert attributes["agenda.pacing_sleep_seconds"] == 0.0
+    assert attributes["agenda.execution_timeout_seconds"] == 30
+    assert attributes["agenda.timeout_stage"] == "tool_execution"
 
 
 async def _noop():
