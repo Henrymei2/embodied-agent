@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -26,6 +26,7 @@ from .autonomy.agenda import (
 )
 from .autonomy.triggers import TriggerEnvelope, TriggerReference, publish_trigger
 from .scene_state import reset_scene_state
+from .utils.timezone import get_local_tz, now_local
 
 SCENARIO_PROTOCOL_VERSION = 1
 RUN_FILENAME = "vr_demo_scenario.json"
@@ -67,20 +68,21 @@ EMAIL_CHANGES_PLAN = ScenarioDefinition(
     title="An Email Changes the Agent's Plan",
     summary="A simulated meeting update interrupts background work and changes the agent's plan.",
     description=(
-        "The agent notices a newly unread email, inspects the changed meeting, "
-        "checks the calendar conflict, and prepares a possible response at the "
-        "existing approval boundary."
+        "The agent notices a newly unread email at the mailbox, reads the changed "
+        "meeting, verifies the calendar conflict, prepares a draft reply, and "
+        "leaves a pending action at the writing desk before reporting the outcome."
     ),
     setup=(
-        "Reset the current VR room to its default layout.",
-        "End unfinished autonomous work and begin a safe bookshelf review.",
-        "Load local simulated Gmail and Calendar data; real Google data is untouched.",
+        "Reset the current VR room to its default layout (mailbox, calendar, and writing desk ready).",
+        "End unfinished autonomous work and begin a safe, unrelated bookshelf review.",
+        "Load local simulated Gmail with one unread meeting-moved email and a Calendar review event for tomorrow; real Google data is untouched.",
     ),
     sequence=(
-        "A simulated unread email arrives while the agent is occupied.",
-        "The agent suspends interruptible background work and investigates at the mailbox/computer.",
-        "The agent checks the conflicting calendar review and prepares a proposed reply.",
-        "Irreversible or communicative changes remain behind the approval boundary.",
+        "A simulated unread email arrives while the agent is occupied with the bookshelf review.",
+        "The agent notices it without prompting, suspends background work, and walks to the mailbox to read the email.",
+        "The agent determines the email affects an existing meeting and walks to the calendar to verify the conflict.",
+        "The agent returns to the mailbox to draft a reply, then walks to the writing desk to leave a pending action for the user.",
+        "The agent reports the outcome; sending the reply remains behind the approval boundary.",
     ),
     demonstrates=(
         "event-driven behavior",
@@ -374,12 +376,26 @@ def scenario_state_payload(
     }
 
 
-def simulated_fixture(workspace_root: Path | None = None) -> dict[str, Any] | None:
+def simulated_fixture(
+    workspace_root: Path | None = None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
     """Return local tool data only while the simulated scenario is active."""
     root = workspace_root or agenda_workspace_root()
     run = ScenarioStore(root).load()
     if run is None or not run.active or run.scenario_id != EMAIL_CHANGES_PLAN.id:
         return None
+    base = now or now_local()
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=get_local_tz())
+    else:
+        base = base.astimezone(get_local_tz())
+    review_start = (base + timedelta(days=1)).replace(
+        hour=15, minute=0, second=0, microsecond=0
+    )
+    review_end = review_start + timedelta(minutes=30)
+    conflict_date = review_start.date().isoformat()
     return {
         "run_id": run.run_id,
         "simulated": True,
@@ -389,12 +405,13 @@ def simulated_fixture(workspace_root: Path | None = None) -> dict[str, Any] | No
             "from": "Jordan Lee <jordan@example.test>",
             "to": "You <you@example.test>",
             "subject": "Project sync moved to 3:00 PM",
-            "date": "2026-08-10T15:00:00-05:00",
-            "snippet": "The project sync moved earlier and now overlaps your review.",
+            "date": base.isoformat(),
+            "snippet": "The project sync moved and now overlaps your review.",
             "labels": ["INBOX", "UNREAD", "SIMULATED"],
             "body": (
-                "The project sync has moved to 3:00 PM tomorrow. I noticed your "
-                "review is already scheduled then. Would 3:30 PM work instead?"
+                "The project sync has moved to 3:00 PM tomorrow "
+                f"({conflict_date}). I noticed your review is already scheduled "
+                "then. Would 3:30 PM work instead?"
             ),
             "simulated": True,
         },
@@ -402,8 +419,8 @@ def simulated_fixture(workspace_root: Path | None = None) -> dict[str, Any] | No
             {
                 "event_id": "scenario-review-conflict",
                 "title": "Project review",
-                "start": "2026-08-10T15:00:00-05:00",
-                "end": "2026-08-10T15:30:00-05:00",
+                "start": review_start.isoformat(),
+                "end": review_end.isoformat(),
                 "all_day": False,
                 "notes": "Existing review that conflicts with the moved project sync.",
                 "created_at": None,

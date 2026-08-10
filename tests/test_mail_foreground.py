@@ -108,6 +108,8 @@ def test_gmail_policy_is_foreground_for_real_and_simulated_events(tmp_path):
         assert policy.queue_priority == 10
         assert policy.preempt_interruptible_background is True
         assert policy.force_report is True
+        assert "writing desk" in policy.directive
+        assert "draft" in policy.directive
 
     spoofed = AgendaStore(tmp_path / "spoofed").publish_event(
         idempotency_key="spoofed",

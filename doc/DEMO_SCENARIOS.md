@@ -21,11 +21,19 @@ These scenarios can be more scripted, complex, and polished. They should emphasi
 1. An Email Changes the Agent’s Plan
 Setup
 
-furnitures
-- gmail
-- calendar
+Furniture in the room
+- mailbox — Gmail tools live here; it shows an unread state when the email arrives
+- calendar — the existing review event is visible and queryable here
+- writing desk (planning desk) — pending plans/actions appear here for the user
+- bookshelf — where the agent starts its unrelated background activity
 
-The agent is initially doing something unrelated.
+Preloaded simulated data
+- Calendar already contains “Project review” tomorrow 15:00–15:30.
+- Gmail holds one unread message: “Project sync moved to 3:00 PM” (the sync moved
+  into the review window; the sender asks whether 3:30 PM works instead).
+
+Initial state
+- The agent is doing something unrelated: reviewing project notes at the bookshelf.
 
 Sequence
 A new email arrives.
@@ -33,7 +41,8 @@ The agent notices the notification without being prompted.
 It walks to the mailbox and reads the email.
 It realizes that the email affects an existing meeting or deadline.
 It walks to the calendar to inspect the conflict.
-It drafts a response and go to planning desk, leaving a pending action for the user.
+It returns to the mailbox to draft a reply, then walks to the writing desk,
+leaving a pending action for the user.
 
 After sequence is finished, the agent should report the result to speak for example:
 

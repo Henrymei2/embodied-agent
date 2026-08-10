@@ -1,5 +1,7 @@
 import asyncio
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -52,6 +54,22 @@ def test_catalog_exposes_only_the_authored_demo_scenario(tmp_path):
     assert [item["id"] for item in payload["scenarios"]] == [EMAIL_CHANGES_PLAN.id]
     assert payload["scenarios"][0]["simulated"] is True
     assert "runner" not in payload["scenarios"][0]
+
+
+def test_scenario_definition_describes_the_full_autonomous_chain(tmp_path):
+    scenario = scenario_state_payload(AgendaStore(tmp_path))["scenarios"][0]
+    setup_text = " ".join(scenario["setup"])
+    sequence_text = " ".join(scenario["sequence"])
+
+    assert "mailbox" in setup_text
+    assert "calendar" in setup_text
+    assert "writing desk" in setup_text
+    assert "bookshelf" in setup_text
+    assert "mailbox" in sequence_text
+    assert "calendar" in sequence_text
+    assert "writing desk" in sequence_text
+    assert "draft" in sequence_text
+    assert "report" in sequence_text
 
 
 def test_start_resets_only_after_safe_agenda_cleanup(tmp_path, monkeypatch):
@@ -158,6 +176,10 @@ def test_cancel_withdraws_event_and_abandons_owned_background_work(
 
 def test_simulated_google_data_and_writes_are_workspace_local(tmp_path, monkeypatch):
     monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.demo_scenarios.get_local_tz",
+        lambda: ZoneInfo("America/Chicago"),
+    )
     store = ScenarioStore(tmp_path)
     store.save(
         ScenarioRun(
@@ -169,8 +191,17 @@ def test_simulated_google_data_and_writes_are_workspace_local(tmp_path, monkeypa
             start_request_id="request-one",
         )
     )
-    fixture = simulated_fixture()
+    fixed_now = datetime(2026, 8, 10, 15, 0, tzinfo=ZoneInfo("America/Chicago"))
+    fixture = simulated_fixture(now=fixed_now)
     assert fixture["simulated"] is True
+    assert fixture["email"]["date"] == "2026-08-10T15:00:00-05:00"
+    assert fixture["email"]["snippet"] == (
+        "The project sync moved and now overlaps your review."
+    )
+    assert fixture["events"][0]["event_id"] == "scenario-review-conflict"
+    assert fixture["events"][0]["start"] == "2026-08-11T15:00:00-05:00"
+    assert fixture["events"][0]["end"] == "2026-08-11T15:30:00-05:00"
+    assert "2026-08-11" in fixture["email"]["body"]
     assert "3:30 PM" in fixture["email"]["body"]
     record = record_simulated_write("gmail", {"action": "create_draft"})
     assert record["simulated"] is True
