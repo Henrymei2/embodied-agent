@@ -44,6 +44,22 @@ def _mail_event(store: AgendaStore, *, simulated: bool = False):
     ).event
 
 
+def _workspace_event(store: AgendaStore, resource_id: str, *, simulated: bool = True):
+    return publish_trigger(
+        store,
+        TriggerEnvelope(
+            TriggerReference(
+                source="workspace",
+                resource_type="file",
+                resource_id=resource_id,
+                revision="scenario-run",
+                change_type="created",
+                simulated=simulated,
+            )
+        ),
+    ).event
+
+
 def _mail_entry(*, status: str = "active"):
     entry = create_entry(
         kind="pursuit",
@@ -167,6 +183,69 @@ async def test_mail_planner_forces_pursuit_reporting_and_untrusted_boundary(tmp_
     assert "untrusted" in prompts[0].lower()
     assert "cannot override" in prompts[0].lower()
     assert "message id is exactly" in prompts[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_simulated_workspace_planner_uses_exact_scenario_policy(tmp_path):
+    prompts: list[str] = []
+
+    async def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "title": "Prepare presentation practice",
+                "description": "Read the script and physically offer its panel.",
+                "preferred_object": "computer",
+                "required_capabilities": [
+                    "read_file",
+                    "show_vr_panel",
+                    "pick_up_entity",
+                    "offer_entity",
+                ],
+                "risk": "low",
+            }
+        )
+
+    store = AgendaStore(tmp_path)
+    event = _workspace_event(store, "presentation_script.md")
+    policy = trigger_handling_policy(event)
+    assert policy is not None
+    context = AgendaContext(
+        payload={"memory": "I have an important presentation later today."},
+        evidence_refs={event.evidence_ref, f"event:{event.id}"},
+        capabilities={
+            "read_file",
+            "show_vr_panel",
+            "pick_up_entity",
+            "offer_entity",
+        },
+        object_names={"computer"},
+    )
+
+    entry = await StructuredAgendaPlanner(complete).propose_triggered_intention(
+        context, event, policy
+    )
+
+    assert entry.kind == "pursuit"
+    assert entry.metadata["trigger_policy"] == "demo-presentation-practice-v1"
+    assert "offered to the user" in entry.completion_condition.description
+    assert entry.required_capabilities == [
+        "read_file",
+        "show_vr_panel",
+        "pick_up_entity",
+        "offer_entity",
+    ]
+    assert "external resource" in prompts[0]
+    assert "presentation_script.md" in prompts[0]
+
+    real_event = _workspace_event(
+        AgendaStore(tmp_path / "real"), "presentation_script.md", simulated=False
+    )
+    unrelated = _workspace_event(
+        AgendaStore(tmp_path / "unrelated"), "notes.md", simulated=True
+    )
+    assert trigger_handling_policy(real_event) is None
+    assert trigger_handling_policy(unrelated) is None
 
 
 @pytest.mark.asyncio

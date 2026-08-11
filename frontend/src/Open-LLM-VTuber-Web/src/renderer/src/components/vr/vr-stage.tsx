@@ -13,6 +13,7 @@ import { useAgentActivity } from "@/context/agent-activity-context";
 import { useWebSocket } from "@/context/websocket-context";
 import {
   initialVrScenarioMenuPage,
+  nextVrScenarioIndex,
   nextVrScenarioMenuPage,
   useVrScenario,
   VrScenarioMenuAction,
@@ -119,6 +120,7 @@ interface VrRuntime {
   scenarioPanel: THREE.Mesh;
   scenarioMenuOpen: boolean;
   scenarioPage: VrScenarioMenuPage;
+  scenarioIndex: number;
   aPressed: boolean;
   renderScenarioMenu: () => void;
   panelViews: Map<string, VrPanelViewState>;
@@ -649,6 +651,7 @@ export default function VrStage() {
       grabbed: null, poseSequence: 0, eventSequence: 0, lastPoseSentAt: 0, lastPose: null,
       hoveredSelectable: null,
       scenarioMenu, scenarioPanel, scenarioMenuOpen: false, scenarioPage: "catalog",
+      scenarioIndex: 0,
       aPressed: false, renderScenarioMenu: () => undefined,
       panelViews: new Map(), scrollDirection: 0, scrollNextAt: 0,
     };
@@ -691,9 +694,15 @@ export default function VrStage() {
       [...runtime.panels.keys()].forEach((nodeId) => closePanel(nodeId));
     };
 
-    const addScenarioButton = (label: string, action: string, x: number, color: number) => {
+    const addScenarioButton = (
+      label: string,
+      action: string,
+      x: number,
+      color: number,
+      width = 0.58,
+    ) => {
       const button = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.58, 0.15),
+        new THREE.PlaneGeometry(width, 0.15),
         new THREE.MeshBasicMaterial({
           map: canvasTexture([label], 384, 100), transparent: true, depthTest: false, color,
         }),
@@ -711,12 +720,19 @@ export default function VrStage() {
         disposeObject(child);
       }
       const state = scenarioStateRef.current;
-      const definition = state.scenarios[0];
       const run = state.active_run;
+      const scenarioCount = state.scenarios.length;
+      runtime.scenarioIndex = scenarioCount > 0
+        ? ((runtime.scenarioIndex % scenarioCount) + scenarioCount) % scenarioCount
+        : 0;
+      const definition = state.scenarios[runtime.scenarioIndex];
+      const runDefinition = run
+        ? state.scenarios.find((scenario) => scenario.id === run.scenario_id)
+        : undefined;
       let lines: string[];
       if (run && runtime.scenarioPage === "status") {
         lines = [
-          definition?.title || "VR test scenario",
+          runDefinition?.title || "VR test scenario",
           "SIMULATED · LIVE STATUS, NOT A SCORE",
           `Phase: ${run.phase.replace(/_/g, " ")}`,
           run.progress_summary || "Waiting for an update…",
@@ -732,6 +748,7 @@ export default function VrStage() {
       } else if (runtime.scenarioPage === "confirm" && definition) {
         lines = [
           definition.title,
+          `Scenario ${runtime.scenarioIndex + 1} of ${scenarioCount}`,
           "SIMULATED · RESET CONFIRMATION",
           definition.reset_notice,
           "Real Google data will not be read or changed.",
@@ -743,6 +760,7 @@ export default function VrStage() {
         const active = run && ["preparing", "waiting_event", "planning", "running", "awaiting_approval", "cancelling"].includes(run.phase);
         lines = [
           "VR test scenarios",
+          `Scenario ${runtime.scenarioIndex + 1} of ${scenarioCount}`,
           definition.title,
           "SIMULATED",
           definition.summary,
@@ -753,11 +771,12 @@ export default function VrStage() {
             ? "A scenario is running. View its status or cancel it there."
             : "Select Details to review the reset and start.",
         ];
-        if (active) {
+        if (scenarioCount > 1) {
+          addScenarioButton("Previous", "previous", -0.45, 0xffffff, 0.38);
+          addScenarioButton(active ? "Status" : "Details", active ? "status" : "details", 0, 0xa5f3fc, 0.38);
+          addScenarioButton("Next", "next", 0.45, 0xffffff, 0.38);
+        } else if (active) {
           addScenarioButton("View status", "status", 0, 0xa5f3fc);
-        } else if (run) {
-          addScenarioButton("Details", "details", -0.34, 0xa5f3fc);
-          addScenarioButton("Last result", "status", 0.34, 0xffffff);
         } else {
           addScenarioButton("Details", "details", 0, 0xa5f3fc);
         }
@@ -1076,9 +1095,16 @@ export default function VrStage() {
       if (!hit) return;
       const scenarioAction = hit.object.userData.scenarioAction as VrScenarioMenuAction | undefined;
       if (scenarioAction) {
+        if (scenarioAction === "previous" || scenarioAction === "next") {
+          runtime.scenarioIndex = nextVrScenarioIndex(
+            runtime.scenarioIndex,
+            scenarioStateRef.current.scenarios.length,
+            scenarioAction,
+          );
+        }
         runtime.scenarioPage = nextVrScenarioMenuPage(runtime.scenarioPage, scenarioAction);
         if (scenarioAction === "start") {
-          const definition = scenarioStateRef.current.scenarios[0];
+          const definition = scenarioStateRef.current.scenarios[runtime.scenarioIndex];
           if (definition) scenarioStateRef.current.start(definition.id);
         }
         if (scenarioAction === "cancel") {

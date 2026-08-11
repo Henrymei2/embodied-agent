@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptVrScenarioState,
   initialVrScenarioMenuPage,
+  nextVrScenarioIndex,
   nextVrScenarioMenuPage,
   VrScenarioRun,
   VrScenarioStateMessage,
@@ -42,5 +43,14 @@ describe("VR scenario protocol state", () => {
     expect(initialVrScenarioMenuPage(null)).toBe("catalog");
     expect(nextVrScenarioMenuPage("catalog", "details")).toBe("confirm");
     expect(nextVrScenarioMenuPage("confirm", "start")).toBe("status");
+  });
+
+  it("cycles through every scenario in either direction", () => {
+    expect(nextVrScenarioIndex(0, 3, "next")).toBe(1);
+    expect(nextVrScenarioIndex(1, 3, "next")).toBe(2);
+    expect(nextVrScenarioIndex(2, 3, "next")).toBe(0);
+    expect(nextVrScenarioIndex(0, 3, "previous")).toBe(2);
+    expect(nextVrScenarioIndex(0, 0, "next")).toBe(0);
+    expect(nextVrScenarioMenuPage("catalog", "next")).toBe("catalog");
   });
 });

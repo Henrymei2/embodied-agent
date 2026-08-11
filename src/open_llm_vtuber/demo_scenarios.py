@@ -8,6 +8,7 @@ from accidentally exposing held-out benchmark material.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field
@@ -30,6 +31,7 @@ from .utils.timezone import get_local_tz, now_local
 
 SCENARIO_PROTOCOL_VERSION = 1
 RUN_FILENAME = "vr_demo_scenario.json"
+FIXTURE_FILENAME = "vr_demo_scenario_fixture.json"
 NONTERMINAL_PHASES = {
     "preparing",
     "waiting_event",
@@ -99,7 +101,85 @@ EMAIL_CHANGES_PLAN = ScenarioDefinition(
     runner="simulated_email_change",
 )
 
-SCENARIOS = {EMAIL_CHANGES_PLAN.id: EMAIL_CHANGES_PLAN}
+REMEMBER_UNFINISHED_INTENTION = ScenarioDefinition(
+    id="remember-unfinished-intention",
+    title="Remembering an Unfinished User Intention",
+    summary="A finished paper reconnects the agent with an unfinished intention from core memory.",
+    description=(
+        "The agent notices that the final paper is ready, recalls the user's "
+        "intention to notify Alex, prepares a simulated email draft, and leaves "
+        "the consequential send action at the writing desk for approval."
+    ),
+    setup=(
+        "Reset the current VR room with the computer, mailbox, and writing desk ready.",
+        "Add a reversible core-memory fixture recording the unfinished intention and Alex's simulated address.",
+        "Create final_paper.md in the agent workspace and keep all Gmail writes local to the simulated scenario.",
+    ),
+    sequence=(
+        "The finished paper becomes available and the agent connects it to the unfinished intention in core memory.",
+        "The agent walks to the computer to inspect final_paper.md, then moves to the mailbox.",
+        "The agent prepares an unsent message to Alex without contacting any real account.",
+        "Before sending, the agent moves to the writing desk and leaves a pending action for user approval.",
+        "The agent reports that the paper is ready and the message is prepared.",
+    ),
+    demonstrates=(
+        "long-term memory",
+        "opportunity detection",
+        "proactive behavior",
+        "permission boundaries",
+    ),
+    simulated=True,
+    reset_notice=(
+        "Starting resets this character's VR room and temporarily adds a core-memory "
+        "record and final_paper.md. The fixtures are restored on cancellation or "
+        "before another scenario starts."
+    ),
+    runner="simulated_finished_paper",
+)
+
+PREPARE_PRESENTATION_PRACTICE = ScenarioDefinition(
+    id="prepare-presentation-practice",
+    title="Proactively Prepares Items for the User",
+    summary="The agent turns a presentation commitment into a physical practice aid.",
+    description=(
+        "The agent relates today's presentation memory to a workspace script, reads "
+        "it at the computer, creates a VR panel, and physically offers the panel to "
+        "the user before inviting them to practice."
+    ),
+    setup=(
+        "Reset the current VR room with the computer available.",
+        "Add a reversible daily-memory fixture noting an important presentation later today.",
+        "Create presentation_script.md with a short English practice script.",
+    ),
+    sequence=(
+        "The presentation script becomes available and the agent infers a useful preparation goal.",
+        "The agent walks to the computer and reads presentation_script.md.",
+        "The agent creates a VR panel containing the script, picks it up, and offers it to the user.",
+        "Only after the physical handoff succeeds, the agent invites the user to practice presenting.",
+    ),
+    demonstrates=(
+        "asynchronous continuity",
+        "proactive preparation",
+        "environment manipulation",
+        "inference from vague user goals",
+    ),
+    simulated=True,
+    reset_notice=(
+        "Starting resets this character's VR room and temporarily adds today's "
+        "presentation memory and presentation_script.md. The fixtures are restored "
+        "on cancellation or before another scenario starts."
+    ),
+    runner="simulated_presentation_practice",
+)
+
+SCENARIOS = {
+    definition.id: definition
+    for definition in (
+        EMAIL_CHANGES_PLAN,
+        REMEMBER_UNFINISHED_INTENTION,
+        PREPARE_PRESENTATION_PRACTICE,
+    )
+}
 
 
 @dataclass
@@ -160,6 +240,193 @@ class ScenarioStore:
         return self.lock
 
 
+def _fixture_manifest_path(root: Path) -> Path:
+    return root / "agenda" / FIXTURE_FILENAME
+
+
+def _write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _fixture_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _manifest_target(root: Path, relative: object) -> Path:
+    requested = Path(str(relative or ""))
+    if requested.is_absolute() or ".." in requested.parts:
+        raise ValueError("scenario fixture path must stay inside the workspace")
+    target = (root / requested).resolve()
+    if not target.is_relative_to(root.resolve()):
+        raise ValueError("scenario fixture path escapes the workspace")
+    return target
+
+
+def _scenario_memory_block(run_id: str, text: str) -> tuple[str, str, str]:
+    begin = f"<!-- VR DEMO SCENARIO {run_id} BEGIN -->"
+    end = f"<!-- VR DEMO SCENARIO {run_id} END -->"
+    return begin, end, f"{begin}\n{text.strip()}\n{end}\n"
+
+
+def _prepare_scenario_fixture(run: ScenarioRun, root: Path) -> None:
+    """Install reversible, workspace-local evidence for one authored scenario."""
+    if run.scenario_id == REMEMBER_UNFINISHED_INTENTION.id:
+        block_path = root / "MEMORY.md"
+        prepend_memory = True
+        block_text = (
+            "- When the paper is ready, remind me to send a message to Alex "
+            "(alex@example.test)."
+        )
+        fixture_files = {
+            "final_paper.md": "# Final Paper\n\nStatus: ready for submission.\n"
+        }
+    elif run.scenario_id == PREPARE_PRESENTATION_PRACTICE.id:
+        block_path = root / "memory" / f"{now_local().date().isoformat()}.md"
+        prepend_memory = False
+        block_text = "- I have an important presentation later today."
+        fixture_files = {
+            "presentation_script.md": (
+                "# Presentation Script\n\n"
+                "Good afternoon. Today I'll show how an embodied agent turns "
+                "context into action.\n\n"
+                "First, it perceives changes in its environment. Second, it "
+                "remembers unfinished intentions. Third, it prepares useful next "
+                "steps while respecting approval boundaries.\n\n"
+                "The result is an agent that feels present, continuous, and "
+                "trustworthy. Thank you.\n"
+            )
+        }
+    else:
+        return
+
+    begin, end, rendered_block = _scenario_memory_block(run.run_id, block_text)
+    block_original = (
+        block_path.read_text(encoding="utf-8") if block_path.exists() else ""
+    )
+    if prepend_memory:
+        separator = (
+            "\n" if block_original and not block_original.startswith("\n") else ""
+        )
+        inserted_block = rendered_block + separator
+        installed_memory = inserted_block + block_original
+    else:
+        separator = (
+            ""
+            if not block_original or block_original.endswith("\n\n")
+            else "\n"
+            if block_original.endswith("\n")
+            else "\n\n"
+        )
+        inserted_block = separator + rendered_block
+        installed_memory = block_original + inserted_block
+    manifest: dict[str, Any] = {
+        "version": 1,
+        "run_id": run.run_id,
+        "scenario_id": run.scenario_id,
+        "blocks": [
+            {
+                "path": block_path.relative_to(root).as_posix(),
+                "begin": begin,
+                "end": end,
+                "inserted": inserted_block,
+            }
+        ],
+        "files": [],
+    }
+    for relative, content in fixture_files.items():
+        path = _manifest_target(root, relative)
+        existed = path.exists()
+        original = path.read_text(encoding="utf-8") if existed else None
+        manifest["files"].append(
+            {
+                "path": relative,
+                "existed": existed,
+                "original_content": original,
+                "fixture_sha256": _fixture_hash(content),
+            }
+        )
+    manifest_path = _fixture_manifest_path(root)
+    if manifest_path.exists():
+        raise ValueError("another scenario fixture is still installed")
+    _write_text_atomic(
+        manifest_path,
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+    )
+    try:
+        if begin not in block_original:
+            _write_text_atomic(block_path, installed_memory)
+        for relative, content in fixture_files.items():
+            _write_text_atomic(_manifest_target(root, relative), content)
+    except Exception:
+        cleanup_scenario_fixture(root, run_id=run.run_id)
+        raise
+
+
+def cleanup_scenario_fixture(root: Path, *, run_id: str | None = None) -> list[str]:
+    """Restore a fixture without overwriting files changed during the scenario."""
+    path = _fixture_manifest_path(root)
+    if not path.exists():
+        return []
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+        raise ValueError("scenario fixture manifest is invalid")
+    if run_id is not None and manifest.get("run_id") != run_id:
+        return []
+
+    warnings: list[str] = []
+    for block in manifest.get("blocks", []):
+        if not isinstance(block, dict):
+            continue
+        target = _manifest_target(root, block.get("path"))
+        if not target.exists():
+            continue
+        content = target.read_text(encoding="utf-8")
+        inserted = block.get("inserted")
+        if isinstance(inserted, str) and inserted in content:
+            _write_text_atomic(target, content.replace(inserted, "", 1))
+            continue
+        begin = str(block.get("begin") or "")
+        end = str(block.get("end") or "")
+        start = content.find(begin)
+        finish = content.find(end, start + len(begin)) if start >= 0 else -1
+        if start >= 0 and finish >= 0:
+            finish += len(end)
+            before = content[:start].rstrip()
+            after = content[finish:].lstrip("\n")
+            restored = before + ("\n" if before and after else "") + after
+            _write_text_atomic(target, restored)
+
+    for record in manifest.get("files", []):
+        if not isinstance(record, dict):
+            continue
+        target = _manifest_target(root, record.get("path"))
+        current = target.read_text(encoding="utf-8") if target.exists() else None
+        if current is None or _fixture_hash(current) != record.get("fixture_sha256"):
+            warnings.append(
+                f"Preserved a modified scenario file instead of restoring {record.get('path')}."
+            )
+            continue
+        if record.get("existed"):
+            _write_text_atomic(target, str(record.get("original_content") or ""))
+        else:
+            target.unlink(missing_ok=True)
+
+    if warnings:
+        recovery = path.with_name(
+            f"{path.stem}.{manifest.get('run_id', 'unknown')}.recovery.json"
+        )
+        os.replace(path, recovery)
+    else:
+        path.unlink(missing_ok=True)
+    return warnings
+
+
 def _find_event(agenda: AgendaStore, event_id: str | None):
     if not event_id:
         return None
@@ -183,11 +450,13 @@ def refresh_run(store: ScenarioStore, agenda: AgendaStore) -> ScenarioRun | None
                     run.phase = "waiting_event"
                     run.progress_summary = (
                         "The simulated unread email is waiting to be noticed."
+                        if run.scenario_id == EMAIL_CHANGES_PLAN.id
+                        else "The simulated workspace file is waiting to be noticed."
                     )
                 elif event.status == "claimed":
                     run.phase = "planning"
                     run.progress_summary = (
-                        "The agent is forming an intention from the email event."
+                        "The agent is forming an intention from the scenario event."
                     )
                 elif event.status == "dead_letter":
                     run.phase = "failed"
@@ -248,6 +517,8 @@ async def start_scenario(
                 raise ScenarioConflictError(
                     "Finish the current user conversation before starting the scenario."
                 )
+            if existing is not None:
+                cleanup_scenario_fixture(agenda.root, run_id=existing.run_id)
             run = ScenarioRun(
                 run_id=f"vr-scenario-{uuid4().hex}",
                 scenario_id=scenario_id,
@@ -275,48 +546,75 @@ async def start_scenario(
         raise ScenarioConflictError(run.error) from exc
 
     reset_scene_state(conf_uid, "vr")
-    background = create_entry(
-        kind="pursuit",
-        title="Review project notes at the bookshelf",
-        description="Inspect the current project reading material without changing external state.",
-        origin="demo_scenario",
-        evidence_refs=[f"scenario:{run.run_id}"],
-        completion_condition="Summarize the available project notes.",
-        time_budget_seconds=180,
-        status="active",
-        preferred_object="bookshelf",
-        required_capabilities=["get_library"],
-        interruptibility="high",
-        report_policy="silent",
-        metadata={"scenario_run_id": run.run_id, "queue_priority": 30},
-    )
-    agenda.add(background)
+    background = None
+    if definition.runner == "simulated_email_change":
+        background = create_entry(
+            kind="pursuit",
+            title="Review project notes at the bookshelf",
+            description="Inspect the current project reading material without changing external state.",
+            origin="demo_scenario",
+            evidence_refs=[f"scenario:{run.run_id}"],
+            completion_condition="Summarize the available project notes.",
+            time_budget_seconds=180,
+            status="active",
+            preferred_object="bookshelf",
+            required_capabilities=["get_library"],
+            interruptibility="high",
+            report_policy="silent",
+            metadata={"scenario_run_id": run.run_id, "queue_priority": 30},
+        )
+        agenda.add(background)
+        trigger_reference = TriggerReference(
+            source="gmail",
+            resource_type="message",
+            resource_id="scenario-meeting-moved",
+            revision=run.run_id,
+            change_type="unread",
+            simulated=True,
+        )
+    else:
+        try:
+            _prepare_scenario_fixture(run, agenda.root)
+        except Exception as exc:
+            run.phase = "failed"
+            run.error = "The simulated workspace fixtures could not be prepared."
+            run.progress_summary = run.error
+            store.save(run)
+            raise ScenarioConflictError(run.error) from exc
+        resource_id = (
+            "final_paper.md"
+            if definition.runner == "simulated_finished_paper"
+            else "presentation_script.md"
+        )
+        trigger_reference = TriggerReference(
+            source="workspace",
+            resource_type="file",
+            resource_id=resource_id,
+            revision=run.run_id,
+            change_type="created",
+            simulated=True,
+        )
     try:
         trigger = publish_trigger(
             agenda,
-            TriggerEnvelope(
-                TriggerReference(
-                    source="gmail",
-                    resource_type="message",
-                    resource_id="scenario-meeting-moved",
-                    revision=run.run_id,
-                    change_type="unread",
-                    simulated=True,
-                )
-            ),
+            TriggerEnvelope(trigger_reference),
         )
     except Exception as exc:
-        await executive.abandon(background.id)
+        if background is not None:
+            await executive.abandon(background.id)
+        cleanup_scenario_fixture(agenda.root, run_id=run.run_id)
         run.phase = "failed"
-        run.error = "The simulated email event could not be created."
+        run.error = "The simulated scenario event could not be created."
         run.progress_summary = run.error
         store.save(run)
         raise ScenarioConflictError(run.error) from exc
-    run.background_entry_id = background.id
+    run.background_entry_id = background.id if background is not None else None
     run.event_id = trigger.event.id
     run.phase = "waiting_event"
     run.progress_summary = (
         "The simulated email arrived while background work was active."
+        if definition.runner == "simulated_email_change"
+        else f"The simulated workspace file {trigger_reference.resource_id} is ready to be noticed."
     )
     store.save(run)
     executive.wake()
@@ -354,9 +652,11 @@ async def cancel_scenario(
         )
         if current is not None and current.status not in TERMINAL_STATUSES:
             await executive.abandon(entry_id)
+    cleanup_warnings = cleanup_scenario_fixture(agenda.root, run_id=run.run_id)
     run.phase = "cancelled"
     run.progress_summary = (
         "The scenario was cancelled. The reset VR room remains active."
+        + (f" {' '.join(cleanup_warnings)}" if cleanup_warnings else "")
     )
     return store.save(run)
 
@@ -381,11 +681,29 @@ def simulated_fixture(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    """Return local tool data only while the simulated scenario is active."""
+    """Return local Google data while the corresponding simulation is installed."""
     root = workspace_root or agenda_workspace_root()
     run = ScenarioStore(root).load()
-    if run is None or not run.active or run.scenario_id != EMAIL_CHANGES_PLAN.id:
+    if run is None or run.scenario_id not in {
+        EMAIL_CHANGES_PLAN.id,
+        REMEMBER_UNFINISHED_INTENTION.id,
+    }:
         return None
+    if run.scenario_id == EMAIL_CHANGES_PLAN.id and not run.active:
+        return None
+    if run.scenario_id == REMEMBER_UNFINISHED_INTENTION.id and (
+        run.phase == "cancelled" or not _fixture_manifest_path(root).exists()
+    ):
+        return None
+    if run.scenario_id == REMEMBER_UNFINISHED_INTENTION.id:
+        return {
+            "run_id": run.run_id,
+            "scenario_id": run.scenario_id,
+            "simulated": True,
+            "google_mode": "draft_only",
+            "email": None,
+            "events": [],
+        }
     base = now or now_local()
     if base.tzinfo is None:
         base = base.replace(tzinfo=get_local_tz())
@@ -398,7 +716,9 @@ def simulated_fixture(
     conflict_date = review_start.date().isoformat()
     return {
         "run_id": run.run_id,
+        "scenario_id": run.scenario_id,
         "simulated": True,
+        "google_mode": "mailbox",
         "email": {
             "message_id": "scenario-meeting-moved",
             "thread_id": "scenario-meeting-thread",

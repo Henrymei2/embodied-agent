@@ -52,7 +52,7 @@ After sequence is finished, the agent should report the result to speak for exam
 ### Scenario 2: Remembering an Unfinished User Intention
 Setup
 
-Earlier daily memory:
+MEMORY.md:
 - “When the paper is ready, remind me to send a message to Alex.”
 
 Agent worksapce:

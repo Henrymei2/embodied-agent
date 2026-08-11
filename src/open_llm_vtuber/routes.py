@@ -174,8 +174,14 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
     async def gmail_unread_status():
         from .demo_scenarios import simulated_fixture
 
-        if simulated_fixture() is not None:
-            return JSONResponse({"has_unread": True, "simulated": True})
+        fixture = simulated_fixture()
+        if fixture is not None:
+            return JSONResponse(
+                {
+                    "has_unread": isinstance(fixture.get("email"), dict),
+                    "simulated": True,
+                }
+            )
         try:
             return JSONResponse(await run_in_threadpool(service.unread_status))
         except GoogleIntegrationError as exc:
@@ -198,11 +204,12 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
             return JSONResponse({"error": "page_token is invalid."}, status_code=400)
         fixture = simulated_fixture()
         if fixture is not None:
+            email = fixture.get("email")
             return JSONResponse(
                 {
-                    "messages": [fixture["email"]],
+                    "messages": [email] if isinstance(email, dict) else [],
                     "next_page_token": None,
-                    "has_unread": True,
+                    "has_unread": isinstance(email, dict),
                     "simulated": True,
                 }
             )
@@ -231,9 +238,13 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
             )
         fixture = simulated_fixture()
         if fixture is not None:
-            message = fixture["email"]
+            message = fixture.get("email")
             return JSONResponse(
-                {"messages": [message], "count": 1, "simulated": True}
+                {
+                    "messages": [message] if isinstance(message, dict) else [],
+                    "count": 1 if isinstance(message, dict) else 0,
+                    "simulated": True,
+                }
             )
         try:
             return JSONResponse(
@@ -257,7 +268,13 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
             )
         if simulated_fixture() is not None:
             return JSONResponse(
-                {"events": [], "count": 0, "range_start": "", "range_end": "", "simulated": True}
+                {
+                    "events": [],
+                    "count": 0,
+                    "range_start": "",
+                    "range_end": "",
+                    "simulated": True,
+                }
             )
         try:
             return JSONResponse(

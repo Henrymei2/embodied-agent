@@ -153,9 +153,10 @@ def search_emails(
     try:
         fixture = simulated_fixture()
         if fixture is not None:
+            email = fixture.get("email")
             return json.dumps(
                 {
-                    "messages": [fixture["email"]],
+                    "messages": [email] if isinstance(email, dict) else [],
                     "next_page_token": None,
                     "simulated": True,
                 },
@@ -196,10 +197,13 @@ def get_email(message_id: str) -> str:
     try:
         fixture = simulated_fixture()
         if fixture is not None:
+            email = fixture.get("email")
+            if not isinstance(email, dict):
+                return "Error: the simulated mailbox contains no messages"
             # The simulated mailbox holds exactly one message, so any requested
             # id resolves to it.  This keeps identifier hallucination inside the
             # demo instead of escaping into a real Gmail request.
-            return json.dumps(fixture["email"], ensure_ascii=False)
+            return json.dumps(email, ensure_ascii=False)
         message = (
             _messages()
             .get(userId="me", id=_text(message_id, "message_id", 1024), format="full")
@@ -222,7 +226,9 @@ async def materialize_email(message_id: str) -> str:
     try:
         fixture = simulated_fixture()
         if fixture is not None:
-            rendered = fixture["email"]
+            rendered = fixture.get("email")
+            if not isinstance(rendered, dict):
+                return "Error: the simulated mailbox contains no messages"
         else:
             message = (
                 _messages()

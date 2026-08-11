@@ -39,7 +39,21 @@ export interface VrScenarioStateMessage {
 }
 
 export type VrScenarioMenuPage = "catalog" | "confirm" | "status";
-export type VrScenarioMenuAction = "details" | "back" | "status" | "start" | "cancel";
+export type VrScenarioMenuAction =
+  | "previous" | "next" | "details" | "back"
+  | "status" | "start" | "cancel";
+
+export const nextVrScenarioIndex = (
+  current: number,
+  scenarioCount: number,
+  action: "previous" | "next",
+) => {
+  if (scenarioCount <= 0) return 0;
+  const normalized = ((current % scenarioCount) + scenarioCount) % scenarioCount;
+  return action === "next"
+    ? (normalized + 1) % scenarioCount
+    : (normalized - 1 + scenarioCount) % scenarioCount;
+};
 
 export const initialVrScenarioMenuPage = (
   activeRun: VrScenarioRun | null,
