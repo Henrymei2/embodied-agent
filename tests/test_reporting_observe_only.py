@@ -109,6 +109,8 @@ async def test_observe_only_delivers_when_budget_exhausted(monkeypatch, tmp_path
     assert outcome.delivered is True
     assert len(calls) == 1
     assert ledger.receipts[-1].override_reason == "attention budget exhausted"
+    assert ledger.receipts[-1].budget_charged is True
+    assert ledger.budget_balance == 0
 
 
 @pytest.mark.asyncio
@@ -141,3 +143,23 @@ async def test_silent_policy_never_invokes_run_report(tmp_path):
     assert outcome.delivered is True
     assert calls == []
     assert ledger.receipts[-1].status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_terminal_voice_report_overrides_silent_policy(monkeypatch, tmp_path):
+    ledger = PresenceLedger.load(tmp_path, AutonomySettings())
+    monkeypatch.setattr(
+        reporting,
+        "build_observation",
+        lambda _uid: Observation(user_present=True, presence_fresh=True),
+    )
+    entry = _entry(
+        report_policy="silent",
+        metadata={"terminal_voice_report": True},
+    )
+
+    outcome, calls, _emitted = await _deliver(ledger, entry=entry)
+
+    assert outcome.delivered is True
+    assert calls == [(entry.id, "Archived the email successfully.")]
+    assert ledger.receipts[-1].action == "speak"

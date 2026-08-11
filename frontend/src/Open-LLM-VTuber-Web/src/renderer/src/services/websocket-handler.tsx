@@ -52,7 +52,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { handleFrontendAction, setStageFromServer } = useDynamicStage();
   const { updateState: updatePresenceState, receiveReceipt } = usePresence();
   const { setConditionFromServer } = useStudyCondition();
-  const { setActivity, clearActivity } = useAgentActivity();
+  const { applyActivity, clearActivity } = useAgentActivity();
   const { mode: rendererMode } = useRendererMode();
   const {
     handleFrontendAction: handleVrFrontendAction,
@@ -123,9 +123,10 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         break;
       case 'agent_activity':
         if (message.phase) {
-          setActivity({
+          applyActivity({
             phase: message.phase,
             tools: message.tools || [],
+            label: message.label,
           });
         }
         break;
@@ -404,7 +405,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
       default:
         console.warn('Unknown message type:', message.type);
     }
-  }, [aiState, addAudioTask, appendHumanMessage, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, handleVrFrontendAction, setStageFromServer, setVrStageFromServer, resetSessionEntities, receiveVrScenarioState, selectedMode, updatePresenceState, receiveReceipt, setConditionFromServer, setActivity, clearActivity, t]);
+  }, [aiState, addAudioTask, appendHumanMessage, bgUrlContext, setAiState, setConfName, setConfUid, setCurrentHistoryUid, setHistoryList, setMessages, setSubtitleText, startMic, stopMic, setSelfUid, setGroupMembers, setIsOwner, backendSynthComplete, setBackendSynthComplete, clearResponse, handleControlMessage, appendOrUpdateToolCallMessage, interrupt, setBrowserViewData, handleFrontendAction, handleVrFrontendAction, setStageFromServer, setVrStageFromServer, resetSessionEntities, receiveVrScenarioState, selectedMode, updatePresenceState, receiveReceipt, setConditionFromServer, applyActivity, clearActivity, t]);
 
   useEffect(() => {
     if (rendererMode === 'normal' || rendererMode === 'vr') {

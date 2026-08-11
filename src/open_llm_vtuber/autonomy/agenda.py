@@ -609,35 +609,7 @@ class AgendaStore:
             if checkpoint is not None:
                 checkpoint.validate()
                 entry.checkpoint = checkpoint
-            if (
-                status in TERMINAL_STATUSES
-                and entry.metadata.get("trigger_foreground")
-                and entry.report_policy != "silent"
-                and not any(
-                    report.entry_id == entry_id and report.report_key == "completion"
-                    for report in state.reports
-                )
-            ):
-                report = ReportOutboxItem(
-                    id=f"report_{uuid.uuid4().hex}",
-                    entry_id=entry_id,
-                    summary=(
-                        entry.progress_summary
-                        or (
-                            "The email task completed."
-                            if status == "completed"
-                            else f"The email task ended with status {status}."
-                        )
-                    )[:2000],
-                )
-                state.reports.append(report)
-                entry.metadata["report_status"] = "pending"
-                self._event(
-                    state,
-                    entry_id,
-                    "report_queued",
-                    {"report_id": report.id, "report_key": "completion"},
-                )
+            self._queue_terminal_voice_report(state, entry)
             self._event(state, entry_id, "transition", {"status": status})
             return entry
 
@@ -682,35 +654,7 @@ class AgendaStore:
                     entry.metadata.pop(str(key), None)
                 else:
                     entry.metadata[str(key)] = value
-            if (
-                status in TERMINAL_STATUSES
-                and entry.metadata.get("trigger_foreground")
-                and entry.report_policy != "silent"
-                and not any(
-                    report.entry_id == entry_id and report.report_key == "completion"
-                    for report in state.reports
-                )
-            ):
-                report = ReportOutboxItem(
-                    id=f"report_{uuid.uuid4().hex}",
-                    entry_id=entry_id,
-                    summary=(
-                        entry.progress_summary
-                        or (
-                            "The email task completed."
-                            if status == "completed"
-                            else f"The email task ended with status {status}."
-                        )
-                    )[:2000],
-                )
-                state.reports.append(report)
-                entry.metadata["report_status"] = "pending"
-                self._event(
-                    state,
-                    entry_id,
-                    "report_queued",
-                    {"report_id": report.id, "report_key": "completion"},
-                )
+            self._queue_terminal_voice_report(state, entry)
             self._event(
                 state,
                 entry_id,
@@ -1029,7 +973,12 @@ class AgendaStore:
                 {"plan_id": plan_id, "status": status},
             )
 
-            if cleaned_report is not None:
+            self._queue_terminal_voice_report(state, entry)
+            if (
+                cleaned_report is not None
+                and status != "abandoned"
+                and not entry.metadata.get("terminal_voice_report")
+            ):
                 existing = next(
                     (
                         report
@@ -1123,7 +1072,9 @@ class AgendaStore:
                     continue
                 if silent_only:
                     entry = self._find(state, report.entry_id)
-                    if entry.report_policy != "silent":
+                    if entry.metadata.get("terminal_voice_report") or (
+                        entry.report_policy != "silent"
+                    ):
                         continue
                 candidate = datetime.fromisoformat(report.next_attempt_at)
                 if candidate.tzinfo is None:
@@ -1266,6 +1217,7 @@ class AgendaStore:
                     "execution_dead_lettered",
                     {"attempts": failures},
                 )
+                self._queue_terminal_voice_report(state, entry)
             else:
                 if entry.status == "active":
                     entry.status = "suspended"
@@ -1897,6 +1849,46 @@ class AgendaStore:
                 entry.progress_summary = (
                     entry.progress_summary or "Preempted by foreground work."
                 )
+
+    @classmethod
+    def _queue_terminal_voice_report(
+        cls, state: AgendaState, entry: AgendaEntry
+    ) -> None:
+        """Atomically queue one spoken result for a finished business intention."""
+        if entry.kind not in {"pursuit", "scheduled"} or entry.status not in {
+            "completed",
+            "failed",
+        }:
+            return
+        entry.metadata["terminal_voice_report"] = True
+        existing = next(
+            (
+                report
+                for report in state.reports
+                if report.entry_id == entry.id and report.report_key == "completion"
+            ),
+            None,
+        )
+        if existing is not None:
+            return
+        fallback = (
+            "The autonomous task finished."
+            if entry.status == "completed"
+            else "The autonomous task could not be completed."
+        )
+        report = ReportOutboxItem(
+            id=f"report_{uuid.uuid4().hex}",
+            entry_id=entry.id,
+            summary=(entry.progress_summary or fallback)[:2000],
+        )
+        state.reports.append(report)
+        entry.metadata["report_status"] = "pending"
+        cls._event(
+            state,
+            entry.id,
+            "report_queued",
+            {"report_id": report.id, "report_key": "completion"},
+        )
 
     @staticmethod
     def _event(

@@ -271,7 +271,9 @@ class AgendaExecutive:
                         ),
                         None,
                     )
-                    if entry is None or entry.report_policy != "silent":
+                    if entry is None or entry.metadata.get(
+                        "terminal_voice_report"
+                    ) or entry.report_policy != "silent":
                         continue
                 due = datetime.fromisoformat(report.next_attempt_at)
                 if due.tzinfo is None:
@@ -710,7 +712,10 @@ class AgendaExecutive:
             if report.status in {"pending", "delivering"}
             and (
                 (entry := entries_by_id.get(report.entry_id)) is not None
-                and entry.report_policy != "silent"
+                and (
+                    entry.metadata.get("terminal_voice_report")
+                    or entry.report_policy != "silent"
+                )
             )
         )
         if pending_user_reports >= self.settings.report_backlog_limit:
@@ -1395,10 +1400,6 @@ class AgendaExecutive:
             if deadline and utc_now() < datetime.fromisoformat(deadline):
                 return False
             self.store.transition(entry.id, "completed")
-            self.store.enqueue_report(
-                entry.id,
-                entry.progress_summary or "Idle interval completed.",
-            )
             await self.broadcast_snapshot()
             return True
         if deadline and utc_now() >= datetime.fromisoformat(deadline):
@@ -1408,8 +1409,6 @@ class AgendaExecutive:
                 "failed",
                 progress_summary=reason,
             )
-            if entry.kind != "user" and entry.report_policy != "silent":
-                self.store.enqueue_report(entry.id, reason)
             await self.broadcast_snapshot()
             return True
         if not self.connected_client and (
@@ -1565,8 +1564,6 @@ class AgendaExecutive:
                     attempts=1,
                     data={"step_kind": checkpoint.kind},
                 )
-                if entry.kind != "user" and entry.report_policy != "silent":
-                    self.store.enqueue_report(entry.id, reason)
                 await self.broadcast_snapshot()
                 return True
             checkpoint.timeout_seconds = min(
@@ -1770,8 +1767,6 @@ class AgendaExecutive:
             if self.discard_intention is not None:
                 self.discard_intention(entry.id)
             return True
-        if entry.kind != "user" and entry.report_policy != "silent":
-            self.store.enqueue_report(entry.id, result.summary)
         if self.discard_intention is not None:
             self.discard_intention(entry.id)
         await self.broadcast_snapshot()
@@ -1884,8 +1879,6 @@ class AgendaExecutive:
                             "step_id": entry.checkpoint.step_id,
                         },
                     )
-                if entry.kind != "user" and entry.report_policy != "silent":
-                    self.store.enqueue_report(entry.id, reason)
                 await self.broadcast_snapshot()
                 return
         if entry.metadata.get("quota_deferred_until"):

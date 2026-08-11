@@ -189,6 +189,9 @@ def test_pruning_deletes_terminal_entries_without_writing_memory(tmp_path):
     entry = pursuit()
     store.add(entry)
     store.transition(entry.id, "completed", progress_summary="Saved a useful note.")
+    report = store.claim_due_report()
+    assert report is not None
+    store.finish_report(report.id, delivered=True)
     assert store.prune_terminal_history(retention_entries=0) == 1
     assert store.load().entries == []
 

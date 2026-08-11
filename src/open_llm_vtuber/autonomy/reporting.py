@@ -128,6 +128,12 @@ class AgendaReporter:
 
     @staticmethod
     def _action(entry: AgendaEntry, summary: str) -> str:
+        if (
+            entry.metadata.get("terminal_voice_report")
+            and entry.kind in {"pursuit", "scheduled"}
+            and entry.status in {"completed", "failed"}
+        ):
+            return "speak"
         if entry.report_policy == "silent":
             return "silent"
         if entry.report_policy == "if_noteworthy":

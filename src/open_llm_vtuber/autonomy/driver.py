@@ -15,6 +15,7 @@ from ..agent.output_types import DisplayText
 from ..chat_history_manager import store_message
 from ..conversations.agent_activity import AgentActivityTracker
 from ..conversations.types import AgentTurnResult
+from ..utils.stream_audio import prepare_audio_payload
 from .activity import ActivityRunResult
 from .agenda import ExecutionCheckpoint, get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
@@ -175,7 +176,7 @@ async def _publish_completion(
     entry,
     summary: str,
 ) -> None:
-    """Append one Presence-approved autonomous result to the conversation."""
+    """Publish and speak one Presence-approved autonomous result without an LLM."""
     result = summary.strip() or "The autonomous task finished."
     message = f"{entry.title}\n\n{result}"[:4000]
     report_key = str(entry.metadata.get("report_delivery_key", "completion"))
@@ -209,6 +210,54 @@ async def _publish_completion(
             name=context.character_config.character_name,
             avatar=context.character_config.avatar,
             message_id=message_id,
+        )
+
+    spoken_text = result
+    translate_engine = getattr(context, "translate_engine", None)
+    if translate_engine is not None:
+        spoken_text = translate_engine.translate(spoken_text)
+
+    tts_engine = getattr(context, "tts_engine", None)
+    if tts_engine is None:
+        raise RuntimeError("Autonomous report TTS is unavailable.")
+    audio_path = None
+    try:
+        audio_path = await tts_engine.async_generate_audio(text=spoken_text)
+        if not audio_path:
+            raise RuntimeError("Autonomous report TTS returned no audio.")
+        audio_payload = prepare_audio_payload(
+            audio_path=audio_path,
+            # The idempotent autonomous-message above owns transcript display.
+            # Omitting display text here prevents the audio handler appending a
+            # duplicate chat message while still allowing normal playback.
+            display_text=None,
+            actions=None,
+        )
+        await send(
+            json.dumps(
+                {"type": "full-text", "text": result},
+                ensure_ascii=False,
+            )
+        )
+        await send(json.dumps(audio_payload, ensure_ascii=False))
+    finally:
+        if audio_path:
+            try:
+                tts_engine.remove_file(audio_path)
+            except Exception as exc:
+                logger.warning(
+                    "agenda: could not remove autonomous report audio cache: "
+                    f"{type(exc).__name__}"
+                )
+
+    # Audio has already reached the frontend, so a lost completion marker must
+    # not cause the durable outbox to replay the spoken result.
+    try:
+        await send(json.dumps({"type": "backend-synth-complete"}))
+    except Exception as exc:
+        logger.warning(
+            "agenda: audio delivered but synthesis completion marker failed: "
+            f"{type(exc).__name__}"
         )
 
 

@@ -564,14 +564,14 @@ async def test_user_preempts_active_agenda_work_without_stopping_executive(tmp_p
 @pytest.mark.parametrize(
     ("report_policy", "noteworthy", "expected_reports"),
     [
-        ("silent", True, 0),
-        ("if_noteworthy", False, 0),
+        ("silent", True, 1),
+        ("if_noteworthy", False, 1),
         ("if_noteworthy", True, 1),
         ("on_completion", False, 1),
         ("ask_first", False, 1),
     ],
 )
-async def test_completion_reporting_honors_entry_policy(
+async def test_business_completion_reporting_overrides_entry_policy(
     tmp_path,
     report_policy,
     noteworthy,

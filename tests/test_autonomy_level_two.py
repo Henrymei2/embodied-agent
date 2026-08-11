@@ -236,6 +236,77 @@ def test_report_outbox_recovers_and_delivers_once(tmp_path):
     )
 
 
+@pytest.mark.parametrize("status", ["completed", "failed"])
+@pytest.mark.parametrize("kind", ["pursuit", "scheduled"])
+def test_business_terminal_transition_always_queues_spoken_report(
+    tmp_path, kind, status
+):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(kind=kind, report_policy="silent")
+    store.add(entry)
+
+    store.transition(entry.id, status, progress_summary="Final outcome text.")
+
+    state = store.load()
+    finished = next(item for item in state.entries if item.id == entry.id)
+    reports = [item for item in state.reports if item.entry_id == entry.id]
+    assert finished.metadata["terminal_voice_report"] is True
+    assert len(reports) == 1
+    assert reports[0].report_key == "completion"
+    assert reports[0].summary == "Final outcome text."
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [("pursuit", "abandoned"), ("idle", "completed"), ("user", "failed")],
+)
+def test_non_reportable_terminal_transition_stays_silent(tmp_path, kind, status):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(kind=kind, report_policy="on_completion")
+    store.add(entry)
+
+    store.transition(entry.id, status, progress_summary="Terminal outcome.")
+
+    state = store.load()
+    finished = next(item for item in state.entries if item.id == entry.id)
+    assert "terminal_voice_report" not in finished.metadata
+    assert not [item for item in state.reports if item.entry_id == entry.id]
+
+
+def test_execution_failure_budget_queues_terminal_voice_report(tmp_path):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(report_policy="silent", status="active")
+    store.add(entry)
+
+    store.record_execution_failure(entry.id, error="provider failed", max_attempts=1)
+
+    state = store.load()
+    failed = next(item for item in state.entries if item.id == entry.id)
+    assert failed.status == "failed"
+    assert failed.metadata["terminal_voice_report"] is True
+    assert state.reports[0].summary.startswith("Execution failed repeatedly:")
+
+
+def test_headless_claim_does_not_consume_terminal_voice_report(tmp_path):
+    store = AgendaStore(tmp_path)
+    spoken = _pursuit(report_policy="silent")
+    legacy_silent = _pursuit(title="Legacy silent entry", report_policy="silent")
+    store.add(spoken)
+    store.add(legacy_silent)
+    store.transition(spoken.id, "completed", progress_summary="Speak this result.")
+    silent_report = store.enqueue_report(legacy_silent.id, "Keep this silent.")
+
+    claimed = store.claim_due_report(silent_only=True)
+
+    assert claimed is not None
+    assert claimed.id == silent_report.id
+    spoken_report = next(
+        item for item in store.load().reports if item.entry_id == spoken.id
+    )
+    assert spoken_report.status == "pending"
+    assert spoken_report.attempts == 0
+
+
 def test_headless_report_claim_leaves_spoken_delivery_for_live_client(tmp_path):
     store = AgendaStore(tmp_path)
     spoken = _pursuit(status="completed", report_policy="on_completion")

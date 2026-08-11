@@ -82,7 +82,11 @@ headset, and shows thinking, planning, or the most relevant current tool call.
 For a tool batch it prefers a running tool, then a pending tool, then the most
 recent tool, and renders the same friendly tool name used in normal mode. The
 bubble hides on the idle activity event and never exposes tool arguments or
-results. VR mode has no full chat history.
+results. While an autonomous agenda entry is executing, a second accented
+`INTENT` bubble remains in a fixed slot above the activity bubble and displays
+the bounded agenda title. Thinking and tool updates replace only the lower
+bubble; the intention remains until the terminal idle event, user preemption,
+or an error clears both surfaces. VR mode has no full chat history.
 
 VR mode excludes the normal sidebar and footer, text entry, direct fixed-
 furniture grabbing, teleportation, hand tracking, passthrough/AR, and multiplayer.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import wave
 from types import SimpleNamespace
 
 from src.open_llm_vtuber.agent.output_types import (
@@ -45,6 +46,20 @@ class FakeAgent:
             tts_text="this must never be spoken",
             actions=Actions(),
         )
+
+
+class FakeTTS:
+    def __init__(self, audio_path):
+        self.audio_path = audio_path
+        self.spoken: list[str] = []
+        self.removed: list[str] = []
+
+    async def async_generate_audio(self, text: str):
+        self.spoken.append(text)
+        return str(self.audio_path)
+
+    def remove_file(self, path: str):
+        self.removed.append(path)
 
 
 class _TextLLM:
@@ -652,7 +667,7 @@ def test_agenda_step_propagates_agent_turn_failure():
 
 
 async def test_autonomous_completion_reaches_live_and_persisted_conversation(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ):
     import json
 
@@ -660,6 +675,13 @@ async def test_autonomous_completion_reaches_live_and_persisted_conversation(
     stored: list[dict] = []
     context = _context()
     context.history_uid = "current-history"
+    audio_path = tmp_path / "completion.wav"
+    with wave.open(str(audio_path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16_000)
+        wav.writeframes((1000).to_bytes(2, "little", signed=True) * 800)
+    context.tts_engine = FakeTTS(audio_path)
     entry = create_entry(
         kind="pursuit",
         title="Finished background research",
@@ -692,7 +714,60 @@ async def test_autonomous_completion_reaches_live_and_persisted_conversation(
     assert sent[0]["display_text"]["text"] == (
         "Finished background research\n\nFound a useful source and saved the key point."
     )
+    assert sent[1] == {
+        "type": "full-text",
+        "text": "Found a useful source and saved the key point.",
+    }
+    assert sent[2]["type"] == "audio"
+    assert sent[2]["audio"]
+    assert sent[2]["display_text"] is None
+    assert sent[3] == {"type": "backend-synth-complete"}
+    assert context.tts_engine.spoken == [
+        "Found a useful source and saved the key point."
+    ]
+    assert context.tts_engine.removed == [str(audio_path)]
     assert stored[0]["history_uid"] == "current-history"
     assert stored[0]["role"] == "ai"
     assert stored[0]["content"] == sent[0]["display_text"]["text"]
     assert stored[0]["message_id"] == sent[0]["message_id"]
+
+
+async def test_autonomous_completion_tts_failure_remains_retryable(monkeypatch):
+    sent: list[dict] = []
+    context = _context()
+
+    class BrokenTTS:
+        async def async_generate_audio(self, text: str):
+            del text
+            raise RuntimeError("synthesis unavailable")
+
+    context.tts_engine = BrokenTTS()
+    entry = create_entry(
+        kind="pursuit",
+        title="Finished background research",
+        description="Review one useful source.",
+        origin="autonomous",
+        evidence_refs=["memory:today.md"],
+        completion_condition="One source was reviewed.",
+        time_budget_seconds=60,
+    )
+
+    async def send(payload: str) -> None:
+        import json
+
+        sent.append(json.loads(payload))
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.autonomy.driver.store_message", lambda **_kwargs: None
+    )
+
+    with pytest.raises(RuntimeError, match="synthesis unavailable"):
+        await _publish_completion(
+            send=send,
+            context=context,
+            conf_uid="test-character",
+            entry=entry,
+            summary="Found the requested result.",
+        )
+
+    assert [item["type"] for item in sent] == ["autonomous-message"]

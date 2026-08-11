@@ -37,6 +37,10 @@ import {
   friendlyToolName,
   selectCurrentActivityTool,
 } from "./agent-activity-presentation";
+import {
+  reduceAgentActivityState,
+  type AgentActivityState,
+} from "../context/agent-activity-context";
 
 describe("VR spatial helpers", () => {
   it("defaults VR selection highlighting on and parses a persisted opt-out", () => {
@@ -103,6 +107,48 @@ describe("VR spatial helpers", () => {
       { phase: "idle", tools: [] },
       { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
     )).toBeNull();
+  });
+
+  it("keeps an autonomy intention separate from lower-level activity", () => {
+    let state: AgentActivityState = {
+      activity: { phase: "thinking", tools: [] },
+      intention: null,
+    };
+    state = reduceAgentActivityState(state, {
+      phase: "plan",
+      label: "  Archive old emails  ",
+      tools: [],
+    });
+    expect(state).toEqual({
+      activity: { phase: "idle", tools: [] },
+      intention: { label: "Archive old emails" },
+    });
+
+    const tools = [{
+      tool_id: "archive",
+      tool_name: "archive_email",
+      status: "running" as const,
+    }];
+    state = reduceAgentActivityState(state, { phase: "tools", tools });
+    expect(state.activity).toEqual({ phase: "tools", tools });
+    expect(state.intention).toEqual({ label: "Archive old emails" });
+
+    state = reduceAgentActivityState(state, { phase: "thinking", tools: [] });
+    expect(state.intention).toEqual({ label: "Archive old emails" });
+
+    state = reduceAgentActivityState(state, { phase: "idle", tools: [] });
+    expect(state).toEqual({
+      activity: { phase: "idle", tools: [] },
+      intention: null,
+    });
+  });
+
+  it("retains an active intention with a blank fallback label", () => {
+    const state = reduceAgentActivityState(
+      { activity: { phase: "idle", tools: [] }, intention: null },
+      { phase: "plan", label: "   ", tools: [] },
+    );
+    expect(state.intention).toEqual({ label: "" });
   });
 
   it("derives secure browser endpoints and registers renderer mode", () => {

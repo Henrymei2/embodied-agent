@@ -43,12 +43,15 @@ const CLOSE_DELAY_MS = 140;
 
 function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
   const { t } = useTranslation();
-  const { activity } = useAgentActivity();
+  const { activity, intention } = useAgentActivity();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  if (activity.phase === "idle") return null;
+  if (activity.phase === "idle" && !intention) return null;
 
   const tools = activity.tools;
-  const label = activity.phase === "planning"
+  const intentionOnly = activity.phase === "idle" && intention !== null;
+  const label = intentionOnly
+    ? intention.label || t("agentActivity.executingPlan")
+    : activity.phase === "planning"
     ? t("agentActivity.planningNext")
     : activity.phase === "thinking"
       ? t("agentActivity.thinking")
@@ -107,8 +110,8 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
           height: "6px",
           flexShrink: 0,
           borderRadius: "full",
-          bg: ["thinking", "planning", "plan"].includes(activity.phase) ? accent[400] : "#7bdda1",
-          boxShadow: ["thinking", "planning", "plan"].includes(activity.phase)
+          bg: intentionOnly || ["thinking", "planning", "plan"].includes(activity.phase) ? accent[400] : "#7bdda1",
+          boxShadow: intentionOnly || ["thinking", "planning", "plan"].includes(activity.phase)
             ? `0 0 10px ${accent.glow}`
             : "0 0 10px rgba(123,221,161,0.75)",
           animation: "pulse 1.8s ease-in-out infinite",

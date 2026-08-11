@@ -93,6 +93,8 @@ interface VrRuntime {
   systemHudTexture: THREE.Texture;
   activityBubble: THREE.Mesh;
   activityBubbleTexture: THREE.Texture;
+  intentionBubble: THREE.Mesh;
+  intentionBubbleTexture: THREE.Texture;
   turnArmed: boolean;
   xPressed: boolean;
   lastFrame: number;
@@ -356,6 +358,45 @@ function activityBubbleTexture(label: string) {
   return texture;
 }
 
+function intentionBubbleTexture(label: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1280;
+  canvas.height = 256;
+  const context = canvas.getContext("2d")!;
+  const background = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  background.addColorStop(0, "rgba(30, 27, 75, 0.97)");
+  background.addColorStop(1, "rgba(15, 23, 42, 0.96)");
+  roundedRect(context, 8, 8, canvas.width - 16, canvas.height - 16, 60);
+  context.fillStyle = background;
+  context.fill();
+  context.strokeStyle = "rgba(103, 232, 249, 0.72)";
+  context.lineWidth = 5;
+  context.stroke();
+
+  context.fillStyle = "#67e8f9";
+  context.font = "750 30px system-ui, sans-serif";
+  context.letterSpacing = "4px";
+  context.fillText("INTENT", 64, 72);
+  context.letterSpacing = "0px";
+
+  context.fillStyle = "#f8fafc";
+  context.font = "650 54px system-ui, sans-serif";
+  const maxTextWidth = canvas.width - 128;
+  let visibleLabel = label;
+  while (visibleLabel.length > 1 && context.measureText(`${visibleLabel}…`).width > maxTextWidth) {
+    visibleLabel = visibleLabel.slice(0, -1);
+  }
+  if (visibleLabel !== label) visibleLabel = `${visibleLabel.trimEnd()}…`;
+  context.fillText(visibleLabel, 64, 172);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export default function VrStage() {
   const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -367,7 +408,7 @@ export default function VrStage() {
   const { micOn, startMic, stopMic } = useVAD();
   const micRef = useRef(micOn);
   const { subtitleText, showSubtitle } = useSubtitle();
-  const { activity } = useAgentActivity();
+  const { activity, intention } = useAgentActivity();
   const { baseUrl, wsState } = useWebSocket();
   const scenarioState = useVrScenario();
   const scenarioStateRef = useRef(scenarioState);
@@ -551,6 +592,22 @@ export default function VrStage() {
     activityBubble.raycast = () => undefined;
     scene.add(activityBubble);
 
+    const initialIntentionBubbleTexture = intentionBubbleTexture("");
+    const intentionBubble = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.04, 0.208),
+      new THREE.MeshBasicMaterial({
+        map: initialIntentionBubbleTexture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    );
+    intentionBubble.renderOrder = 91;
+    intentionBubble.visible = false;
+    intentionBubble.raycast = () => undefined;
+    scene.add(intentionBubble);
+
     const scenarioMenu = new THREE.Group();
     scenarioMenu.position.set(0, 0, -1.55);
     scenarioMenu.visible = false;
@@ -573,6 +630,7 @@ export default function VrStage() {
       raycaster: new THREE.Raycaster(undefined, undefined, 0, VR_RAY_MAX_DISTANCE), controllers, hud, hudTexture,
       systemHud, systemHudTexture,
       activityBubble, activityBubbleTexture: initialActivityBubbleTexture,
+      intentionBubble, intentionBubbleTexture: initialIntentionBubbleTexture,
       turnArmed: true, xPressed: false, lastFrame: performance.now(),
       collisionNodes: [],
       panelGenerations: new Map(), dismissedPanels: new Set(),
@@ -1261,10 +1319,8 @@ export default function VrStage() {
         visuals.chest.scale.setScalar(1 + Math.max(0, pulse) * 0.08);
         visuals.halo.rotation.z = time * 0.00012;
 
-        if (runtime.activityBubble.visible) {
-          const bubblePosition = runtime.avatar.getWorldPosition(new THREE.Vector3());
-          bubblePosition.y += seated ? 1.48 : 1.7;
-          runtime.activityBubble.position.copy(bubblePosition);
+        if (runtime.activityBubble.visible || runtime.intentionBubble.visible) {
+          const avatarPosition = runtime.avatar.getWorldPosition(new THREE.Vector3());
           const rigOrientation = rig.getWorldQuaternion(new THREE.Quaternion());
           const headsetPosition = liveViewerPose
             ? viewerWorldPositionFromPose(
@@ -1274,12 +1330,27 @@ export default function VrStage() {
             )
             : viewerPoseCamera(renderer.xr.getCamera())
               .getWorldPosition(new THREE.Vector3());
-          runtime.activityBubble.quaternion.copy(
-            facingQuaternion(
-              bubblePosition,
-              new THREE.Vector3(headsetPosition.x, headsetPosition.y, headsetPosition.z),
-            ),
+          const headsetTarget = new THREE.Vector3(
+            headsetPosition.x,
+            headsetPosition.y,
+            headsetPosition.z,
           );
+          if (runtime.activityBubble.visible) {
+            const activityPosition = avatarPosition.clone();
+            activityPosition.y += seated ? 1.48 : 1.7;
+            runtime.activityBubble.position.copy(activityPosition);
+            runtime.activityBubble.quaternion.copy(
+              facingQuaternion(activityPosition, headsetTarget),
+            );
+          }
+          if (runtime.intentionBubble.visible) {
+            const intentionPosition = avatarPosition.clone();
+            intentionPosition.y += seated ? 1.73 : 1.95;
+            runtime.intentionBubble.position.copy(intentionPosition);
+            runtime.intentionBubble.quaternion.copy(
+              facingQuaternion(intentionPosition, headsetTarget),
+            );
+          }
         }
       }
       if (currentStage) {
@@ -1807,6 +1878,21 @@ export default function VrStage() {
     runtime.activityBubbleTexture.dispose();
     runtime.activityBubbleTexture = next;
   }, [activity, t, xrSession]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) return;
+    const intentionText = intention
+      ? intention.label || t("agentActivity.executingPlan")
+      : "";
+    runtime.intentionBubble.visible = Boolean(intentionText);
+    if (!intentionText) return;
+    const next = intentionBubbleTexture(intentionText);
+    (runtime.intentionBubble.material as THREE.MeshBasicMaterial).map = next;
+    (runtime.intentionBubble.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    runtime.intentionBubbleTexture.dispose();
+    runtime.intentionBubbleTexture = next;
+  }, [intention, t, xrSession]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
