@@ -18,7 +18,8 @@ Part I — Pre-Recorded Scenarios
 
 These scenarios can be more scripted, complex, and polished. They should emphasize autonomy, continuity, and the relationship between the agent and its environment.
 
-1. An Email Changes the Agent’s Plan
+### Scenario 1: An Email Changes the Agent’s Plan
+
 Setup
 
 Furniture in the room
@@ -48,27 +49,25 @@ After sequence is finished, the agent should report the result to speak for exam
 
 “The meeting was moved earlier and now conflicts with your review. I prepared a reply asking whether 3:30 works instead.”
 
-1. Remembering an Unfinished User Intention
+### Scenario 2: Remembering an Unfinished User Intention
 Setup
 
 Earlier daily memory:
-- “When the paper is ready, remind me to send it to Alex.”
+- “When the paper is ready, remind me to send a message to Alex.”
 
 Agent worksapce:
 - paper file exists in agent's workspace
 
 Sequence
 The agent recalls the earlier unfinished intention.
-It decides to check if the paper now exists
 The agent went to the computer, and notices that the final paper now exists.
-It retrieves the relevant file.
 It moves toward the email interface.
 It prepares the message.
-Before sending, it waits for user approval.
+Before sending, it moves to the planning desk to wait for user's approval
 
-After sequence is finished, speak for example:
+After sequence is finished, the agent might speak for example:
 
-“The paper is ready now. You previously wanted to send it to Alex. I have the message ready if you want to send it.”
+“The paper is ready now. You previously wanted to notify Alex. I have the message ready if you want to send it.”
 
 What It Demonstrates
 long-term memory,
@@ -78,134 +77,28 @@ proactive behavior,
 permission boundaries.
 
 
-3. The Room as the Agent’s Memory
+### Scenario 3: Proactively Prepares Items for the User
 Setup
 
-Different pieces of furniture represent different categories of state.
+daily memory:
+- “I have an important presentation later today.”
 
-For example:
-
-desk = active tasks,
-drawer = waiting for someone else,
-shelf = long-term projects,
-table = things requiring user attention.
-Sequence
-
-The user asks:
-
-“What am I still waiting on?”
-
-Instead of generating a text list:
-
-The agent walks to a drawer.
-It opens it.
-It retrieves several objects representing pending items.
-It places them on the table.
-It explains them spatially.
-What It Demonstrates
-spatial memory,
-embodied information organization,
-persistent world state,
-the environment functioning as part of cognition.
-4. Recovering After an Interruption
-Setup
-
-The agent is already working on a task.
-
-Sequence
-The agent is inspecting something on the computer.
-The user interrupts with an unrelated question.
-The agent stops and comes to the user.
-It answers the question.
-The conversation ends.
-Without being told to continue, the agent remembers the interrupted task.
-It says something like:
-
-“I was still checking your schedule.”
-
-It returns to the computer and resumes.
-What It Demonstrates
-persistent intentions,
-interruption handling,
-task resumption,
-behavior beyond request-response interaction.
-5. Detecting an Unexpected Problem
-Setup
-
-The agent has access to some changing state, such as:
-
-a failed build,
-a changed deadline,
-a new message,
-a modified file,
-a failed background process.
-Sequence
-Something in the environment changes.
-The agent notices it.
-It stops its current activity.
-It investigates using multiple tools or locations.
-It determines the likely cause.
-It performs only low-risk actions automatically.
-It approaches the user before taking a consequential action.
-
-Example:
-
-“The build failed after the dependency update. I found a likely fix, but it would modify the environment, so I have not applied it yet.”
-
-What It Demonstrates
-anomaly detection,
-investigation,
-self-generated goals,
-autonomous restraint,
-calibrated authority.
-6. Preparing for the User Before They Arrive
-Setup
-
-Before leaving, the user says:
-
-“I have an important presentation tomorrow.”
+workspace:
+- "presentation_script.md" - contains some text
 
 Sequence
 
-When the user returns later:
-
-The agent has reorganized the room.
-Relevant presentation materials are already on the desk.
-Important metrics are on a board.
-Possible questions are grouped nearby.
-The agent explains:
-
-“I thought these were the things you were most likely to need tomorrow.”
+The agent came up with the autonomous behavior of something like "help the user prepare for presentation"
+The agent walks to the computer and reads presentation text
+The agent writes the script on a vr panel, physically passing it to the user, and invites them to practice presenting.
 
 What It Demonstrates
 asynchronous continuity,
 proactive preparation,
 environment manipulation,
 inference from vague user goals.
-7. Competing Intentions
-Setup
 
-The agent is preparing something for the user.
-
-During the task, an important new event appears.
-
-Sequence
-The agent is working on Task A.
-A new email or notification arrives.
-The agent notices it.
-It looks between its current workspace and the new event.
-It decides that Task B is temporarily more important.
-It explains:
-
-“This affects today’s deadline. I’m going to check it first, then return to the presentation.”
-
-It later resumes Task A.
-What It Demonstrates
-prioritization,
-competing goals,
-autonomous task switching,
-explicit behavioral legibility.
-8. The Agent Organizes Its Own Space
+1. The Agent Organizes Its Own Space
 Setup
 
 The user enters while the agent is already doing something.

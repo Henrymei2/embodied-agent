@@ -503,6 +503,7 @@ async def agenda_loop(
                 time.perf_counter() - relocation_started
             )
             final_results = None
+            tool_succeeded = False
             async for update in tool_executor.execute_tools(
                 [{"id": tool_id, "name": capability, "args": arguments}],
                 caller_mode=caller_mode,
@@ -510,6 +511,11 @@ async def agenda_loop(
                 if update.get("type") == "final_tool_results":
                     final_results = update.get("results", [])
                 else:
+                    if update.get("type") == "tool_call_status":
+                        if update.get("status") == "completed":
+                            tool_succeeded = True
+                        elif update.get("status") == "error":
+                            tool_succeeded = False
                     await forward(update)
             if not final_results:
                 raise RuntimeError("Tool execution returned no result.")
@@ -518,7 +524,11 @@ async def agenda_loop(
             scope = current_action_scope()
             if scope is None or scope.pending_transaction_id is None:
                 agenda_store.set_checkpoint_if_status(entry_id, "active", None)
-            return final_results[0]
+            result = dict(final_results[0])
+            # The runner consumes and strips this marker before appending the
+            # provider-specific result to the private conversation.
+            result["_autonomy_success"] = tool_succeeded
+            return result
         except asyncio.CancelledError:
             checkpoint.state = "uncertain" if profile.consequential else "planned"
             agenda_store.set_checkpoint_if_status(entry_id, "active", checkpoint)
@@ -592,6 +602,7 @@ async def agenda_loop(
                 queue_wait_seconds=result.queue_wait_seconds,
                 execution_seconds=result.execution_seconds,
                 relocation_seconds=result.relocation_seconds,
+                message=scope.summary,
             )
         return result
 

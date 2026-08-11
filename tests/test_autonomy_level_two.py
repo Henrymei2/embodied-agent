@@ -284,7 +284,10 @@ def test_execution_failure_budget_queues_terminal_voice_report(tmp_path):
     failed = next(item for item in state.entries if item.id == entry.id)
     assert failed.status == "failed"
     assert failed.metadata["terminal_voice_report"] is True
-    assert state.reports[0].summary.startswith("Execution failed repeatedly:")
+    assert state.reports[0].summary == (
+        "I couldn't finish “Review a grounded note” after repeated attempts."
+    )
+    assert "provider failed" not in state.reports[0].summary
 
 
 def test_execution_failure_defers_retry_with_exponential_backoff(tmp_path):

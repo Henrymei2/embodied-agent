@@ -1211,6 +1211,7 @@ class AgendaStore:
         max_attempts: int,
         retry_backoff_seconds: float = 0.0,
         max_retry_backoff_seconds: float = 0.0,
+        terminal_summary: Optional[str] = None,
     ) -> AgendaEntry:
         """Bound repeated activity failures and dead-letter the terminal entry."""
 
@@ -1223,8 +1224,9 @@ class AgendaStore:
                 entry.status = "failed"
                 entry.ended_at = _iso()
                 entry.checkpoint = None
-                entry.progress_summary = (
-                    f"Execution failed repeatedly: {str(error)[:450]}"
+                safe_summary = " ".join(str(terminal_summary or "").split())[:500]
+                entry.progress_summary = safe_summary or (
+                    f"I couldn't finish “{entry.title[:160]}” after repeated attempts."
                 )
                 self._append_dead_letter(
                     state,
@@ -1983,10 +1985,14 @@ class AgendaStore:
             if entry.status == "completed"
             else "The autonomous task could not be completed."
         )
+        report_summary = entry.metadata.get("terminal_report_summary")
+        if not isinstance(report_summary, str) or not report_summary.strip():
+            report_summary = entry.progress_summary or fallback
+        summary = " ".join(report_summary.split())[:500]
         report = ReportOutboxItem(
             id=f"report_{uuid.uuid4().hex}",
             entry_id=entry.id,
-            summary=(entry.progress_summary or fallback)[:2000],
+            summary=summary,
         )
         state.reports.append(report)
         entry.metadata["report_status"] = "pending"

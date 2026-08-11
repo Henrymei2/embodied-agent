@@ -625,6 +625,27 @@ class AgendaExecutive:
                 raise
             except Exception as exc:
                 if entry_id is not None:
+                    current = next(
+                        (
+                            item
+                            for item in self.store.load().entries
+                            if item.id == entry_id
+                        ),
+                        None,
+                    )
+                    title = current.title if current is not None else "this task"
+                    user_summary = getattr(exc, "user_summary", None)
+                    if not user_summary:
+                        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+                            user_summary = (
+                                f"I couldn't finish “{title[:160]}” because it "
+                                "timed out."
+                            )
+                        else:
+                            user_summary = (
+                                f"I couldn't finish “{title[:160]}” after "
+                                "repeated attempts."
+                            )
                     self.store.record_execution_failure(
                         entry_id,
                         error=f"{type(exc).__name__}: {str(exc)[:400]}",
@@ -633,6 +654,7 @@ class AgendaExecutive:
                         max_retry_backoff_seconds=(
                             self.settings.max_retry_backoff_seconds
                         ),
+                        terminal_summary=user_summary,
                     )
                     await self.broadcast_snapshot()
                     return True
@@ -1107,14 +1129,17 @@ class AgendaExecutive:
             logger.warning(f"agenda: could not release interrupted plan: {exc}")
 
     @staticmethod
-    def _terminal_plan_summary(plan) -> str:
+    def _terminal_plan_summary(plan, *, title: str = "this task") -> str:
         """Honest user-facing summary for a plan that ended without success."""
         if plan.state == "cancelled":
             return (
-                "Interrupted before completion; the last step's outcome could "
-                "not be confirmed and was not replayed."
+                f"I stopped “{title[:160]}” before it finished. The last action's "
+                "outcome could not be confirmed, so it was not replayed."
             )
-        return plan.blocked_reason or "The resumable plan could not complete."
+        blocked_reason = str(plan.blocked_reason or "").lower()
+        if "timeout" in blocked_reason or "timed out" in blocked_reason:
+            return f"I couldn't finish “{title[:160]}” because the step timed out."
+        return f"I couldn't finish “{title[:160]}” after the current step failed."
 
     def _release_event_claims(self, reason: str) -> int:
         if self.lease_handle is None:
@@ -1457,7 +1482,7 @@ class AgendaExecutive:
             await self.broadcast_snapshot()
             return True
         if deadline and utc_now() >= datetime.fromisoformat(deadline):
-            reason = "Time budget expired."
+            reason = f"I couldn't finish “{entry.title[:160]}” before its time limit."
             self.store.transition(
                 entry.id,
                 "failed",
@@ -1603,8 +1628,8 @@ class AgendaExecutive:
             )
             if remaining_budget <= 0:
                 reason = (
-                    "Execution window expired before tool dispatch; no action was "
-                    "started."
+                    f"I couldn't finish “{entry.title[:160]}” before its time "
+                    "limit. No new action was started."
                 )
                 self.store.transition(
                     entry.id,
@@ -1660,7 +1685,9 @@ class AgendaExecutive:
             terminal = plan_result.plan.state in {"failed", "cancelled"}
             target = "failed" if terminal else "suspended"
             if terminal:
-                failure_summary = self._terminal_plan_summary(plan_result.plan)
+                failure_summary = self._terminal_plan_summary(
+                    plan_result.plan, title=entry.title
+                )
                 self.store.absorb_resumable_plan(
                     entry.id,
                     plan_id=plan_result.plan.plan_id,
@@ -1816,6 +1843,9 @@ class AgendaExecutive:
                 "intention_session_id": result.session_id,
                 "intention_model_turns": result.model_turns,
                 "intention_tool_calls": result.tool_calls,
+                "terminal_report_summary": (
+                    getattr(result, "message", None) or result.summary
+                ),
             },
         )
         if transitioned is None:
@@ -1859,7 +1889,8 @@ class AgendaExecutive:
                     "suspended",
                     "failed",
                     progress_summary=(
-                        "Time budget expired while the intention was suspended."
+                        f"I couldn't finish “{entry.title[:160]}” before its time "
+                        "limit while it was paused."
                     ),
                 )
                 if self.discard_intention is not None:
@@ -1889,7 +1920,7 @@ class AgendaExecutive:
             # by _release_interrupted_plan). Absorb it deterministically here
             # instead of spending a planner call to decide something already
             # decided, and report the interruption for non-silent entries.
-            terminal_summary = self._terminal_plan_summary(linked)
+            terminal_summary = self._terminal_plan_summary(linked, title=entry.title)
             self.store.absorb_resumable_plan(
                 entry.id,
                 plan_id=linked.plan_id,

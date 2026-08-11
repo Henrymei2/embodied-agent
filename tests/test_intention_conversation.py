@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -7,11 +8,12 @@ import pytest
 from src.open_llm_vtuber.agent.stateless_llm.stateless_llm_interface import (
     StatelessLLMInterface,
 )
-from src.open_llm_vtuber.autonomy.agenda import AgendaStore, create_entry
+from src.open_llm_vtuber.autonomy.agenda import AgendaStore, create_entry, utc_now
 from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
 from src.open_llm_vtuber.autonomy.intention_conversation import (
     COMPLETE_INTENTION_TOOL,
     IntentionConversationRunner,
+    IntentionModelTimeout,
     safe_tool_schemas,
 )
 from src.open_llm_vtuber.autonomy.settings import AutonomySettings
@@ -141,7 +143,7 @@ async def test_complete_intention_maps_no_action_to_completed():
                 [
                     _call(
                         COMPLETE_INTENTION_TOOL,
-                        '{"status":"no_action","summary":"Nothing changed."}',
+                        '{"status":"no_action","summary":"Inspected the message and found no safe action to take.","message":"Nothing changed."}',
                     )
                 ]
             ]
@@ -159,7 +161,106 @@ async def test_complete_intention_maps_no_action_to_completed():
 
     assert result.status == "completed"
     assert result.outcome == "no_action"
-    assert result.summary == "Nothing changed."
+    assert result.summary == "Inspected the message and found no safe action to take."
+    assert result.message == "Nothing changed."
+
+
+@pytest.mark.asyncio
+async def test_complete_intention_failed_returns_conversational_summary():
+    llm = _LLM(
+        [
+            [
+                [
+                    _call(
+                        COMPLETE_INTENTION_TOOL,
+                        '{"status":"failed","summary":"The archive operation was unavailable after inspecting the message.","message":"I checked the message, but could not archive it."}',
+                    )
+                ]
+            ]
+        ]
+    )
+
+    async def unused(*_args):
+        raise AssertionError
+
+    result = await IntentionConversationRunner(
+        llm=llm,
+        tool_manager=_Tools(),
+        run_tool=unused,
+    ).run(_entry())
+
+    assert result.status == "failed"
+    assert result.outcome == "failed"
+    assert result.summary == (
+        "The archive operation was unavailable after inspecting the message."
+    )
+    assert result.message == "I checked the message, but could not archive it."
+
+
+@pytest.mark.asyncio
+async def test_normal_completion_report_is_limited_to_two_sentences():
+    async def unused(*_args):
+        raise AssertionError
+
+    result = await IntentionConversationRunner(
+        llm=_LLM([["I checked the message. Nothing needed changing. Extra detail."]]),
+        tool_manager=_Tools(),
+        run_tool=unused,
+    ).run(_entry())
+
+    assert result.summary == (
+        "I checked the message. Nothing needed changing. Extra detail."
+    )
+    assert result.message == "I checked the message. Nothing needed changing."
+
+
+@pytest.mark.asyncio
+async def test_turn_limit_reports_confirmed_actions_without_raw_tool_output():
+    llm = _LLM([[[_call("search_emails")]]])
+
+    async def run_tool(*_args):
+        return {
+            "role": "tool",
+            "tool_call_id": "tool-1",
+            "content": "private email body that must never be reported",
+            "_autonomy_success": True,
+        }
+
+    result = await IntentionConversationRunner(
+        llm=llm,
+        tool_manager=_Tools(),
+        run_tool=run_tool,
+        max_turns=1,
+    ).run(_entry())
+
+    assert result.status == "failed"
+    assert result.outcome == "turn_limit"
+    assert "search emails" in result.summary
+    assert "1-step limit" in result.summary
+    assert "private email body" not in result.summary
+    assert result.completed_actions == ("search_emails",)
+    assert result.message == result.summary
+
+
+@pytest.mark.asyncio
+async def test_expired_intention_returns_short_spoken_timeout_result():
+    entry = _entry()
+    entry.budget.deadline_at = (utc_now() - timedelta(seconds=1)).isoformat()
+
+    async def unused(*_args):
+        raise AssertionError
+
+    result = await IntentionConversationRunner(
+        llm=_LLM([]),
+        tool_manager=_Tools(),
+        run_tool=unused,
+    ).run(entry)
+
+    assert result.status == "failed"
+    assert result.outcome == "timed_out"
+    assert result.summary.endswith("No action was confirmed complete.")
+    assert "Time budget expired" not in result.summary
+    assert result.message == result.summary
 
 
 @pytest.mark.asyncio
@@ -218,6 +319,46 @@ async def test_model_timeout_does_not_wait_for_provider_cancellation():
 
 
 @pytest.mark.asyncio
+async def test_model_timeout_retry_exhaustion_queues_safe_voice_report(tmp_path):
+    async def timed_out(_entry):
+        raise IntentionModelTimeout(
+            "I couldn't finish the message check because the response timed out."
+        )
+
+    async def unused_step(*_args):
+        raise AssertionError
+
+    async def emit(_payload):
+        return None
+
+    store = AgendaStore(tmp_path)
+    entry = _entry()
+    store.add(entry)
+    executive = AgendaExecutive(
+        client_uid="client",
+        store=store,
+        planner=SimpleNamespace(),
+        settings=AutonomySettings(execution_failure_limit=1),
+        run_step=unused_step,
+        run_intention=timed_out,
+        emit=emit,
+    )
+
+    assert await executive._advance() is True
+    await asyncio.sleep(0)
+    assert await executive._advance() is True
+
+    state = store.load()
+    failed = next(item for item in state.entries if item.id == entry.id)
+    report = next(item for item in state.reports if item.entry_id == entry.id)
+    assert failed.status == "failed"
+    assert report.summary == (
+        "I couldn't finish the message check because the response timed out."
+    )
+    assert "IntentionModelTimeout" not in report.summary
+
+
+@pytest.mark.asyncio
 async def test_structured_model_error_is_not_mistaken_for_completion():
     llm = _LLM([[{"type": "error", "message": "The provider rejected the request."}]])
 
@@ -244,7 +385,11 @@ async def test_executive_chain_path_never_calls_step_or_completion_planner(tmp_p
 
     result = SimpleNamespace(
         status="completed",
-        summary="Finished in one chain.",
+        summary=(
+            "Inspected the full private message, checked related records, and "
+            "retained detailed findings for internal continuity."
+        ),
+        message="Finished checking the message; nothing needed changing.",
         outcome="completed",
         session_id="session-1",
         model_turns=2,
@@ -281,7 +426,10 @@ async def test_executive_chain_path_never_calls_step_or_completion_planner(tmp_p
     assert await executive._advance_entry(entry) is True
     current = next(item for item in store.load().entries if item.id == entry.id)
     assert current.status == "completed"
-    assert current.progress_summary == "Finished in one chain."
+    assert current.progress_summary.startswith("Inspected the full private message")
+    report = next(item for item in store.load().reports if item.entry_id == entry.id)
+    assert report.summary == "Finished checking the message; nothing needed changing."
+    assert "detailed findings" not in report.summary
 
 
 @pytest.mark.asyncio
