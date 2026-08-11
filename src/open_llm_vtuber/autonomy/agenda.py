@@ -721,6 +721,33 @@ class AgendaStore:
 
         return self.mutate(operation)
 
+    def set_checkpoint_if_status(
+        self,
+        entry_id: str,
+        expected_status: str,
+        checkpoint: Optional[ExecutionCheckpoint],
+    ) -> Optional[AgendaEntry]:
+        """Replace the current execution checkpoint without reviving stale work."""
+        if expected_status not in ENTRY_STATUSES:
+            raise ValueError("invalid agenda status")
+        if checkpoint is not None:
+            checkpoint.validate()
+
+        def operation(state: AgendaState) -> Optional[AgendaEntry]:
+            entry = self._find(state, entry_id)
+            if entry.status != expected_status:
+                return None
+            entry.checkpoint = checkpoint
+            self._event(
+                state,
+                entry_id,
+                "checkpoint_updated",
+                {"present": checkpoint is not None},
+            )
+            return entry
+
+        return self.mutate(operation)
+
     def pause(self, paused: bool) -> AgendaState:
         def operation(state: AgendaState) -> AgendaState:
             state.paused = paused

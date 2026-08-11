@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import time
 from dataclasses import asdict
+from dataclasses import replace
 
 from loguru import logger
 
@@ -13,9 +16,10 @@ from ..chat_history_manager import store_message
 from ..conversations.agent_activity import AgentActivityTracker
 from ..conversations.types import AgentTurnResult
 from .activity import ActivityRunResult
-from .agenda import get_agenda_store
+from .agenda import ExecutionCheckpoint, get_agenda_store
 from .agenda_planner import StructuredAgendaPlanner
 from .executive import AgendaExecutive, register_executive, unregister_executive
+from .intention_conversation import IntentionConversationRunner, IntentionResult
 from .idle_relocation import idle_scene_snapshot, relocate_for_idle
 from .settings import AutonomySettings
 from .tool_schemas import build_tool_schema_manifest, validate_tool_arguments
@@ -63,7 +67,9 @@ def _agenda_step_metadata(entry, checkpoint) -> dict:
     }
 
 
-async def _run_tool_calls(tool_executor, calls: list[dict], on_update=None) -> list[dict]:
+async def _run_tool_calls(
+    tool_executor, calls: list[dict], on_update=None
+) -> list[dict]:
     """Run validated tool calls and raise on the first tool-level error.
 
     ``on_update`` (optional async callable) receives every non-final update so
@@ -155,9 +161,7 @@ async def _execute_validated_tool(
         "name": capability,
         "args": dict(checkpoint.arguments or {}),
     }
-    final_results = await _run_tool_calls(
-        tool_executor, [call], on_update=on_update
-    )
+    final_results = await _run_tool_calls(tool_executor, [call], on_update=on_update)
     result = final_results[0]
     content = str(result.get("content", "")).strip()
     return content or f"Tool '{capability}' completed successfully."
@@ -276,9 +280,7 @@ async def agenda_loop(
         async def forward_tool_update(update: dict) -> None:
             """Surface sanitized tool activity (name/status only, no inputs)."""
             if update.get("type") == "agent_activity":
-                await emit(
-                    activity_tracker.replace_tools(update.get("tools", []))
-                )
+                await emit(activity_tracker.replace_tools(update.get("tools", [])))
             elif update.get("type") == "tool_call_status":
                 await emit(
                     activity_tracker.update_tool(
@@ -390,6 +392,155 @@ async def agenda_loop(
     )
     conf_uid = context.character_config.conf_uid
     scene_mode = getattr(context, "scene_mode", "normal")
+    agenda_store = get_agenda_store()
+    relocation_seconds: dict[str, float] = {}
+
+    async def run_intention_tool(
+        entry_id: str,
+        capability: str,
+        arguments: dict,
+        tool_id: str,
+        caller_mode: str,
+    ) -> dict:
+        """Execute one chain-selected tool behind durable safety boundaries."""
+        from ..authorization.profiles import profile_for
+
+        tool_executor = getattr(context, "tool_executor", None)
+        if tool_executor is None or tool_manager is None:
+            raise RuntimeError("Autonomous intention tools are unavailable.")
+        tool = tool_manager.get_tool(capability)
+        profile = profile_for(
+            capability,
+            server_name=getattr(tool, "related_server", None),
+        )
+        checkpoint = ExecutionCheckpoint(
+            step_id=tool_id,
+            kind="invoke_tool",
+            state="running",
+            purpose=f"Private intention conversation selected {capability}.",
+            required_object=tool_manager.get_required_object(capability),
+            required_capability=capability,
+            arguments=dict(arguments),
+            timeout_seconds=settings.step_timeout_seconds,
+            interruptible=not profile.consequential,
+            side_effecting=profile.consequential,
+        )
+        if (
+            agenda_store.set_checkpoint_if_status(entry_id, "active", checkpoint)
+            is None
+        ):
+            raise asyncio.CancelledError
+
+        async def forward(update: dict) -> None:
+            if update.get("type") == "tool_call_status":
+                update = dict(update)
+                update.pop("content", None)
+            await emit(update)
+
+        try:
+            relocation_started = time.perf_counter()
+            await _ensure_tool_proximity(
+                tool_executor,
+                tool_manager,
+                capability,
+                tool_id,
+                on_update=forward,
+            )
+            relocation_seconds[entry_id] = relocation_seconds.get(entry_id, 0.0) + (
+                time.perf_counter() - relocation_started
+            )
+            final_results = None
+            async for update in tool_executor.execute_tools(
+                [{"id": tool_id, "name": capability, "args": arguments}],
+                caller_mode=caller_mode,
+            ):
+                if update.get("type") == "final_tool_results":
+                    final_results = update.get("results", [])
+                else:
+                    await forward(update)
+            if not final_results:
+                raise RuntimeError("Tool execution returned no result.")
+            from .action_context import current_action_scope
+
+            scope = current_action_scope()
+            if scope is None or scope.pending_transaction_id is None:
+                agenda_store.set_checkpoint_if_status(entry_id, "active", None)
+            return final_results[0]
+        except asyncio.CancelledError:
+            checkpoint.state = "uncertain" if profile.consequential else "planned"
+            agenda_store.set_checkpoint_if_status(entry_id, "active", checkpoint)
+            raise
+
+    intention_runner = IntentionConversationRunner(
+        llm=llm,
+        tool_manager=tool_manager,
+        run_tool=run_intention_tool,
+        model_timeout_seconds=settings.intention_model_timeout_seconds,
+        tool_timeout_seconds=settings.step_timeout_seconds,
+        max_turns=settings.intention_max_turns,
+    )
+
+    async def run_intention(entry) -> IntentionResult:
+        from .action_context import agenda_action_scope
+        from ..conversations.llm_request_queue import (
+            PRIORITY_PASSIVE,
+            PRIORITY_SCHEDULED,
+            get_queue,
+        )
+
+        priority = (
+            PRIORITY_SCHEDULED
+            if entry.kind == "scheduled" or entry.metadata.get("trigger_foreground")
+            else PRIORITY_PASSIVE
+        )
+        loop = asyncio.get_running_loop()
+        queued_at = loop.time()
+        execution_started_at: float | None = None
+
+        async def execute():
+            nonlocal execution_started_at
+            execution_started_at = loop.time()
+            with agenda_action_scope(entry.id, f"intention:{entry.id}") as scope:
+                result = await intention_runner.run(entry)
+                return result, scope
+
+        result, scope = await get_queue(client_uid).enqueue_and_wait(
+            coro_factory=execute,
+            priority=priority,
+            label=f"agenda-intention:{entry.id}",
+            dedupe_key=f"agenda-intention:{entry.id}",
+            entry_id=entry.id,
+            work_class="autonomous",
+        )
+        finished_at = loop.time()
+        started_at = execution_started_at or finished_at
+        result = replace(
+            result,
+            queue_wait_seconds=max(0.0, started_at - queued_at),
+            execution_seconds=max(0.0, finished_at - started_at),
+            relocation_seconds=relocation_seconds.pop(entry.id, 0.0),
+        )
+        if scope.pending_transaction_id is not None:
+            agenda_store.block_for_authorization(
+                entry.id,
+                transaction_id=scope.pending_transaction_id,
+                capability=scope.capability or "unknown",
+                summary=scope.summary,
+            )
+            return IntentionResult(
+                status="blocked_approval",
+                summary=scope.summary,
+                outcome="approval_required",
+                session_id=result.session_id,
+                model_turns=result.model_turns,
+                tool_calls=result.tool_calls,
+                model_seconds=result.model_seconds,
+                tool_seconds=result.tool_seconds,
+                queue_wait_seconds=result.queue_wait_seconds,
+                execution_seconds=result.execution_seconds,
+                relocation_seconds=result.relocation_seconds,
+            )
+        return result
 
     async def relocate_idle(placement) -> bool:
         if lease_handle is not None:
@@ -421,13 +572,15 @@ async def agenda_loop(
 
     executive = AgendaExecutive(
         client_uid=client_uid,
-        store=get_agenda_store(),
+        store=agenda_store,
         planner=StructuredAgendaPlanner(
             complete,
             default_pursuit_seconds=settings.default_pursuit_seconds,
         ),
         settings=settings,
         run_step=run_step,
+        run_intention=run_intention,
+        discard_intention=intention_runner.discard,
         emit=emit,
         capabilities=capabilities,
         object_names=object_names,

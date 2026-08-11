@@ -67,6 +67,8 @@ class AgendaExecutive:
         settings: AutonomySettings,
         run_step: Callable[..., Awaitable[str]],
         emit: Callable[[dict], Awaitable[None]],
+        run_intention: Optional[Callable[[AgendaEntry], Awaitable[object]]] = None,
+        discard_intention: Optional[Callable[[str], None]] = None,
         capabilities: Optional[set[str]] = None,
         object_names: Optional[set[str]] = None,
         capability_objects: Optional[dict[str, str]] = None,
@@ -83,6 +85,8 @@ class AgendaExecutive:
         self.planner = planner
         self.settings = settings
         self.emit = emit
+        self.run_intention = run_intention
+        self.discard_intention = discard_intention
         self.capabilities = capabilities or set()
         self.object_names = object_names or set()
         self.capability_objects = capability_objects or {}
@@ -472,6 +476,8 @@ class AgendaExecutive:
                 self.store.clear_absorbed_resumable_plan(
                     entry_id, plan_id=cancelled_plan.plan_id
                 )
+        if self.discard_intention is not None:
+            self.discard_intention(entry_id)
         self.wake()
         await self.broadcast_snapshot()
 
@@ -1422,6 +1428,11 @@ class AgendaExecutive:
             await self.broadcast_snapshot()
             return True
 
+        if self.run_intention is not None and not entry.metadata.get(
+            "resumable_plan_id"
+        ):
+            return await self._run_intention_entry(entry)
+
         context = build_agenda_context(
             self.store,
             client_uid=self.client_uid,
@@ -1675,6 +1686,98 @@ class AgendaExecutive:
             self.wake()
         return True
 
+    async def _run_intention_entry(self, entry: AgendaEntry) -> bool:
+        """Run the production single-chain path without per-step planning."""
+        checkpoint = entry.checkpoint
+        if checkpoint is not None and checkpoint.state == "uncertain":
+            self.store.transition(
+                entry.id,
+                "suspended",
+                progress_summary=(
+                    "An interrupted side effect requires reconciliation before "
+                    "the intention can resume."
+                ),
+            )
+            await self.broadcast_snapshot()
+            return True
+        if checkpoint is not None:
+            self.store.set_checkpoint_if_status(entry.id, "active", None)
+
+        await self.emit(AgentActivityTracker.plan(entry.title))
+        started = time.perf_counter()
+        try:
+            with self.tracer.span(
+                "agenda.intention.session",
+                trace_id=entry.metadata.get("trace_id"),
+                attributes={"agenda.entry_id": entry.id},
+            ) as span:
+                result = await self.run_intention(entry)
+                span.set_attribute("agenda.intention.outcome", result.outcome)
+                span.set_attribute("agenda.intention.session_id", result.session_id)
+                span.set_attribute("agenda.intention.model_turns", result.model_turns)
+                span.set_attribute("agenda.intention.tool_calls", result.tool_calls)
+                span.set_attribute(
+                    "agenda.intention.model_seconds", round(result.model_seconds, 6)
+                )
+                span.set_attribute(
+                    "agenda.intention.tool_seconds", round(result.tool_seconds, 6)
+                )
+                span.set_attribute(
+                    "agenda.intention.queue_wait_seconds",
+                    round(result.queue_wait_seconds, 6),
+                )
+                span.set_attribute(
+                    "agenda.intention.execution_seconds",
+                    round(result.execution_seconds, 6),
+                )
+                span.set_attribute(
+                    "agenda.intention.relocation_seconds",
+                    round(result.relocation_seconds, 6),
+                )
+        finally:
+            await self.emit(AgentActivityTracker.idle())
+
+        current = next(
+            (item for item in self.store.load().entries if item.id == entry.id),
+            None,
+        )
+        if current is None or current.status != "active":
+            logger.info(
+                "agenda.intention stale_discarded entry={} seconds={:.3f}",
+                entry.id,
+                time.perf_counter() - started,
+            )
+            if self.discard_intention is not None and (
+                current is None or current.status in TERMINAL_STATUSES
+            ):
+                self.discard_intention(entry.id)
+            return True
+        target = "failed" if result.status == "failed" else "completed"
+        transitioned = self.store.transition_if_status(
+            entry.id,
+            "active",
+            target,
+            progress_summary=result.summary,
+            metadata_updates={
+                "intention_outcome": result.outcome,
+                "intention_session_id": result.session_id,
+                "intention_model_turns": result.model_turns,
+                "intention_tool_calls": result.tool_calls,
+            },
+        )
+        if transitioned is None:
+            logger.info("agenda.intention stale_discarded entry={}", entry.id)
+            if self.discard_intention is not None:
+                self.discard_intention(entry.id)
+            return True
+        if entry.kind != "user" and entry.report_policy != "silent":
+            self.store.enqueue_report(entry.id, result.summary)
+        if self.discard_intention is not None:
+            self.discard_intention(entry.id)
+        await self.broadcast_snapshot()
+        self.wake()
+        return True
+
     async def _reconsider_suspended(self) -> None:
         self._assert_lease()
         state = self.store.load()
@@ -1694,6 +1797,40 @@ class AgendaExecutive:
         state = self.store.load()
         entry = next((item for item in state.entries if item.id == entry_id), None)
         if entry is None or entry.status != "suspended":
+            return
+        if self.run_intention is not None and not entry.metadata.get(
+            "resumable_plan_id"
+        ):
+            deadline = entry.budget.deadline_at
+            if deadline and utc_now() >= datetime.fromisoformat(deadline):
+                self.store.transition_if_status(
+                    entry.id,
+                    "suspended",
+                    "failed",
+                    progress_summary=(
+                        "Time budget expired while the intention was suspended."
+                    ),
+                )
+                if self.discard_intention is not None:
+                    self.discard_intention(entry.id)
+                await self.broadcast_snapshot()
+                return
+            if entry.checkpoint is not None and entry.checkpoint.state == "uncertain":
+                return
+            if not self.connected_client and entry.metadata.get("waiting_for_client"):
+                return
+            self.store.transition_if_status(
+                entry.id,
+                "suspended",
+                "queued",
+                metadata_updates={
+                    "reconsider_deferred_until": None,
+                    "reconsider_deferred_reason": None,
+                    "waiting_for_client": None,
+                },
+                progress_summary="Resuming the private intention conversation.",
+            )
+            await self.broadcast_snapshot()
             return
         linked = self.plan_bridge.restore_plan_reference(entry)
         if linked is not None and linked.state in {"failed", "cancelled"}:

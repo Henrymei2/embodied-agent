@@ -109,13 +109,19 @@ class _FakeStream:
 
     async def __anext__(self):
         try:
-            content, tool_calls = next(self.chunks)
+            values = next(self.chunks)
         except StopIteration as exc:
             raise StopAsyncIteration from exc
+        content, tool_calls, *rest = values
+        reasoning_content = rest[0] if rest else None
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    delta=SimpleNamespace(content=content, tool_calls=tool_calls)
+                    delta=SimpleNamespace(
+                        content=content,
+                        tool_calls=tool_calls,
+                        reasoning_content=reasoning_content,
+                    )
                 )
             ]
         )
@@ -130,8 +136,39 @@ def _fake_llm(chunks):
     llm.model = "deepseek-test"
     llm.temperature = 0.0
     llm.support_tools = True
-    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions(chunks)))
+    llm.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions(chunks))
+    )
     return llm
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_stream_preserves_reasoning_for_tool_replay():
+    native = SimpleNamespace(
+        index=0,
+        id="thinking-call",
+        type="function",
+        function=SimpleNamespace(name="get_scene_status", arguments="{}"),
+    )
+    llm = _fake_llm([(None, None, "first "), (None, [native], "second")])
+
+    events = [
+        event
+        async for event in llm.chat_completion(
+            [{"role": "user", "content": "status"}],
+            tools=[{"type": "function", "function": {"name": "get_scene_status"}}],
+        )
+    ]
+
+    reasoning = "".join(
+        event["text"]
+        for event in events
+        if isinstance(event, dict) and event.get("type") == "reasoning_content"
+    )
+    assert reasoning == "first second"
+    assert next(event for event in events if isinstance(event, list))[0].id == (
+        "thinking-call"
+    )
 
 
 @pytest.mark.asyncio
@@ -196,7 +233,9 @@ async def test_native_tool_call_takes_precedence_over_text_compatibility_mode():
         )
     ]
 
-    assert "".join(event for event in events if isinstance(event, str)) == "Before native."
+    assert (
+        "".join(event for event in events if isinstance(event, str)) == "Before native."
+    )
     calls = next(event for event in events if isinstance(event, list))
     assert calls[0].id == "native-1"
     assert calls[0].function.name == "get_scene_status"

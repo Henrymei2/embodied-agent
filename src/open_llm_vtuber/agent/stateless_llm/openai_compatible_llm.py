@@ -14,7 +14,6 @@ from openai import (
     NOT_GIVEN,
 )
 from openai.types.chat import ChatCompletionChunk
-from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from loguru import logger
 
 from .stateless_llm_interface import StatelessLLMInterface
@@ -67,7 +66,7 @@ class AsyncLLM(StatelessLLMInterface):
         messages: List[Dict[str, Any]],
         system: str = None,
         tools: List[Dict[str, Any]] | NotGiven = NOT_GIVEN,
-    ) -> AsyncIterator[str | List[ChoiceDeltaToolCall]]:
+    ) -> AsyncIterator[Any]:
         """
         Generates a chat completion using the OpenAI API asynchronously.
 
@@ -142,6 +141,22 @@ class AsyncLLM(StatelessLLMInterface):
                 # Guard against chunks with missing choices field (e.g., from OpenWebUI)
                 if not chunk.choices:
                     continue
+
+                delta = chunk.choices[0].delta
+                reasoning_content = getattr(delta, "reasoning_content", None)
+                if reasoning_content is None:
+                    model_extra = getattr(delta, "model_extra", None)
+                    if isinstance(model_extra, dict):
+                        reasoning_content = model_extra.get("reasoning_content")
+                if reasoning_content:
+                    # Thinking-capable OpenAI-compatible APIs require this exact
+                    # assistant field to be replayed after a tool call. Keep it
+                    # internal: consumers persist it in the protocol message but
+                    # never surface it as assistant text.
+                    yield {
+                        "type": "reasoning_content",
+                        "text": str(reasoning_content),
+                    }
 
                 if self.support_tools:
                     has_tool_calls = (
@@ -277,13 +292,21 @@ class AsyncLLM(StatelessLLMInterface):
             logger.error(
                 f"Error calling the chat endpoint: Connection error. Failed to connect to the LLM API. \nCheck the configurations and the reachability of the LLM backend. \nSee the logs for details. \nTroubleshooting with documentation: https://open-llm-vtuber.github.io/docs/faq#%E9%81%87%E5%88%B0-error-calling-the-chat-endpoint-%E9%94%99%E8%AF%AF%E6%80%8E%E4%B9%88%E5%8A%9E \n{e.__cause__}"
             )
-            yield "Error calling the chat endpoint: Connection error. Failed to connect to the LLM API. Check the configurations and the reachability of the LLM backend. See the logs for details. Troubleshooting with documentation: [https://open-llm-vtuber.github.io/docs/faq#%E9%81%87%E5%88%B0-error-calling-the-chat-endpoint-%E9%94%99%E8%AF%AF%E6%80%8E%E4%B9%88%E5%8A%9E]"
+            yield {
+                "type": "error",
+                "message": "The language model connection failed.",
+                "error_kind": "connection",
+            }
 
         except RateLimitError as e:
             logger.error(
                 f"Error calling the chat endpoint: Rate limit exceeded: {e.response}"
             )
-            yield "Error calling the chat endpoint: Rate limit exceeded. Please try again later. See the logs for details."
+            yield {
+                "type": "error",
+                "message": "The language model rate limit was exceeded.",
+                "error_kind": "rate_limit",
+            }
 
         except APIError as e:
             if "does not support tools" in str(e):
@@ -296,9 +319,17 @@ class AsyncLLM(StatelessLLMInterface):
             logger.error(f"LLM API: Error occurred: {e}")
             logger.info(f"Base URL: {self.base_url}")
             logger.info(f"Model: {self.model}")
-            logger.info(f"Messages: {messages}")
+            logger.info(
+                "Message count: {}; roles: {}",
+                len(messages),
+                [str(message.get("role", "")) for message in messages],
+            )
             logger.info(f"temperature: {self.temperature}")
-            yield "Error calling the chat endpoint: Error occurred while generating response. See the logs for details."
+            yield {
+                "type": "error",
+                "message": "The language model rejected the request.",
+                "error_kind": "api_error",
+            }
 
         finally:
             # make sure the stream is properly closed

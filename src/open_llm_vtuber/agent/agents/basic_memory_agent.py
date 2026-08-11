@@ -607,11 +607,22 @@ class BasicMemoryAgent(AgentInterface):
             )
             pending_tool_calls.clear()
             current_turn_text = ""
+            current_reasoning_content = ""
             assistant_message_for_api = None
             detected_prompt_json = None
             goto_next_while_iteration = False
 
             async for event in stream:
+                if isinstance(event, dict):
+                    if event.get("type") == "reasoning_content":
+                        current_reasoning_content += str(event.get("text", ""))
+                        continue
+                    if event.get("type") == "error":
+                        message = str(
+                            event.get("message", "The language model request failed.")
+                        )
+                        yield f"[Error from LLM: {message}]"
+                        return
                 if self.prompt_mode_flag:
                     if isinstance(event, str):
                         current_turn_text += event
@@ -666,6 +677,10 @@ class BasicMemoryAgent(AgentInterface):
                                 for tc in pending_tool_calls
                             ],
                         }
+                        if current_reasoning_content:
+                            assistant_message_for_api["reasoning_content"] = (
+                                current_reasoning_content
+                            )
                         break
             if goto_next_while_iteration:
                 continue
@@ -685,6 +700,15 @@ class BasicMemoryAgent(AgentInterface):
                     detected_prompt_json
                 )
                 if parsed_tools:
+                    assistant_message_for_api = {
+                        "role": "assistant",
+                        "content": current_turn_text or None,
+                    }
+                    if current_reasoning_content:
+                        assistant_message_for_api["reasoning_content"] = (
+                            current_reasoning_content
+                        )
+                    messages.append(assistant_message_for_api)
                     tool_results_for_llm = []
 
                     self._record_tool_actions(parsed_tools)
@@ -867,6 +891,12 @@ class BasicMemoryAgent(AgentInterface):
                     text_chunk = ""
                     if isinstance(event, dict) and event.get("type") == "text_delta":
                         text_chunk = event.get("text", "")
+                    elif isinstance(event, dict) and event.get("type") == "error":
+                        message = str(
+                            event.get("message", "The language model request failed.")
+                        )
+                        yield f"[Error from LLM: {message}]"
+                        return
                     elif isinstance(event, str):
                         text_chunk = event
                     else:

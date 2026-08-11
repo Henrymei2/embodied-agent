@@ -65,6 +65,8 @@ class AutonomyConfig(I18nMixin):
     planner_circuit_failure_threshold: int = Field(3, ge=1, le=20)
     planner_circuit_max_seconds: int = Field(1800, ge=10, le=14400)
     planner_timeout_seconds: float = Field(30.0, ge=5.0, le=300.0)
+    intention_model_timeout_seconds: float = Field(30.0, ge=5.0, le=300.0)
+    intention_max_turns: int = Field(12, ge=1, le=100)
     step_timeout_seconds: int = Field(30, ge=5, le=3600)
     max_plausible_duration_seconds: float = Field(0.0, ge=0.0, le=60.0)
     human_preemption_timeout_seconds: float = Field(0.25, ge=0.05, le=5.0)
@@ -165,8 +167,14 @@ class AutonomyConfig(I18nMixin):
         "planner_timeout_seconds": Description(
             en="Hard timeout for each autonomous planner model call"
         ),
+        "intention_model_timeout_seconds": Description(
+            en="Hard timeout for each main-model turn in an intention chain"
+        ),
+        "intention_max_turns": Description(
+            en="Maximum main-model turns in one autonomous intention chain"
+        ),
         "step_timeout_seconds": Description(
-            en="Hard activity timeout after queued work starts"
+            en="Hard timeout after each intention-selected tool starts"
         ),
         "max_plausible_duration_seconds": Description(
             en="Maximum artificial pacing added after an activity result"

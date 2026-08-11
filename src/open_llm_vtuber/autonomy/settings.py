@@ -28,6 +28,8 @@ class AutonomySettings:
     planner_circuit_failure_threshold: int = 3
     planner_circuit_max_seconds: int = 1800
     planner_timeout_seconds: float = 30.0
+    intention_model_timeout_seconds: float = 30.0
+    intention_max_turns: int = 12
     step_timeout_seconds: int = 30
     max_plausible_duration_seconds: float = 0.0
     human_preemption_timeout_seconds: float = 0.25
@@ -152,6 +154,16 @@ class AutonomySettings:
             self,
             "planner_timeout_seconds",
             max(5.0, min(300.0, float(self.planner_timeout_seconds))),
+        )
+        object.__setattr__(
+            self,
+            "intention_model_timeout_seconds",
+            max(5.0, min(300.0, float(self.intention_model_timeout_seconds))),
+        )
+        object.__setattr__(
+            self,
+            "intention_max_turns",
+            max(1, min(100, int(self.intention_max_turns))),
         )
         object.__setattr__(
             self, "step_timeout_seconds", max(5, int(self.step_timeout_seconds))
@@ -303,6 +315,10 @@ class AutonomySettings:
             planner_timeout_seconds=float(
                 getattr(cfg, "planner_timeout_seconds", 30.0)
             ),
+            intention_model_timeout_seconds=float(
+                getattr(cfg, "intention_model_timeout_seconds", 30.0)
+            ),
+            intention_max_turns=int(getattr(cfg, "intention_max_turns", 12)),
             step_timeout_seconds=int(getattr(cfg, "step_timeout_seconds", 30)),
             max_plausible_duration_seconds=float(
                 getattr(cfg, "max_plausible_duration_seconds", 0.0)

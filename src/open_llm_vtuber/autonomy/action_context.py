@@ -38,6 +38,11 @@ def agenda_action_scope(entry_id: str, step_id: str) -> Iterator[AgendaActionSco
         _CURRENT.reset(token)
 
 
+def current_action_scope() -> AgendaActionScope | None:
+    """Return the current agenda action scope for chain-level coordination."""
+    return _CURRENT.get()
+
+
 def observe_action_transaction(
     metadata: dict, *, capability: str, summary: str
 ) -> None:

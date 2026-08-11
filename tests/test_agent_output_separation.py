@@ -45,10 +45,13 @@ class _DummyLLM(StatelessLLMInterface):
 class _ToolThenTextLLM:
     def __init__(self):
         self.calls = 0
+        self.requests = []
 
     async def chat_completion(self, messages, system=None, tools=None):
         self.calls += 1
+        self.requests.append(messages)
         if self.calls == 1:
+            yield {"type": "reasoning_content", "text": "private-thought"}
             yield [
                 ToolCallObject(
                     id="call-1",
@@ -226,6 +229,9 @@ async def test_openai_tool_loop_continues_to_normal_text_after_tool_result():
 
     assert outputs == ["It is sunny."]
     assert agent._llm.calls == 2
+    assistant = agent._llm.requests[1][-2]
+    assert assistant["reasoning_content"] == "private-thought"
+    assert assistant["tool_calls"][0]["id"] == "call-1"
 
 
 @pytest.mark.asyncio
