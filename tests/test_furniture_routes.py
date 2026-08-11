@@ -81,6 +81,29 @@ def test_plan_window_exposes_pending_plans(client):
     assert body["recent"] is None
 
 
+def test_plan_window_lists_every_status_and_exposes_full_details(client):
+    first = _write_plan("First")
+    second = _write_plan("Second")
+    client.post(
+        f"/api/furniture/plans/{first['plan_id']}/decision",
+        json={"decision": "approved"},
+    )
+
+    body = client.get("/api/furniture/plans", params={"include_details": True}).json()
+    assert {item["plan_id"] for item in body["plans"]} == {
+        first["plan_id"], second["plan_id"]
+    }
+    assert {item["status"] for item in body["plans"]} == {"approved", "pending"}
+    detail = next(item for item in body["plan_details"] if item["plan_id"] == second["plan_id"])
+    assert detail["goal"] == "Notes piled up."
+    assert detail["steps"] == ["List", "Merge"]
+
+    single = client.get(f"/api/furniture/plans/{second['plan_id']}")
+    assert single.status_code == 200
+    assert single.json()["title"] == "Second"
+    assert client.get("/api/furniture/plans/missing").status_code == 404
+
+
 def test_the_window_is_the_only_way_to_approve_a_plan(client):
     plan = _write_plan()
 

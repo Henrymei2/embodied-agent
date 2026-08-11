@@ -67,6 +67,18 @@ export interface VrStageDocument {
 }
 
 export type VrTransientState = "world_locked" | "held_by_agent" | "offered" | "held_by_user";
+export interface VrPanelLink {
+  label: string;
+  targetPageId: string;
+}
+
+export interface VrPanelPageData {
+  id: string;
+  title: string;
+  lines: string[];
+  links: VrPanelLink[];
+}
+
 export interface VrTransientEntity {
   id: string;
   kind: "panel" | "email_card";
@@ -82,6 +94,8 @@ export interface VrTransientEntity {
   summary?: string;
   body?: string;
   page?: number;
+  pages?: VrPanelPageData[];
+  initialPageId?: string;
 }
 
 export interface VrUserPose {
@@ -435,12 +449,35 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
       if (!pose) return { request_id, action, ok: false, error: "No fresh VR user pose is available." };
       if (transientRef.current.length >= 3) return { request_id, action, ok: false, error: "The temporary-entity limit is reached." };
       const point = inFrontOfUser(pose);
+      const rawPages = Array.isArray(args.pages) ? args.pages : [];
+      const pages: VrPanelPageData[] = rawPages.flatMap((value) => {
+        if (!value || typeof value !== "object") return [];
+        const page = value as Record<string, unknown>;
+        if (typeof page.id !== "string" || typeof page.title !== "string") return [];
+        const links = Array.isArray(page.links) ? page.links.flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const link = item as Record<string, unknown>;
+          return typeof link.label === "string" && typeof link.target_page_id === "string"
+            ? [{ label: link.label, targetPageId: link.target_page_id }]
+            : [];
+        }) : [];
+        return [{
+          id: page.id,
+          title: page.title,
+          lines: Array.isArray(page.blocks) ? page.blocks.flatMap(panelBlockLines) : [],
+          links,
+        }];
+      });
       const entity: VrTransientEntity = {
         id: `panel_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
         kind: "panel", state: "world_locked", x: point.x, y: point.y,
         elevation: Math.max(90, pose.head_height * 100 - 20), yaw: pose.yaw + 180,
         title: String(args.title || "Information").slice(0, 120),
         blocks: Array.isArray(args.blocks) ? args.blocks.slice(0, 6).flatMap(panelBlockLines) : [],
+        pages: pages.length ? pages : undefined,
+        initialPageId: pages.length && typeof args.initial_page_id === "string"
+          ? args.initial_page_id
+          : undefined,
       };
       updateTransient(entity);
       return { request_id, action, ok: true, summary: `Created ${entity.id} in front of the user.` };

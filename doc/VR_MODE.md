@@ -105,6 +105,7 @@ object in place.
 | --- | --- |
 | Left thumbstick axes 2/3 | Head-relative continuous locomotion |
 | Right thumbstick axis 2 | 30-degree snap turn |
+| Right thumbstick axis 3 | Scroll the panel currently under the right-hand ray |
 | Left X, `buttons[4]` | Toggle existing microphone/VAD on the press edge |
 | Right A, `buttons[4]` | Toggle the camera-relative VR test-scenario menu |
 | Right primary trigger / `select` | Select an in-world panel control |
@@ -143,7 +144,7 @@ Snap-turn rules:
 
 Left X toggles the same `startMic`/`stopMic` functions used by the ordinary UI.
 It uses a rising-edge check, follows the persisted `micOn` preference on entry,
-and displays **Microphone on** or **Microphone off** for 1.5 seconds. It must
+and displays **Microphone on** or **Microphone off** for three seconds. It must
 not overwrite the preference merely because an XR session ends.
 
 Right A uses an independent rising-edge latch. While the scenario menu is
@@ -202,6 +203,24 @@ Approve/Decline controls reuse the existing plan and skill decision routes and
 retain their pending-only semantics. Google connection state may be shown, but
 authorization must say **Exit VR to connect Google** rather than opening an
 OAuth flow in-headset.
+
+Every furniture window and session-only panel uses the same page document and
+view state. A page may link to another page; entering it resets that page's
+scroll, and a top-left **Back** control restores the previous page and its
+scroll position. The right thumbstick vertical axis scrolls only the panel
+currently under the right-hand ray, with a dead zone and held-input repeat.
+Refreshing live furniture data preserves a valid page and clamps its scroll;
+if the selected record disappeared, the panel returns to its root page.
+
+The mailbox reads the latest three inbox messages regardless of read state and
+shows their complete subjects. Calendar lists the user's local today plus the
+next six days, with navigable event detail. Planning Desk lists every stored
+plan status newest-first; selecting a plan reveals its full goal, steps, notes,
+status, revision, and timestamps, with pending-only decision controls.
+Agent-created panels may provide a bounded page graph whose buttons can only
+navigate within that panel. Legacy single-page panels remain valid. Email cards
+use a summary page and a scrollable full-body page instead of cycling fixed-size
+text chunks.
 
 The computer's `browser_status` panel is the headset view of the browser and
 web search: it shows the latest tool name, URL, tool output, and the most

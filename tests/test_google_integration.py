@@ -203,6 +203,25 @@ def test_gmail_unread_routes_page_and_sanitize_failures():
                 "has_unread": True,
             }
 
+        def recent_messages(self, *, limit):
+            assert limit == 3
+            return {
+                "messages": [
+                    {"message_id": f"m{index}", "subject": f"Subject {index}"}
+                    for index in range(1, 4)
+                ],
+                "count": 3,
+            }
+
+        def upcoming_events(self, *, days):
+            assert days == 7
+            return {
+                "events": [{"event_id": "e1", "title": "Review"}],
+                "count": 1,
+                "range_start": "2026-08-11",
+                "range_end": "2026-08-17",
+            }
+
         def status(self):
             return {}
 
@@ -220,6 +239,12 @@ def test_gmail_unread_routes_page_and_sanitize_failures():
     )
     assert response.status_code == 200
     assert response.json()["messages"][0]["message_id"] == "m1"
+    recent = client.get("/api/integrations/google/gmail/recent")
+    assert [item["subject"] for item in recent.json()["messages"]] == [
+        "Subject 1", "Subject 2", "Subject 3"
+    ]
+    upcoming = client.get("/api/integrations/google/calendar/upcoming")
+    assert upcoming.json()["events"][0]["title"] == "Review"
     assert (
         client.get(
             "/api/integrations/google/gmail/unread", params={"page_size": 51}
@@ -240,3 +265,97 @@ def test_gmail_unread_routes_page_and_sanitize_failures():
     )
     assert failed.status_code == 502
     assert "sensitive upstream response" not in failed.text
+
+
+def test_recent_inbox_messages_include_read_mail_metadata(tmp_path, monkeypatch):
+    client_file = tmp_path / "client.json"
+    client_file.write_text("{}")
+    service = _service(tmp_path, client_file)
+    calls = []
+
+    class Request:
+        def __init__(self, value):
+            self.value = value
+
+        def execute(self):
+            return self.value
+
+    class Messages:
+        def list(self, **kwargs):
+            calls.append(kwargs)
+            return Request({"messages": [{"id": "m1"}, {"id": "m2"}]})
+
+        def get(self, **kwargs):
+            index = kwargs["id"][-1]
+            return Request(
+                {
+                    "id": kwargs["id"],
+                    "threadId": f"t{index}",
+                    "payload": {"headers": [
+                        {"name": "Subject", "value": f"Subject {index}"},
+                        {"name": "From", "value": f"Sender {index}"},
+                        {"name": "Date", "value": f"Date {index}"},
+                    ]},
+                    "snippet": f"Preview {index}",
+                }
+            )
+
+    messages = Messages()
+    monkeypatch.setattr(
+        service,
+        "gmail",
+        lambda: type("Gmail", (), {"users": lambda self: type("Users", (), {"messages": lambda self: messages})()})(),
+    )
+
+    result = service.recent_messages(limit=3)
+    assert calls[0]["labelIds"] == ["INBOX"]
+    assert "UNREAD" not in calls[0]["labelIds"]
+    assert [item["subject"] for item in result["messages"]] == ["Subject 1", "Subject 2"]
+
+
+def test_upcoming_events_follows_google_pagination_and_preserves_event_details(tmp_path, monkeypatch):
+    client_file = tmp_path / "client.json"
+    client_file.write_text("{}")
+    service = _service(tmp_path, client_file)
+    page_tokens = []
+
+    class Request:
+        def __init__(self, value):
+            self.value = value
+
+        def execute(self):
+            return self.value
+
+    class Events:
+        def list(self, **kwargs):
+            page_tokens.append(kwargs.get("pageToken"))
+            if kwargs.get("pageToken") is None:
+                return Request({
+                    "items": [{
+                        "id": "e1", "summary": "All day", "location": "Room",
+                        "description": "Full description",
+                        "start": {"date": "2026-08-11"}, "end": {"date": "2026-08-12"},
+                    }],
+                    "nextPageToken": "next",
+                })
+            return Request({
+                "items": [{
+                    "id": "e2", "summary": "Timed",
+                    "start": {"dateTime": "2026-08-12T09:00:00-05:00"},
+                    "end": {"dateTime": "2026-08-12T10:00:00-05:00"},
+                }]
+            })
+
+    events = Events()
+    monkeypatch.setattr(
+        service,
+        "calendar",
+        lambda: type("Calendar", (), {"events": lambda self: events})(),
+    )
+
+    result = service.upcoming_events(days=7)
+    assert page_tokens == [None, "next"]
+    assert result["count"] == 2
+    assert result["events"][0]["all_day"] is True
+    assert result["events"][0]["description"] == "Full description"
+    assert result["events"][1]["all_day"] is False

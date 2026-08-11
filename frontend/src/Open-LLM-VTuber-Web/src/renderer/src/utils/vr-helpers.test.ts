@@ -7,6 +7,7 @@ import {
   furnitureCenterSceneY,
   furnitureDecalLayouts,
   furniturePanelContent,
+  furniturePanelDocument,
   furniturePanelLayout,
   furniturePanelRotationY,
   browserEndpoints,
@@ -31,6 +32,14 @@ import {
   viewerPoseCamera,
   viewerWorldPositionFromPose,
   withRendererMode,
+  backPanel,
+  createPanelViewState,
+  navigatePanel,
+  panelViewport,
+  panelScrollRepeatStep,
+  reconcilePanelViewState,
+  scrollPanel,
+  wrappedPanelLines,
 } from "./vr-helpers";
 import {
   currentActivityLabel,
@@ -459,6 +468,86 @@ describe("VR furniture presentation helpers", () => {
     expect(transientTriggerBehavior("email_card", "message body")).toBe("page");
     expect(nextEmailPage(0, 1601)).toBe(1);
     expect(nextEmailPage(3, 1601)).toBe(0);
+  });
+
+  it("navigates, returns, and restores the previous page scroll", () => {
+    const document = {
+      rootPageId: "a",
+      pages: [
+        { id: "a", title: "A", lines: ["1", "2", "3", "4"], actions: [] },
+        { id: "b", title: "B", lines: ["detail"], actions: [] },
+      ],
+    };
+    let state = createPanelViewState(document);
+    state = scrollPanel(document, state, 3, 2);
+    expect(state.scroll).toBe(2);
+    state = navigatePanel(document, state, "b");
+    expect(state).toMatchObject({ pageId: "b", scroll: 0 });
+    expect(backPanel(state)).toMatchObject({ pageId: "a", scroll: 2 });
+  });
+
+  it("wraps unspaced text without losing its ending and scrolls to the final line", () => {
+    const source = "这是一个没有空格而且足够长的中文字符串用于确认最后的文字不会丢失";
+    const wrapped = wrappedPanelLines([source], 8);
+    expect(wrapped.join("")).toBe(source);
+    const document = {
+      rootPageId: "root",
+      pages: [{ id: "root", title: "Text", lines: [source], actions: [] }],
+    };
+    const state = scrollPanel(document, createPanelViewState(document), 3, 99);
+    const viewport = panelViewport(document, state, 3);
+    expect(viewport.scroll).toBe(viewport.maxScroll);
+    expect(wrapped.join("").endsWith("不会丢失")).toBe(true);
+  });
+
+  it("applies a scroll dead zone, initial delay, and held-stick repeat", () => {
+    expect(panelScrollRepeatStep(0.4, 0, 0, 100)).toEqual({ delta: 0, direction: 0, nextAt: 0 });
+    const first = panelScrollRepeatStep(0.8, 0, 0, 100);
+    expect(first).toEqual({ delta: 1, direction: 1, nextAt: 450 });
+    expect(panelScrollRepeatStep(0.8, first.direction, first.nextAt, 300).delta).toBe(0);
+    expect(panelScrollRepeatStep(0.8, first.direction, first.nextAt, 450)).toEqual({
+      delta: 1, direction: 1, nextAt: 570,
+    });
+    expect(panelScrollRepeatStep(-0.8, 1, 570, 460).delta).toBe(-1);
+  });
+
+  it("falls back to the root when refreshed content removes the current page", () => {
+    const original = {
+      rootPageId: "root",
+      pages: [
+        { id: "root", title: "Root", lines: [], actions: [] },
+        { id: "detail", title: "Detail", lines: [], actions: [] },
+      ],
+    };
+    const state = navigatePanel(original, createPanelViewState(original), "detail");
+    const refreshed = { rootPageId: "root", pages: [original.pages[0]] };
+    expect(reconcilePanelViewState(refreshed, state)).toEqual(createPanelViewState(refreshed));
+  });
+
+  it("builds recent-mail, calendar, and complete plan detail pages", () => {
+    const mail = furniturePanelDocument("google_gmail_unread", {
+      messages: [
+        { message_id: "m1", subject: "A very long subject", sender: "Ada", received_at: "Today", snippet: "Preview" },
+        { message_id: "m2", subject: "Second", sender: "Bo", received_at: "Today", snippet: "Preview" },
+        { message_id: "m3", subject: "Third", sender: "Cy", received_at: "Today", snippet: "Preview" },
+      ],
+    }, "Mailbox");
+    expect(mail.pages[0].actions).toHaveLength(3);
+    expect(mail.pages[0].lines.join(" ")).toContain("A very long subject");
+
+    const calendar = furniturePanelDocument("google_calendar_status", {
+      events: [{ event_id: "e1", title: "Review", start: "2026-08-11T09:00:00-05:00", end: "2026-08-11T10:00:00-05:00", description: "Full notes" }],
+    }, "Calendar");
+    expect(calendar.pages.some((page) => page.id === "event-e1" && page.lines.includes("Full notes"))).toBe(true);
+
+    const plans = furniturePanelDocument("plan_status", {
+      plan_details: [{ plan_id: "p1", title: "Launch", goal: "Ship safely", steps: ["One", "Two"], notes: "Keep rollback", status: "pending", revision: 2 }],
+      pending: [],
+    }, "Planning Desk");
+    const detail = plans.pages.find((page) => page.id === "plan-p1")!;
+    expect(detail.lines).toContain("Goal: Ship safely");
+    expect(detail.lines).toContain("2. Two");
+    expect(detail.actions.map((action) => action.label)).toEqual(["Approve", "Decline"]);
   });
 
   it("uses elevation as the furniture centre without adding half-height", () => {

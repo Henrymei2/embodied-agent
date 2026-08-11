@@ -31,6 +31,8 @@ from .furniture_state import (
     drawing_board_snapshot,
     bookshelf_snapshot,
     plan_snapshot,
+    plan_detail,
+    plan_details,
     reading_snapshot,
     record_plan_decision,
     timer_snapshot,
@@ -219,6 +221,56 @@ def init_google_integration_routes(service: GoogleIntegrationService) -> APIRout
                 {"error": "Unread Gmail messages are unavailable."}, status_code=502
             )
 
+    @router.get("/gmail/recent")
+    async def gmail_recent(limit: int = 3):
+        from .demo_scenarios import simulated_fixture
+
+        if limit < 1 or limit > 10:
+            return JSONResponse(
+                {"error": "limit must be between 1 and 10."}, status_code=400
+            )
+        fixture = simulated_fixture()
+        if fixture is not None:
+            message = fixture["email"]
+            return JSONResponse(
+                {"messages": [message], "count": 1, "simulated": True}
+            )
+        try:
+            return JSONResponse(
+                await run_in_threadpool(service.recent_messages, limit=limit)
+            )
+        except GoogleIntegrationError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except Exception as exc:
+            logger.warning("Recent Gmail listing failed: type={}", type(exc).__name__)
+            return JSONResponse(
+                {"error": "Recent Gmail messages are unavailable."}, status_code=502
+            )
+
+    @router.get("/calendar/upcoming")
+    async def calendar_upcoming(days: int = 7):
+        from .demo_scenarios import simulated_fixture
+
+        if days < 1 or days > 31:
+            return JSONResponse(
+                {"error": "days must be between 1 and 31."}, status_code=400
+            )
+        if simulated_fixture() is not None:
+            return JSONResponse(
+                {"events": [], "count": 0, "range_start": "", "range_end": "", "simulated": True}
+            )
+        try:
+            return JSONResponse(
+                await run_in_threadpool(service.upcoming_events, days=days)
+            )
+        except GoogleIntegrationError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        except Exception as exc:
+            logger.warning("Calendar event listing failed: type={}", type(exc).__name__)
+            return JSONResponse(
+                {"error": "Calendar events are unavailable."}, status_code=502
+            )
+
     @router.get("/authorize")
     async def google_authorize():
         try:
@@ -285,8 +337,10 @@ def init_furniture_routes() -> APIRouter:
         return JSONResponse(await run_in_threadpool(reading_snapshot))
 
     @router.get("/plans")
-    async def plan_window():
+    async def plan_window(include_details: bool = False):
         plans = await run_in_threadpool(plan_snapshot)
+        if include_details:
+            plans["plan_details"] = await run_in_threadpool(plan_details)
         try:
             actions = await run_in_threadpool(
                 get_action_transaction_journal(workspace_root()).pending_snapshot
@@ -315,6 +369,16 @@ def init_furniture_routes() -> APIRouter:
             },
             headers={"Cache-Control": "no-store"},
         )
+
+    @router.get("/plans/{plan_id}")
+    async def plan_detail_window(plan_id: str):
+        try:
+            detail = await run_in_threadpool(plan_detail, plan_id)
+        except (OSError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if detail is None:
+            return JSONResponse({"error": "plan was not found"}, status_code=404)
+        return JSONResponse(detail, headers={"Cache-Control": "no-store"})
 
     @router.get("/skills")
     async def skill_window():

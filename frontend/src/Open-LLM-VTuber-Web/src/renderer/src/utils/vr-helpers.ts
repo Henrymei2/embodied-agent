@@ -86,7 +86,9 @@ const BROWSER_FURNITURE_PANEL_LAYOUT: FurniturePanelLayout = {
 };
 
 export function furniturePanelLayout(provider?: string): FurniturePanelLayout {
-  if (provider === "plan_status") return PLANS_FURNITURE_PANEL_LAYOUT;
+  if (["plan_status", "google_gmail_unread", "google_calendar_status", "transient_email"].includes(provider || "")) {
+    return PLANS_FURNITURE_PANEL_LAYOUT;
+  }
   if (provider === "browser_status") return BROWSER_FURNITURE_PANEL_LAYOUT;
   return STANDARD_FURNITURE_PANEL_LAYOUT;
 }
@@ -101,6 +103,320 @@ export interface FurniturePanelContent {
   decision: FurniturePanelDecisionTarget | null;
   /** Optional screenshot/panel image rendered above the text lines. */
   imageUrl?: string | null;
+}
+
+export type VrPanelAction =
+  | { kind: "navigate"; id: string; label: string; targetPageId: string }
+  | {
+    kind: "decision";
+    id: string;
+    label: string;
+    collection: "plans" | "skills";
+    targetId: string;
+    decision: "approved" | "declined";
+  };
+
+export interface VrPanelPage {
+  id: string;
+  title: string;
+  lines: string[];
+  actions: VrPanelAction[];
+}
+
+export interface VrPanelDocument {
+  rootPageId: string;
+  pages: VrPanelPage[];
+}
+
+export interface VrPanelHistoryEntry {
+  pageId: string;
+  scroll: number;
+}
+
+export interface VrPanelViewState {
+  pageId: string;
+  history: VrPanelHistoryEntry[];
+  scroll: number;
+}
+
+export function createPanelViewState(document: VrPanelDocument): VrPanelViewState {
+  return { pageId: document.rootPageId, history: [], scroll: 0 };
+}
+
+export function reconcilePanelViewState(
+  document: VrPanelDocument,
+  state: VrPanelViewState | undefined,
+): VrPanelViewState {
+  const pageIds = new Set(document.pages.map((page) => page.id));
+  if (!state || !pageIds.has(state.pageId)) return createPanelViewState(document);
+  return {
+    pageId: state.pageId,
+    scroll: Math.max(0, state.scroll),
+    history: state.history.filter((entry) => pageIds.has(entry.pageId)),
+  };
+}
+
+export function navigatePanel(
+  document: VrPanelDocument,
+  state: VrPanelViewState,
+  targetPageId: string,
+): VrPanelViewState {
+  if (!document.pages.some((page) => page.id === targetPageId)) return state;
+  return {
+    pageId: targetPageId,
+    scroll: 0,
+    history: [...state.history, { pageId: state.pageId, scroll: state.scroll }],
+  };
+}
+
+export function backPanel(state: VrPanelViewState): VrPanelViewState {
+  const previous = state.history[state.history.length - 1];
+  return previous
+    ? { pageId: previous.pageId, scroll: previous.scroll, history: state.history.slice(0, -1) }
+    : state;
+}
+
+function wrapOnePanelLine(value: string, maxChars: number): string[] {
+  const text = value.trim();
+  if (!text) return [""];
+  const words = text.split(/\s+/);
+  const output: string[] = [];
+  let current = "";
+  const flush = () => {
+    if (current) output.push(current);
+    current = "";
+  };
+  for (const original of words) {
+    let word = original;
+    if (word.length > maxChars) {
+      flush();
+      while (word.length > maxChars) {
+        output.push(word.slice(0, maxChars));
+        word = word.slice(maxChars);
+      }
+    }
+    if (!word) continue;
+    if (!current) current = word;
+    else if (current.length + word.length + 1 <= maxChars) current += ` ${word}`;
+    else {
+      flush();
+      current = word;
+    }
+  }
+  flush();
+  return output.length ? output : [""];
+}
+
+export function wrappedPanelLines(lines: readonly string[], maxChars = 48): string[] {
+  return lines.flatMap((line) => String(line).split(/\r?\n/).flatMap((part) => (
+    wrapOnePanelLine(part, maxChars)
+  )));
+}
+
+export function panelViewport(
+  document: VrPanelDocument,
+  state: VrPanelViewState,
+  maxLines: number,
+) {
+  const page = document.pages.find((item) => item.id === state.pageId)
+    || document.pages[0];
+  const content = wrappedPanelLines(page?.lines || []);
+  const availableSlots = Math.max(1, maxLines - 1);
+  const contentSlots = content.length > availableSlots
+    ? Math.max(1, availableSlots - 1)
+    : availableSlots;
+  const maxScroll = Math.max(0, content.length - contentSlots);
+  const scroll = Math.min(Math.max(0, state.scroll), maxScroll);
+  const visible = content.slice(scroll, scroll + contentSlots);
+  if (maxScroll > 0) {
+    visible.push(`↕ ${scroll + 1}-${Math.min(
+      content.length, scroll + contentSlots,
+    )}/${content.length}`);
+  }
+  return { page, lines: [page?.title || "Panel", ...visible], scroll, maxScroll };
+}
+
+export function scrollPanel(
+  document: VrPanelDocument,
+  state: VrPanelViewState,
+  maxLines: number,
+  delta: number,
+): VrPanelViewState {
+  const viewport = panelViewport(document, state, maxLines);
+  return { ...state, scroll: Math.min(viewport.maxScroll, Math.max(0, viewport.scroll + delta)) };
+}
+
+export function panelScrollRepeatStep(
+  axis: number,
+  direction: number,
+  nextAt: number,
+  now: number,
+  threshold = 0.55,
+  initialDelay = 350,
+  repeatDelay = 120,
+) {
+  const nextDirection = Math.abs(axis) >= threshold ? (axis > 0 ? 1 : -1) : 0;
+  if (!nextDirection) return { delta: 0, direction: 0, nextAt: 0 };
+  if (nextDirection !== direction) {
+    return { delta: nextDirection, direction: nextDirection, nextAt: now + initialDelay };
+  }
+  if (now >= nextAt) {
+    return { delta: nextDirection, direction: nextDirection, nextAt: now + repeatDelay };
+  }
+  return { delta: 0, direction, nextAt };
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    : [];
+}
+
+function displayTime(value: unknown) {
+  if (typeof value !== "string" || !value) return "";
+  return value.replace("T", " ").replace(/([+-]\d\d:\d\d|Z)$/, "");
+}
+
+/** Build the multi-page content for upgraded furniture, while wrapping every
+ * existing furniture provider in a compatible single-page document. */
+export function furniturePanelDocument(
+  provider: string | undefined,
+  liveData: Record<string, unknown> | null,
+  title: string,
+  body = "",
+): VrPanelDocument {
+  if (provider === "google_gmail_unread") {
+    const messages = recordArray(liveData?.messages).slice(0, 3);
+    const root: VrPanelPage = {
+      id: "root", title, actions: [],
+      lines: messages.length ? [body, ...messages.map((message, index) => (
+        `${index + 1}. ${String(message.subject || "(no subject)")} — ${String(message.sender || "Unknown sender")} ${String(message.received_at || "")}`
+      ))] : [body, typeof liveData?.error === "string" ? liveData.error : "No recent inbox messages."],
+    };
+    const pages = messages.map((message, index): VrPanelPage => ({
+      id: `message-${String(message.message_id || index)}`,
+      title: String(message.subject || "(no subject)"),
+      lines: [
+        `From: ${String(message.sender || "Unknown sender")}`,
+        `Received: ${String(message.received_at || "Unknown")}`,
+        String(message.snippet || "No preview is available."),
+      ],
+      actions: [],
+    }));
+    root.actions = pages.map((page, index) => ({
+      kind: "navigate", id: `mail-${index}`, label: `Open ${index + 1}`, targetPageId: page.id,
+    }));
+    return { rootPageId: "root", pages: [root, ...pages] };
+  }
+  if (provider === "google_calendar_status") {
+    const events = recordArray(liveData?.events);
+    const pages: VrPanelPage[] = [];
+    const chunks = events.length ? Array.from({ length: Math.ceil(events.length / 2) }, (_, index) => (
+      events.slice(index * 2, index * 2 + 2)
+    )) : [[]];
+    chunks.forEach((chunk, pageIndex) => {
+      const id = `events-${pageIndex}`;
+      const actions: VrPanelAction[] = chunk.map((event, index) => ({
+        kind: "navigate", id: `event-${pageIndex}-${index}`,
+        label: `Open ${pageIndex * 2 + index + 1}`,
+        targetPageId: `event-${String(event.event_id || `${pageIndex}-${index}`)}`,
+      }));
+      if (pageIndex + 1 < chunks.length) actions.push({
+        kind: "navigate", id: `events-next-${pageIndex}`, label: "Next", targetPageId: `events-${pageIndex + 1}`,
+      });
+      pages.push({
+        id, title: pageIndex ? `${title} · ${pageIndex + 1}` : title,
+        lines: chunk.length ? chunk.flatMap((event, index) => [
+          `${pageIndex * 2 + index + 1}. ${String(event.title || "(untitled event)")}`,
+          `${displayTime(event.start)}${event.all_day === true ? " · all day" : ""}`,
+        ]) : [typeof liveData?.error === "string" ? liveData.error : "No events in the next seven days."],
+        actions,
+      });
+      chunk.forEach((event, index) => pages.push({
+        id: `event-${String(event.event_id || `${pageIndex}-${index}`)}`,
+        title: String(event.title || "(untitled event)"),
+        lines: [
+          `Start: ${displayTime(event.start) || "Unknown"}`,
+          `End: ${displayTime(event.end) || "Unknown"}`,
+          ...(event.all_day === true ? ["All-day event"] : []),
+          ...(event.location ? [`Location: ${String(event.location)}`] : []),
+          ...(event.description ? [String(event.description)] : ["No description."]),
+        ], actions: [],
+      }));
+    });
+    return { rootPageId: "events-0", pages };
+  }
+  if (provider === "plan_status") {
+    const details = recordArray(liveData?.plan_details);
+    const authorizations = recordArray(liveData?.pending).filter((item) => (
+      String(item.plan_id || "").startsWith("authz-")
+    ));
+    const entries: Record<string, unknown>[] = [
+      ...details.map((item) => ({ ...item, entry_type: "plan" })),
+      ...authorizations.map((item) => ({ ...item, entry_type: "authorization" })),
+    ];
+    entries.sort((left, right) => String(
+      right.updated_at || right.created_at || "",
+    ).localeCompare(String(left.updated_at || left.created_at || "")));
+    const pages: VrPanelPage[] = [];
+    const chunks = entries.length ? Array.from({ length: Math.ceil(entries.length / 2) }, (_, index) => (
+      entries.slice(index * 2, index * 2 + 2)
+    )) : [[]];
+    chunks.forEach((chunk, pageIndex) => {
+      const actions: VrPanelAction[] = chunk.map((entry, index) => ({
+        kind: "navigate", id: `plan-open-${pageIndex}-${index}`,
+        label: `Open ${pageIndex * 2 + index + 1}`,
+        targetPageId: `plan-${String(entry.plan_id || `${pageIndex}-${index}`)}`,
+      }));
+      if (pageIndex + 1 < chunks.length) actions.push({
+        kind: "navigate", id: `plans-next-${pageIndex}`, label: "Next", targetPageId: `plans-${pageIndex + 1}`,
+      });
+      pages.push({
+        id: `plans-${pageIndex}`, title: pageIndex ? `${title} · ${pageIndex + 1}` : title,
+        lines: chunk.length ? chunk.flatMap((entry, index) => [
+          `${pageIndex * 2 + index + 1}. ${String(entry.title || entry.plan_id || "Untitled plan")}`,
+          `${entry.entry_type === "authorization" ? "Authorization" : "Plan"} · ${decisionStatusLabel(entry.status) || "Pending"}`,
+        ]) : ["No plans have been saved."], actions,
+      });
+      chunk.forEach((entry, index) => {
+        const targetId = String(entry.plan_id || `${pageIndex}-${index}`);
+        const pending = String(entry.status || "pending") === "pending";
+        const detailActions: VrPanelAction[] = pending ? (["approved", "declined"] as const).map((decision) => ({
+          kind: "decision", id: `plan-${targetId}-${decision}`,
+          label: decision === "approved" ? "Approve" : "Decline",
+          collection: "plans", targetId, decision,
+        })) : [];
+        pages.push({
+          id: `plan-${targetId}`, title: String(entry.title || targetId),
+          lines: entry.entry_type === "authorization" ? [
+            "Authorization request", `Status: ${decisionStatusLabel(entry.status) || "Pending"}`,
+          ] : [
+            `Status: ${decisionStatusLabel(entry.status)}`,
+            `Revision: ${String(entry.revision || 1)}`,
+            `Goal: ${String(entry.goal || "")}`,
+            ...(Array.isArray(entry.steps) ? entry.steps.map((step: unknown, stepIndex: number) => `${stepIndex + 1}. ${String(step)}`) : []),
+            ...(entry.notes ? [`Notes: ${String(entry.notes)}`] : []),
+            `Created: ${displayTime(entry.created_at)}`,
+            `Updated: ${displayTime(entry.updated_at)}`,
+            ...(entry.decided_at ? [`Decided: ${displayTime(entry.decided_at)}`] : []),
+            ...(entry.withdraw_reason ? [`Withdrawn: ${String(entry.withdraw_reason)}`] : []),
+          ], actions: detailActions,
+        });
+      });
+    });
+    return { rootPageId: "plans-0", pages };
+  }
+  const content = furniturePanelContent(provider, liveData);
+  return {
+    rootPageId: "root",
+    pages: [{ id: "root", title, lines: [body, ...content.lines], actions: content.decision ? (["approved", "declined"] as const).map((decision) => ({
+      kind: "decision", id: `${content.decision!.collection}-${decision}`,
+      label: decision === "approved" ? "Approve" : "Decline",
+      collection: content.decision!.collection,
+      targetId: content.decision!.id,
+      decision,
+    })) : [] }],
+  };
 }
 
 const DECISION_STATUS_LABELS: Record<string, string> = {

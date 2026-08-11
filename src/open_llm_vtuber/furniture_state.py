@@ -581,7 +581,59 @@ def plan_snapshot(limit: int = 3) -> dict[str, Any]:
         "pending": [as_window_plan(plan) for plan in pending[:limit]],
         "pending_count": len(pending),
         "recent": as_window_plan(decided[-1]) if decided else None,
+        "plans": [
+            {
+                "plan_id": str(plan.get("plan_id", ""))[:80],
+                "title": str(plan.get("title", ""))[:160],
+                "status": str(plan.get("status", "pending")),
+                "updated_at": plan.get("updated_at") or plan.get("created_at"),
+                "entry_type": "plan",
+            }
+            for plan in sorted(
+                plans,
+                key=lambda item: str(item.get("updated_at") or item.get("created_at", "")),
+                reverse=True,
+            )
+        ],
     }
+
+
+def _as_plan_detail(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "plan_id": str(plan.get("plan_id", "")),
+        "title": str(plan.get("title", "")),
+        "goal": str(plan.get("goal", "")),
+        "steps": [str(step) for step in plan.get("steps", [])]
+        if isinstance(plan.get("steps"), list)
+        else [],
+        "notes": str(plan.get("notes", "")),
+        "status": str(plan.get("status", "pending")),
+        "revision": plan.get("revision", 1),
+        "created_at": plan.get("created_at"),
+        "updated_at": plan.get("updated_at"),
+        "decided_at": plan.get("decided_at"),
+        "decided_by": plan.get("decided_by"),
+        "withdraw_reason": str(plan.get("withdraw_reason", "")),
+        "entry_type": "plan",
+    }
+
+
+def plan_detail(plan_id: str) -> dict[str, Any] | None:
+    """Return one stored desk plan without the hover-window truncation."""
+    if not isinstance(plan_id, str) or not plan_id or len(plan_id) > 80:
+        raise ValueError("plan_id must be a non-empty string")
+    plan = next((item for item in load_plans() if item.get("plan_id") == plan_id), None)
+    return _as_plan_detail(plan) if plan is not None else None
+
+
+def plan_details() -> list[dict[str, Any]]:
+    """Return every stored desk plan newest-first with complete bounded fields."""
+    plans = sorted(
+        load_plans(),
+        key=lambda item: str(item.get("updated_at") or item.get("created_at", "")),
+        reverse=True,
+    )
+    return [_as_plan_detail(plan) for plan in plans]
 
 
 def scheduler_events_snapshot() -> dict[str, Any]:

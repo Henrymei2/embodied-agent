@@ -168,6 +168,29 @@ async def test_physical_actions_remain_independent_frontend_affordances(monkeypa
     assert captured == [("show_vr_panel", {"title": "Plan", "blocks": ["One", "Two"]})]
 
 
+async def test_vr_panel_accepts_bounded_linked_pages(monkeypatch):
+    captured: list[tuple[str, dict]] = []
+
+    async def post(action, args):
+        captured.append((action, args))
+        return True, None, {"summary": "Panel created."}
+
+    monkeypatch.setattr(scene_tools, "_get_scene_mode", lambda: "vr")
+    monkeypatch.setattr(scene_tools, "_post_frontend_action_result", post)
+    pages = [
+        {"id": "a", "title": "A", "blocks": ["First"], "links": [{"label": "Next", "target_page_id": "b"}]},
+        {"id": "b", "title": "B", "blocks": ["Second"], "links": []},
+    ]
+
+    assert await scene_tools.show_vr_panel("Guide", pages=pages) == "Panel created."
+    assert captured[0][1]["initial_page_id"] == "a"
+    assert captured[0][1]["pages"] == pages
+    assert "does not name" in await scene_tools.show_vr_panel(
+        "Broken",
+        pages=[{"id": "a", "title": "A", "blocks": ["First"], "links": [{"label": "Bad", "target_page_id": "missing"}]}],
+    )
+
+
 async def test_remove_object_protects_avatar(monkeypatch):
     stage = get_default_stage("character")
     monkeypatch.setattr(scene_tools, "load_stage_state", lambda _conf_uid: stage)

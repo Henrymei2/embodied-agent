@@ -423,55 +423,111 @@ async def list_physical_entities() -> str:
 
 
 @mcp.tool()
-async def show_vr_panel(title: str, blocks: list[Any]) -> str:
-    """Create a bounded, movable information panel in front of the VR user."""
+async def show_vr_panel(
+    title: str,
+    blocks: list[Any] | None = None,
+    pages: list[Any] | None = None,
+    initial_page_id: str = "",
+) -> str:
+    """Create a bounded, movable information panel in front of the VR user.
+
+    Existing callers can pass ``blocks`` for one scrollable page. To create a
+    navigable document, pass up to eight pages. Each page accepts ``id``,
+    ``title``, ``blocks`` and optional ``links`` entries containing only
+    ``label`` and ``target_page_id``.
+    """
     if not isinstance(title, str) or not title.strip() or len(title) > 120:
         return "Error: panel title must contain 1-120 characters."
-    if not isinstance(blocks, list) or not 1 <= len(blocks) <= 6:
-        return "Error: panel must contain 1-6 text, list, or key-value blocks."
-    total_text = 0
-    for block in blocks:
-        if isinstance(block, str):
-            total_text += len(block)
-            continue
-        if not isinstance(block, dict) or block.get("type") not in {
-            "text",
-            "list",
-            "key_value",
-        }:
-            return "Error: panel blocks must be text, list, or key_value structures."
-        allowed = {
-            "text": {"type", "text"},
-            "list": {"type", "items"},
-            "key_value": {"type", "items"},
-        }[str(block["type"])]
-        if set(block) - allowed:
-            return "Error: panel block contains unsupported fields."
-        value = block.get("text") if block["type"] == "text" else block.get("items")
-        if block["type"] == "text" and not isinstance(value, str):
-            return "Error: text blocks require a string text field."
-        if block["type"] == "list" and (
-            not isinstance(value, list)
-            or len(value) > 12
-            or any(not isinstance(item, str) for item in value)
-        ):
-            return "Error: list blocks require at most 12 string items."
-        if block["type"] == "key_value" and (
-            not isinstance(value, dict)
-            or len(value) > 12
-            or any(
-                not isinstance(key, str) or not isinstance(item, str)
-                for key, item in value.items()
+
+    def validate_blocks(value: Any) -> tuple[str | None, int]:
+        if not isinstance(value, list) or not 1 <= len(value) <= 6:
+            return "panel must contain 1-6 text, list, or key-value blocks.", 0
+        total = 0
+        for block in value:
+            if isinstance(block, str):
+                total += len(block)
+                continue
+            if not isinstance(block, dict) or block.get("type") not in {
+                "text", "list", "key_value"
+            }:
+                return "panel blocks must be text, list, or key_value structures.", 0
+            allowed = {
+                "text": {"type", "text"},
+                "list": {"type", "items"},
+                "key_value": {"type", "items"},
+            }[str(block["type"])]
+            if set(block) - allowed:
+                return "panel block contains unsupported fields.", 0
+            value = block.get("text") if block["type"] == "text" else block.get("items")
+            if block["type"] == "text" and not isinstance(value, str):
+                return "text blocks require a string text field.", 0
+            if block["type"] == "list" and (
+                not isinstance(value, list) or len(value) > 12
+                or any(not isinstance(item, str) for item in value)
+            ):
+                return "list blocks require at most 12 string items.", 0
+            if block["type"] == "key_value" and (
+                not isinstance(value, dict) or len(value) > 12
+                or any(not isinstance(key, str) or not isinstance(item, str) for key, item in value.items())
+            ):
+                return "key_value blocks require at most 12 string pairs.", 0
+            total += (
+                len(value) if isinstance(value, str)
+                else sum(len(str(key)) + len(item) for key, item in value.items())
+                if isinstance(value, dict)
+                else sum(len(item) for item in value)
             )
-        ):
-            return "Error: key_value blocks require at most 12 string pairs."
-        total_text += (
-            len(value)
-            if isinstance(value, str)
-            else sum(len(str(key)) + len(item) for key, item in value.items())
-            if isinstance(value, dict)
-            else sum(len(item) for item in value)
-        )
+        return None, total
+
+    if pages is not None:
+        if blocks not in (None, []):
+            return "Error: use either blocks or pages, not both."
+        if not isinstance(pages, list) or not 1 <= len(pages) <= 8:
+            return "Error: panel pages must contain 1-8 pages."
+        page_ids: set[str] = set()
+        total_text = 0
+        for page in pages:
+            if not isinstance(page, dict) or set(page) - {"id", "title", "blocks", "links"}:
+                return "Error: panel page contains unsupported fields."
+            page_id = page.get("id")
+            page_title = page.get("title")
+            if not isinstance(page_id, str) or not page_id or len(page_id) > 64 or page_id in page_ids:
+                return "Error: panel page ids must be unique strings of 1-64 characters."
+            if not isinstance(page_title, str) or not page_title.strip() or len(page_title) > 120:
+                return "Error: panel page titles must contain 1-120 characters."
+            error, text_count = validate_blocks(page.get("blocks"))
+            if error:
+                return f"Error: {error}"
+            links = page.get("links", [])
+            if not isinstance(links, list) or len(links) > 4:
+                return "Error: a panel page can contain at most four links."
+            for link in links:
+                if not isinstance(link, dict) or set(link) != {"label", "target_page_id"}:
+                    return "Error: panel links require only label and target_page_id."
+                if not isinstance(link["label"], str) or not 1 <= len(link["label"]) <= 80:
+                    return "Error: panel link labels must contain 1-80 characters."
+                if not isinstance(link["target_page_id"], str):
+                    return "Error: panel link targets must be strings."
+                total_text += len(link["label"])
+            page_ids.add(page_id)
+            total_text += len(page_title) + text_count
+        if total_text > 8000:
+            return "Error: panel content cannot exceed 8000 characters."
+        if initial_page_id and initial_page_id not in page_ids:
+            return "Error: initial_page_id does not name a panel page."
+        for page in pages:
+            if any(link["target_page_id"] not in page_ids for link in page.get("links", [])):
+                return "Error: panel link target does not name a panel page."
+        payload = {
+            "title": title.strip(),
+            "pages": pages,
+            "initial_page_id": initial_page_id or pages[0]["id"],
+        }
+        return await _physical_action("show_vr_panel", payload)
+
+    error, total_text = validate_blocks(blocks)
+    if error:
+        return f"Error: {error}"
     if total_text > 4000:
         return "Error: panel content cannot exceed 4000 characters."
     return await _physical_action(

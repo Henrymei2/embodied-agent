@@ -27,7 +27,7 @@ import {
   loadFurnitureModel,
 } from "@/utils/vr-furniture-models";
 import {
-  furniturePanelContent,
+  furniturePanelDocument,
   floorToScene,
   furniturePanelLayout,
   furniturePanelRotationY,
@@ -38,13 +38,20 @@ import {
   isViewerPositionClear,
   pressedEdge,
   isRayGrabbableNode,
-  nextEmailPage,
   questLocomotionStick,
   rescaleThumbstick,
   selectVrRayHit,
   selectViewerSpawn,
   snapTurnStep,
-  transientTriggerBehavior,
+  backPanel,
+  navigatePanel,
+  panelViewport,
+  panelScrollRepeatStep,
+  reconcilePanelViewState,
+  scrollPanel,
+  type VrPanelAction,
+  type VrPanelDocument,
+  type VrPanelViewState,
   updateFurniturePanelProximity,
   clampCaptionText,
   viewerForwardFromPose,
@@ -114,28 +121,32 @@ interface VrRuntime {
   scenarioPage: VrScenarioMenuPage;
   aPressed: boolean;
   renderScenarioMenu: () => void;
+  panelViews: Map<string, VrPanelViewState>;
+  scrollDirection: number;
+  scrollNextAt: number;
 }
 
-interface PanelAction {
-  collection: "plans" | "skills";
-  id: string;
-  decision: "approved" | "declined";
-  nodeId: string;
+interface PanelControlAction {
+  action: VrPanelAction;
+  ownerKey: string;
+  nodeId?: string;
 }
 
 const FURNITURE_PANEL_REFRESH_MS = 3000;
-const INTERACTIVE_FURNITURE_PROVIDERS = new Set(["plan_status", "skill_status"]);
+const REFRESHING_FURNITURE_PROVIDERS = new Set([
+  "plan_status", "skill_status", "google_gmail_unread", "google_calendar_status",
+]);
 
 const providerRoutes: Record<string, string> = {
   todo_list: "/api/furniture/todo",
   timer_status: "/api/furniture/timers",
-  google_gmail_unread: "/api/integrations/google/gmail/unread-status",
+  google_gmail_unread: "/api/integrations/google/gmail/recent?limit=3",
   bookshelf: "/api/furniture/bookshelf",
   reading_status: "/api/furniture/reading",
-  plan_status: "/api/furniture/plans",
+  plan_status: "/api/furniture/plans?include_details=true",
   skill_status: "/api/furniture/skills",
   drawing_board_image: "/api/furniture/drawing-board",
-  google_calendar_status: "/api/integrations/google/status",
+  google_calendar_status: "/api/integrations/google/calendar/upcoming?days=7",
   browser_status: "/api/furniture/browser",
 };
 
@@ -639,6 +650,7 @@ export default function VrStage() {
       hoveredSelectable: null,
       scenarioMenu, scenarioPanel, scenarioMenuOpen: false, scenarioPage: "catalog",
       aPressed: false, renderScenarioMenu: () => undefined,
+      panelViews: new Map(), scrollDirection: 0, scrollNextAt: 0,
     };
     runtimeRef.current = runtime;
 
@@ -669,6 +681,7 @@ export default function VrStage() {
       if (dismiss) runtime.dismissedPanels.add(nodeId);
       const panel = runtime.panels.get(nodeId);
       if (!panel) return;
+      runtime.panelViews.delete(`furniture:${nodeId}`);
       scene.remove(panel);
       disposeObject(panel);
       runtime.panels.delete(nodeId);
@@ -818,11 +831,67 @@ export default function VrStage() {
 
     const removePanelActions = (panel: THREE.Mesh) => {
       [...panel.children].forEach((child) => {
-        if (child.userData.panelAction) {
+        if (child.userData.panelAction || child.userData.panelBack) {
           panel.remove(child);
           disposeObject(child);
         }
       });
+    };
+
+    const addPanelButton = (
+      panel: THREE.Mesh,
+      label: string,
+      x: number,
+      y: number,
+      width: number,
+      userData: Record<string, unknown>,
+    ) => {
+      const button = new THREE.Mesh(
+        new THREE.PlaneGeometry(width, 0.13),
+        new THREE.MeshBasicMaterial({
+          map: canvasTexture([label], 320, 96), transparent: true,
+        }),
+      );
+      button.position.set(x, y, 0.014);
+      Object.assign(button.userData, userData);
+      panel.add(button);
+    };
+
+    const renderPanelDocument = (panel: THREE.Mesh) => {
+      const document = panel.userData.panelDocument as VrPanelDocument;
+      const ownerKey = String(panel.userData.panelOwnerKey || "");
+      const layout = furniturePanelLayout(panel.userData.provider as string | undefined);
+      const state = reconcilePanelViewState(
+        document,
+        runtime.panelViews.get(ownerKey) || panel.userData.panelViewState as VrPanelViewState | undefined,
+      );
+      const viewport = panelViewport(document, state, layout.maxLines);
+      const nextState = { ...state, scroll: viewport.scroll };
+      runtime.panelViews.set(ownerKey, nextState);
+      panel.userData.panelViewState = nextState;
+      setPanelLines(panel, viewport.lines, panel.userData.panelImage as HTMLImageElement | null);
+      removePanelActions(panel);
+      if (nextState.history.length) {
+        addPanelButton(panel, "‹ Back", -0.54, layout.closePosition.y, 0.34, {
+          panelBack: ownerKey,
+        });
+      }
+      const actions = viewport.page.actions.slice(0, 4);
+      if (actions.length) {
+        const gap = 0.02;
+        const totalWidth = 1.24;
+        const width = (totalWidth - gap * (actions.length - 1)) / actions.length;
+        actions.forEach((action, index) => {
+          addPanelButton(
+            panel,
+            action.label,
+            -totalWidth / 2 + width / 2 + index * (width + gap),
+            layout.actionY,
+            width,
+            { panelAction: { action, ownerKey, nodeId: panel.userData.nodeId } satisfies PanelControlAction },
+          );
+        });
+      }
     };
 
     const renderPanelContent = (
@@ -837,40 +906,20 @@ export default function VrStage() {
         title: node.label || node.id,
         body: "No additional information is available for this furniture.",
       };
-      const content = furniturePanelContent(provider, liveData);
-      const lines = [
-        windowConfig.title,
-        windowConfig.body || "",
-        ...content.lines,
-      ];
-      if (provider === "google_calendar_status" && liveData?.connected !== true) {
-        lines.splice(2, 0, "Exit VR to connect Google");
-      }
-      if (failed) lines.splice(2, 0, "Live data unavailable");
-      lines.push("Close hides this panel until you leave");
-      setPanelLines(panel, lines, panelImage);
-      removePanelActions(panel);
-      if (content.decision) {
-        const { collection, id } = content.decision;
-        const layout = furniturePanelLayout(provider);
-        (["approved", "declined"] as const).forEach((decision, index) => {
-          const button = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.55, 0.15),
-            new THREE.MeshBasicMaterial({
-              map: canvasTexture([decision === "approved" ? "Approve" : "Decline"], 320, 96),
-              transparent: true,
-            }),
-          );
-          button.position.set(index === 0 ? -0.32 : 0.32, layout.actionY, 0.01);
-          button.userData.panelAction = {
-            collection,
-            id,
-            decision,
-            nodeId: node.id,
-          } satisfies PanelAction;
-          panel.add(button);
-        });
-      }
+      const normalizedData = failed
+        ? {
+          ...(liveData || {}),
+          error: typeof liveData?.error === "string"
+            ? liveData.error
+            : "Live data unavailable",
+        }
+        : liveData;
+      panel.userData.panelDocument = furniturePanelDocument(
+        provider, normalizedData, windowConfig.title, windowConfig.body || "",
+      );
+      panel.userData.panelImage = panelImage;
+      panel.userData.panelOwnerKey = `furniture:${node.id}`;
+      renderPanelDocument(panel);
     };
 
     const loadPanelImage = async (
@@ -916,11 +965,8 @@ export default function VrStage() {
           const response = await fetch(`${baseUrlRef.current}${route}`, {
             headers: { Accept: "application/json" },
           });
-          if (response.ok) {
-            liveData = await response.json() as Record<string, unknown>;
-          } else {
-            failed = true;
-          }
+          liveData = await response.json() as Record<string, unknown>;
+          failed = !response.ok;
         } catch (_error) {
           failed = true;
         }
@@ -978,6 +1024,7 @@ export default function VrStage() {
       panel.userData.node = node;
       panel.userData.nodeId = node.id;
       panel.userData.provider = windowConfig.provider;
+      panel.userData.panelOwnerKey = `furniture:${node.id}`;
       addCloseControl(
         panel,
         new THREE.Vector3(
@@ -992,15 +1039,17 @@ export default function VrStage() {
       await loadPanelContent(node.id, panel, generation, false);
     };
 
-    const activatePanelAction = async (action: PanelAction) => {
+    const activatePanelAction = async (control: PanelControlAction) => {
+      const action = control.action;
+      if (action.kind !== "decision") return;
       try {
-        const response = await fetch(`${baseUrlRef.current}/api/furniture/${action.collection}/${encodeURIComponent(action.id)}/decision`, {
+        const response = await fetch(`${baseUrlRef.current}/api/furniture/${action.collection}/${encodeURIComponent(action.targetId)}/decision`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ decision: action.decision }),
         });
         if (!response.ok) throw new Error("Decision was rejected");
-        const panel = runtime.panels.get(action.nodeId);
+        const panel = control.nodeId ? runtime.panels.get(control.nodeId) : undefined;
         if (!panel) return;
         // Optimistic feedback: drop the buttons and show the decision right
         // away, then let the authoritative refresh replace this text.
@@ -1014,7 +1063,7 @@ export default function VrStage() {
           `${noun} ${outcome} — refreshing…`,
           "Close hides this panel until you leave",
         ]);
-        void refreshPanel(action.nodeId);
+        if (control.nodeId) void refreshPanel(control.nodeId);
       } catch (_error) {
         // The furniture panel remains open so the user can retry.
       }
@@ -1040,9 +1089,32 @@ export default function VrStage() {
         return;
       }
       if (runtime.scenarioMenuOpen) return;
-      const panelAction = hit.object.userData.panelAction as PanelAction | undefined;
+      const panelAction = hit.object.userData.panelAction as PanelControlAction | undefined;
       if (panelAction) {
-        void activatePanelAction(panelAction);
+        const owner = ancestorWithData(hit.object, "panelDocument") as THREE.Mesh | null;
+        if (panelAction.action.kind === "navigate" && owner) {
+          const document = owner.userData.panelDocument as VrPanelDocument;
+          const state = reconcilePanelViewState(document, runtime.panelViews.get(panelAction.ownerKey));
+          runtime.panelViews.set(
+            panelAction.ownerKey,
+            navigatePanel(document, state, panelAction.action.targetPageId),
+          );
+          const render = owner.userData.renderPanelDocument as (() => void) | undefined;
+          if (render) render(); else renderPanelDocument(owner);
+        } else {
+          void activatePanelAction(panelAction);
+        }
+        return;
+      }
+      const panelBack = hit.object.userData.panelBack as string | undefined;
+      if (panelBack) {
+        const owner = ancestorWithData(hit.object, "panelDocument") as THREE.Mesh | null;
+        const state = runtime.panelViews.get(panelBack);
+        if (owner && state) {
+          runtime.panelViews.set(panelBack, backPanel(state));
+          const render = owner.userData.renderPanelDocument as (() => void) | undefined;
+          if (render) render(); else renderPanelDocument(owner);
+        }
         return;
       }
       const panelClose = hit.object.userData.panelClose as string | undefined;
@@ -1055,12 +1127,6 @@ export default function VrStage() {
         if (runtime.grabbed?.entityId === transientClose) runtime.grabbed = null;
         removeTransient(transientClose);
         emitPhysicalEvent({ kind: "entity_dismissed", entity_id: transientClose });
-        return;
-      }
-      const transientHit = ancestorData<VrTransientEntity>(hit.object, "transient");
-      if (transientHit && transientTriggerBehavior(transientHit.kind, transientHit.body) === "page") {
-        const page = nextEmailPage(transientHit.page || 0, transientHit.body!.length);
-        updateTransient({ ...transientHit, page });
         return;
       }
     };
@@ -1159,6 +1225,21 @@ export default function VrStage() {
     controllers.forEach((controller) => controller.addEventListener("squeezestart", handleSqueezeStart as never));
     controllers.forEach((controller) => controller.addEventListener("squeezeend", handleSqueezeEnd as never));
 
+    const scrollHoveredPanel = (controller: THREE.Object3D, delta: number) => {
+      const hit = rayHitFromController(controller);
+      const owner = hit ? ancestorWithData(hit.object, "panelDocument") as THREE.Mesh | null : null;
+      if (!owner) return;
+      const document = owner.userData.panelDocument as VrPanelDocument;
+      const ownerKey = String(owner.userData.panelOwnerKey || "");
+      const state = reconcilePanelViewState(document, runtime.panelViews.get(ownerKey));
+      const layout = furniturePanelLayout(owner.userData.provider as string | undefined);
+      const next = scrollPanel(document, state, layout.maxLines, delta);
+      if (next.scroll === state.scroll) return;
+      runtime.panelViews.set(ownerKey, next);
+      const render = owner.userData.renderPanelDocument as (() => void) | undefined;
+      if (render) render(); else renderPanelDocument(owner);
+    };
+
     const renderFrame = (time: number, frame?: XRFrame) => {
       const currentStage = stageRef.current;
       const dt = Math.min(0.05, (time - runtime.lastFrame) / 1000);
@@ -1216,6 +1297,18 @@ export default function VrStage() {
           rig.position.z += before.z - after.z;
         }
         runtime.turnArmed = turn.armed;
+      }
+      if (!runtime.scenarioMenuOpen && right && right.axes.length >= 4) {
+        const vertical = right.axes[3] || 0;
+        const scroll = panelScrollRepeatStep(
+          vertical, runtime.scrollDirection, runtime.scrollNextAt, time,
+        );
+        const rightController = runtime.controllers.find(
+          (controller) => controller.userData.handedness === "right",
+        );
+        if (rightController && scroll.delta) scrollHoveredPanel(rightController, scroll.delta);
+        runtime.scrollDirection = scroll.direction;
+        runtime.scrollNextAt = scroll.nextAt;
       }
       if (left) {
         if (left.buttons.length > 4) {
@@ -1452,7 +1545,7 @@ export default function VrStage() {
       [...runtime.panels.keys()].forEach((nodeId) => {
         const panel = runtime.panels.get(nodeId);
         const provider = panel?.userData.provider as string | undefined;
-        if (panel && provider && INTERACTIVE_FURNITURE_PROVIDERS.has(provider)) {
+        if (panel && provider && REFRESHING_FURNITURE_PROVIDERS.has(provider)) {
           void refreshPanel(nodeId);
         }
       });
@@ -1784,19 +1877,47 @@ export default function VrStage() {
       disposeObject(child);
     });
     transients.forEach((entity) => {
-      const bodyPage = entity.kind === "email_card" && entity.page && entity.body
-        ? entity.body.slice((entity.page - 1) * 800, entity.page * 800)
-        : "";
-      const lines = entity.kind === "email_card"
-        ? (bodyPage
-          ? [entity.subject || entity.title, ...(bodyPage.match(/.{1,72}/g)?.slice(0, 8) || []), `Page ${entity.page}/${Math.ceil((entity.body || "").length / 800)} · Trigger to return`]
-          : [entity.subject || entity.title, entity.sender || "", entity.summary || "", "Trigger to inspect"])
-        : [entity.title, ...entity.blocks];
+      const document: VrPanelDocument = entity.pages?.length ? {
+        rootPageId: entity.pages.some((page) => page.id === entity.initialPageId)
+          ? entity.initialPageId!
+          : entity.pages[0].id,
+        pages: entity.pages.map((page) => ({
+          id: page.id, title: page.title, lines: page.lines,
+          actions: page.links.map((link, index) => ({
+            kind: "navigate", id: `${page.id}-${index}`, label: link.label,
+            targetPageId: link.targetPageId,
+          })),
+        })),
+      } : entity.kind === "email_card" ? {
+        rootPageId: "summary",
+        pages: [
+          {
+            id: "summary", title: entity.subject || entity.title,
+            lines: [`From: ${entity.sender || "Unknown sender"}`, entity.summary || "No summary."],
+            actions: entity.body ? [{
+              kind: "navigate", id: "read-email", label: "Read full email", targetPageId: "body",
+            }] : [],
+          },
+          {
+            id: "body", title: entity.subject || entity.title,
+            lines: [entity.body || "No message body is available."], actions: [],
+          },
+        ],
+      } : {
+        rootPageId: "root",
+        pages: [{ id: "root", title: entity.title, lines: entity.blocks, actions: [] }],
+      };
+      const email = entity.kind === "email_card";
+      const width = email ? 0.9 : 1.2;
+      const height = email ? 0.72 : 0.62;
       const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(entity.kind === "email_card" ? 0.64 : 1.2, entity.kind === "email_card" ? 0.42 : 0.62),
-        new THREE.MeshBasicMaterial({ map: canvasTexture(lines, 768, entity.kind === "email_card" ? 504 : 360), transparent: true, side: THREE.DoubleSide }),
+        new THREE.PlaneGeometry(width, height),
+        new THREE.MeshBasicMaterial({ map: canvasTexture([entity.title, "Loading…"], 768, email ? 486 : 360), transparent: true, side: THREE.DoubleSide }),
       );
       mesh.userData.transient = entity;
+      mesh.userData.panelDocument = document;
+      mesh.userData.panelOwnerKey = `transient:${entity.id}`;
+      mesh.userData.provider = email ? "transient_email" : undefined;
       const edge = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry),
         new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 }),
@@ -1804,8 +1925,8 @@ export default function VrStage() {
       edge.raycast = () => undefined;
       mesh.add(edge);
       mesh.userData.selectionOutline = edge;
-      const closeX = entity.kind === "email_card" ? 0.25 : 0.52;
-      const closeY = entity.kind === "email_card" ? 0.14 : 0.23;
+      const closeX = width / 2 - 0.08;
+      const closeY = height / 2 - 0.08;
       const closeButton = new THREE.Mesh(
         new THREE.PlaneGeometry(0.12, 0.12),
         new THREE.MeshBasicMaterial({
@@ -1823,6 +1944,47 @@ export default function VrStage() {
       closeHitTarget.position.set(closeX, closeY, 0.018);
       closeHitTarget.userData.transientClose = entity.id;
       mesh.add(closeHitTarget);
+      const renderDocument = () => {
+        [...mesh.children].forEach((child) => {
+          if (child.userData.panelAction || child.userData.panelBack) {
+            mesh.remove(child);
+            disposeObject(child);
+          }
+        });
+        const ownerKey = `transient:${entity.id}`;
+        const maxLines = email ? 8 : 5;
+        const state = reconcilePanelViewState(document, runtime.panelViews.get(ownerKey));
+        const viewport = panelViewport(document, state, maxLines);
+        runtime.panelViews.set(ownerKey, { ...state, scroll: viewport.scroll });
+        const material = mesh.material as THREE.MeshBasicMaterial;
+        material.map?.dispose();
+        material.map = canvasTexture(viewport.lines, 768, email ? 486 : 360, maxLines);
+        material.needsUpdate = true;
+        const addControl = (label: string, x: number, y: number, controlWidth: number, data: Record<string, unknown>) => {
+          const control = new THREE.Mesh(
+            new THREE.PlaneGeometry(controlWidth, 0.11),
+            new THREE.MeshBasicMaterial({ map: canvasTexture([label], 320, 96), transparent: true }),
+          );
+          control.position.set(x, y, 0.014);
+          Object.assign(control.userData, data);
+          mesh.add(control);
+        };
+        if (state.history.length) addControl("‹ Back", -width / 2 + 0.18, closeY, 0.28, { panelBack: ownerKey });
+        const actions = viewport.page.actions.slice(0, 4);
+        if (actions.length) {
+          const available = width - 0.12;
+          const buttonWidth = available / actions.length - 0.015;
+          actions.forEach((action, index) => addControl(
+            action.label,
+            -available / 2 + buttonWidth / 2 + index * (buttonWidth + 0.015),
+            -height / 2 + 0.08,
+            buttonWidth,
+            { panelAction: { action, ownerKey } satisfies PanelControlAction },
+          ));
+        }
+      };
+      mesh.userData.renderPanelDocument = renderDocument;
+      renderDocument();
       if ((entity.state === "held_by_agent" || entity.state === "offered") && runtime.avatar) {
         mesh.position.set(0.42, entity.state === "offered" ? 0.92 : 0.74, 0.28);
         mesh.rotation.y = Math.PI;

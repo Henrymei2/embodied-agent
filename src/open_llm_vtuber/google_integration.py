@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,8 @@ from loguru import logger
 from oauthlib.oauth2 import OAuth2Error
 from platformdirs import user_data_path
 from requests import RequestException
+
+from .utils.timezone import now_local
 
 GOOGLE_SCOPES = (
     "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
@@ -338,6 +341,88 @@ class GoogleIntegrationService:
             "messages": items,
             "next_page_token": response.get("nextPageToken"),
             "has_unread": bool(items),
+        }
+
+    def recent_messages(self, *, limit: int = 3) -> dict[str, Any]:
+        """Return recent inbox metadata without changing read state."""
+        messages_api = self.gmail().users().messages()
+        response = messages_api.list(
+            userId="me",
+            labelIds=["INBOX"],
+            includeSpamTrash=False,
+            maxResults=limit,
+        ).execute()
+        items = []
+        for reference in response.get("messages", []):
+            if not isinstance(reference, dict) or not reference.get("id"):
+                continue
+            message = messages_api.get(
+                userId="me",
+                id=reference["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+            items.append(
+                {
+                    "message_id": str(message.get("id") or ""),
+                    "thread_id": str(message.get("threadId") or ""),
+                    "sender": self._gmail_header(message, "From"),
+                    "subject": self._gmail_header(message, "Subject")
+                    or "(no subject)",
+                    "received_at": self._gmail_header(message, "Date"),
+                    "snippet": str(message.get("snippet") or ""),
+                }
+            )
+        return {"messages": items, "count": len(items)}
+
+    def upcoming_events(self, *, days: int = 7) -> dict[str, Any]:
+        """Return display-safe primary-calendar events for a local date window."""
+        local_now = now_local()
+        start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=days)
+        events_api = self.calendar().events()
+        items: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            response = events_api.list(
+                calendarId="primary",
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=2500,
+                pageToken=page_token,
+            ).execute()
+            for event in response.get("items", []):
+                if not isinstance(event, dict):
+                    continue
+                event_start = event.get("start")
+                event_end = event.get("end")
+                if not isinstance(event_start, dict) or not isinstance(event_end, dict):
+                    continue
+                items.append(
+                    {
+                        "event_id": str(event.get("id") or ""),
+                        "title": str(event.get("summary") or "(untitled event)"),
+                        "start": str(
+                            event_start.get("dateTime") or event_start.get("date") or ""
+                        ),
+                        "end": str(
+                            event_end.get("dateTime") or event_end.get("date") or ""
+                        ),
+                        "all_day": "date" in event_start,
+                        "location": str(event.get("location") or ""),
+                        "description": str(event.get("description") or ""),
+                    }
+                )
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return {
+            "events": items,
+            "count": len(items),
+            "range_start": start.date().isoformat(),
+            "range_end": (end - timedelta(days=1)).date().isoformat(),
         }
 
     def status(self) -> dict[str, Any]:
