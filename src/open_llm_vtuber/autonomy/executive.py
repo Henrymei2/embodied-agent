@@ -602,6 +602,10 @@ class AgendaExecutive:
                         entry_id,
                         error=f"{type(exc).__name__}: {str(exc)[:400]}",
                         max_attempts=self.settings.execution_failure_limit,
+                        retry_backoff_seconds=self.settings.retry_backoff_seconds,
+                        max_retry_backoff_seconds=(
+                            self.settings.max_retry_backoff_seconds
+                        ),
                     )
                     await self.broadcast_snapshot()
                     return True

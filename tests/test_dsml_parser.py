@@ -95,8 +95,10 @@ def test_invalid_dsml_invocation_is_suppressed():
 class _FakeCompletions:
     def __init__(self, chunks):
         self.chunks = chunks
+        self.requests = []
 
-    async def create(self, **_kwargs):
+    async def create(self, **kwargs):
+        self.requests.append(kwargs)
         return _FakeStream(self.chunks)
 
 
@@ -136,10 +138,74 @@ def _fake_llm(chunks):
     llm.model = "deepseek-test"
     llm.temperature = 0.0
     llm.support_tools = True
-    llm.client = SimpleNamespace(
-        chat=SimpleNamespace(completions=_FakeCompletions(chunks))
-    )
+    completions = _FakeCompletions(chunks)
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    llm.completions = completions
     return llm
+
+
+@pytest.mark.asyncio
+async def test_deepseek_request_repairs_missing_reasoning_on_tool_history():
+    llm = _fake_llm([])
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "done"},
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "retained thought",
+            "tool_calls": [
+                {
+                    "id": "call-2",
+                    "type": "function",
+                    "function": {"name": "read", "arguments": "{}"},
+                }
+            ],
+        },
+    ]
+
+    assert [event async for event in llm.chat_completion(messages, tools=[])] == []
+
+    outbound = llm.completions.requests[0]["messages"]
+    assert outbound[1]["reasoning_content"] == ""
+    assert outbound[3]["reasoning_content"] == "retained thought"
+    assert "reasoning_content" not in messages[1]
+
+
+@pytest.mark.asyncio
+async def test_non_deepseek_request_does_not_inject_reasoning_content():
+    llm = _fake_llm([])
+    llm.base_url = "https://example.invalid/v1"
+    llm.model = "ordinary-compatible-model"
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ],
+        }
+    ]
+
+    assert [event async for event in llm.chat_completion(messages, tools=[])] == []
+
+    outbound = llm.completions.requests[0]["messages"]
+    assert "reasoning_content" not in outbound[0]
 
 
 @pytest.mark.asyncio

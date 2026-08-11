@@ -1188,6 +1188,8 @@ class AgendaStore:
         *,
         error: str,
         max_attempts: int,
+        retry_backoff_seconds: float = 0.0,
+        max_retry_backoff_seconds: float = 0.0,
     ) -> AgendaEntry:
         """Bound repeated activity failures and dead-letter the terminal entry."""
 
@@ -1221,11 +1223,25 @@ class AgendaStore:
             else:
                 if entry.status == "active":
                     entry.status = "suspended"
+                delay = min(
+                    max(0.0, float(max_retry_backoff_seconds)),
+                    max(0.0, float(retry_backoff_seconds))
+                    * (2 ** max(0, failures - 1)),
+                )
+                if delay > 0:
+                    retry_at = _iso(utc_now() + timedelta(seconds=delay))
+                    entry.metadata["reconsider_deferred_until"] = retry_at
+                    entry.metadata["reconsider_deferred_reason"] = (
+                        "Execution retry backoff."
+                    )
+                    entry.progress_summary = (
+                        f"Execution failed; retry deferred until {retry_at}."
+                    )
                 self._event(
                     state,
                     entry.id,
                     "execution_failed",
-                    {"attempts": failures},
+                    {"attempts": failures, "retry_delay_seconds": delay},
                 )
             return entry
 

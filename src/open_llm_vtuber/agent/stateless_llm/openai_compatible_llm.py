@@ -61,6 +61,41 @@ class AsyncLLM(StatelessLLMInterface):
     def get_tool_mode(self):
         return "OpenAI"
 
+    def _prepare_messages_for_request(
+        self, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Complete DeepSeek thinking-mode tool history without mutating callers.
+
+        DeepSeek requires ``reasoning_content`` on every replayed assistant
+        tool-call message, including turns where the streamed response omitted
+        or the SDK did not expose any reasoning tokens. Other compatible APIs
+        may reject this vendor field, so the repair is deliberately scoped to
+        DeepSeek endpoints/models.
+        """
+        provider_hint = f"{self.base_url} {self.model}".lower()
+        if "deepseek" not in provider_hint:
+            return messages
+        prepared: List[Dict[str, Any]] = []
+        repaired = 0
+        for message in messages:
+            if (
+                message.get("role") == "assistant"
+                and message.get("tool_calls")
+                and message.get("reasoning_content") is None
+            ):
+                copied = dict(message)
+                copied["reasoning_content"] = ""
+                prepared.append(copied)
+                repaired += 1
+            else:
+                prepared.append(message)
+        if repaired:
+            logger.debug(
+                "DeepSeek reasoning replay repaired {} assistant tool turns",
+                repaired,
+            )
+        return prepared
+
     async def chat_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -93,11 +128,12 @@ class AsyncLLM(StatelessLLMInterface):
 
         try:
             # If system prompt is provided, add it to the messages
-            messages_with_system = messages
+            request_messages = self._prepare_messages_for_request(messages)
+            messages_with_system = request_messages
             if system:
                 messages_with_system = [
                     {"role": "system", "content": system},
-                    *messages,
+                    *request_messages,
                 ]
 
             available_tools = tools if self.support_tools else NOT_GIVEN

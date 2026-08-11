@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -285,6 +285,49 @@ def test_execution_failure_budget_queues_terminal_voice_report(tmp_path):
     assert failed.status == "failed"
     assert failed.metadata["terminal_voice_report"] is True
     assert state.reports[0].summary.startswith("Execution failed repeatedly:")
+
+
+def test_execution_failure_defers_retry_with_exponential_backoff(tmp_path):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="active")
+    store.add(entry)
+
+    store.record_execution_failure(
+        entry.id,
+        error="provider failed",
+        max_attempts=3,
+        retry_backoff_seconds=2,
+        max_retry_backoff_seconds=30,
+    )
+
+    current = store.load().entries[0]
+    retry_at = current.metadata["reconsider_deferred_until"]
+    delay = (datetime.fromisoformat(retry_at) - utc_now()).total_seconds()
+    assert current.status == "suspended"
+    assert current.metadata["execution_failures"] == 1
+    assert 1 <= delay <= 2
+
+
+@pytest.mark.asyncio
+async def test_execution_retry_backoff_prevents_idle_successor(tmp_path):
+    class Planner:
+        async def propose_intention(self, _context):
+            raise AssertionError("deferred work must prevent idle planning")
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="active")
+    store.add(entry)
+    store.record_execution_failure(
+        entry.id,
+        error="provider failed",
+        max_attempts=3,
+        retry_backoff_seconds=30,
+        max_retry_backoff_seconds=30,
+    )
+    executive = _executive(store, Planner())
+
+    assert await executive._advance() is False
+    assert [item.kind for item in store.load().entries] == ["pursuit"]
 
 
 def test_headless_claim_does_not_consume_terminal_voice_report(tmp_path):
