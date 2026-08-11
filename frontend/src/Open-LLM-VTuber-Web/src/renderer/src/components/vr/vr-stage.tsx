@@ -1796,6 +1796,7 @@ export default function VrStage() {
     const activityText = currentActivityLabel(activity, {
       thinking: t("agentActivity.thinking"),
       planning: t("agentActivity.planningNext"),
+      plan: t("agentActivity.executingPlan"),
       unknownTool: t("agentActivity.unknownTask"),
     });
     runtime.activityBubble.visible = Boolean(activityText);

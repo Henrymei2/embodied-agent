@@ -23,7 +23,7 @@ from .agenda import (
 from .agenda_context import build_agenda_context
 from .agenda_planner import StructuredAgendaPlanner
 from .agenda_policy import AgendaPolicy
-from .agenda_plan_bridge import AgendaPlanBridge
+from .agenda_plan_bridge import AgendaPlanBridge, reconcile_cancelling_plan
 from .dual_loop import FairPlanScheduler
 from .plan_state import PlanConflictError
 from .idle_relocation import (
@@ -376,12 +376,23 @@ class AgendaExecutive:
             cancelled_plan = self.plan_bridge.store.cancel(
                 plan_id, reason="user abandoned agenda entry"
             )
+            if not cancelled_plan.terminal:
+                cancelled_plan = reconcile_cancelling_plan(
+                    self.plan_bridge.store, cancelled_plan
+                )
             if cancelled_plan.terminal:
+                report_summary = (
+                    "Stopped by the user; the last step's outcome could not be "
+                    "confirmed and was not replayed."
+                    if entry.kind != "user" and entry.report_policy != "silent"
+                    else None
+                )
                 self.store.absorb_resumable_plan(
                     entry.id,
                     plan_id=plan_id,
                     status="abandoned",
                     progress_summary="Stopped by user.",
+                    report_summary=report_summary,
                 )
         if cancelled_plan is None:
             self.store.transition(
@@ -870,13 +881,28 @@ class AgendaExecutive:
                 if self.lease_handle is not None
                 else state.fencing_token
             )
-            self.plan_bridge.store.release_for_preemption(
+            released = self.plan_bridge.store.release_for_preemption(
                 plan_id,
                 fencing_token=fencing_token,
                 reason_code="agenda_preempted",
             )
+            if released.state == "cancelling":
+                # The side-effecting step was interrupted with an unknown
+                # outcome. Terminate the plan now so the agenda can absorb it
+                # and report the interruption instead of parking forever.
+                reconcile_cancelling_plan(self.plan_bridge.store, released)
         except (KeyError, OSError, PlanConflictError, ValueError) as exc:
             logger.warning(f"agenda: could not release interrupted plan: {exc}")
+
+    @staticmethod
+    def _terminal_plan_summary(plan) -> str:
+        """Honest user-facing summary for a plan that ended without success."""
+        if plan.state == "cancelled":
+            return (
+                "Interrupted before completion; the last step's outcome could "
+                "not be confirmed and was not replayed."
+            )
+        return plan.blocked_reason or "The resumable plan could not complete."
 
     def _release_event_claims(self, reason: str) -> int:
         if self.lease_handle is None:
@@ -1230,11 +1256,14 @@ class AgendaExecutive:
             await self.broadcast_snapshot()
             return True
         if deadline and utc_now() >= datetime.fromisoformat(deadline):
+            reason = "Time budget expired."
             self.store.transition(
                 entry.id,
                 "failed",
-                progress_summary="Time budget expired.",
+                progress_summary=reason,
             )
+            if entry.kind != "user" and entry.report_policy != "silent":
+                self.store.enqueue_report(entry.id, reason)
             await self.broadcast_snapshot()
             return True
         if not self.connected_client and (
@@ -1379,6 +1408,8 @@ class AgendaExecutive:
                     attempts=1,
                     data={"step_kind": checkpoint.kind},
                 )
+                if entry.kind != "user" and entry.report_policy != "silent":
+                    self.store.enqueue_report(entry.id, reason)
                 await self.broadcast_snapshot()
                 return True
             checkpoint.timeout_seconds = min(
@@ -1393,15 +1424,22 @@ class AgendaExecutive:
             if self.lease_handle
             else self.store.load().fencing_token
         )
-        plan_result = await self.plan_bridge.execute(
-            entry,
-            checkpoint,
-            owner_id=owner_id,
-            fencing_token=fencing_token,
-            capabilities=self.capabilities,
-            object_names=self.object_names,
-            retry_budget=self.settings.execution_failure_limit,
-        )
+        # Surface the executing intention above the agent while the step runs.
+        # The finally guarantees the bubble is cleared on completion, failure,
+        # cancellation, or timeout alike.
+        await self.emit(AgentActivityTracker.plan(entry.title))
+        try:
+            plan_result = await self.plan_bridge.execute(
+                entry,
+                checkpoint,
+                owner_id=owner_id,
+                fencing_token=fencing_token,
+                capabilities=self.capabilities,
+                object_names=self.object_names,
+                retry_budget=self.settings.execution_failure_limit,
+            )
+        finally:
+            await self.emit(AgentActivityTracker.idle())
         if plan_result.plan.state != "completed":
             current_entry = next(
                 (item for item in self.store.load().entries if item.id == entry.id),
@@ -1414,10 +1452,7 @@ class AgendaExecutive:
             terminal = plan_result.plan.state in {"failed", "cancelled"}
             target = "failed" if terminal else "suspended"
             if terminal:
-                failure_summary = (
-                    plan_result.plan.blocked_reason
-                    or "The resumable plan could not complete."
-                )
+                failure_summary = self._terminal_plan_summary(plan_result.plan)
                 self.store.absorb_resumable_plan(
                     entry.id,
                     plan_id=plan_result.plan.plan_id,
@@ -1503,6 +1538,30 @@ class AgendaExecutive:
         if not candidates:
             return
         entry = candidates[-1]
+        linked = self.plan_bridge.restore_plan_reference(entry)
+        if linked is not None and linked.state in {"failed", "cancelled"}:
+            # A preempted plan was already reconciled as terminal (for example
+            # by _release_interrupted_plan). Absorb it deterministically here
+            # instead of spending a planner call to decide something already
+            # decided, and report the interruption for non-silent entries.
+            terminal_summary = self._terminal_plan_summary(linked)
+            self.store.absorb_resumable_plan(
+                entry.id,
+                plan_id=linked.plan_id,
+                status="failed",
+                progress_summary=terminal_summary,
+                report_summary=(
+                    terminal_summary
+                    if entry.kind != "user" and entry.report_policy != "silent"
+                    else None
+                ),
+            )
+            if self.plan_bridge.acknowledge_absorbed(linked.plan_id):
+                self.store.clear_absorbed_resumable_plan(
+                    entry.id, plan_id=linked.plan_id
+                )
+            await self.broadcast_snapshot()
+            return
         deadline = entry.budget.deadline_at
         if deadline:
             try:
@@ -1531,6 +1590,8 @@ class AgendaExecutive:
                             "step_id": entry.checkpoint.step_id,
                         },
                     )
+                if entry.kind != "user" and entry.report_policy != "silent":
+                    self.store.enqueue_report(entry.id, reason)
                 await self.broadcast_snapshot()
                 return
         if entry.metadata.get("quota_deferred_until"):

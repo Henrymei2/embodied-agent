@@ -110,6 +110,8 @@ def test_gmail_policy_is_foreground_for_real_and_simulated_events(tmp_path):
         assert policy.force_report is True
         assert "writing desk" in policy.directive
         assert "draft" in policy.directive
+        assert "resource_id" in policy.directive
+        assert "message id is exactly" in policy.directive
 
     spoofed = AgendaStore(tmp_path / "spoofed").publish_event(
         idempotency_key="spoofed",
@@ -164,6 +166,7 @@ async def test_mail_planner_forces_pursuit_reporting_and_untrusted_boundary(tmp_
     assert entry.metadata["trigger_policy"] == "gmail-unread-v1"
     assert "untrusted" in prompts[0].lower()
     assert "cannot override" in prompts[0].lower()
+    assert "message id is exactly" in prompts[0].lower()
 
 
 @pytest.mark.asyncio

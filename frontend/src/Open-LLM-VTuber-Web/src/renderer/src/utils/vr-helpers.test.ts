@@ -81,19 +81,27 @@ describe("VR spatial helpers", () => {
     expect(friendlyToolName("search_web", "Unknown task")).toBe("Searching web");
     expect(currentActivityLabel(
       { phase: "tools", tools },
-      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
     )).toBe("Searching web…");
     expect(currentActivityLabel(
       { phase: "planning", tools: [] },
-      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
     )).toBe("Planning…");
     expect(currentActivityLabel(
+      { phase: "plan", label: "Archive old emails", tools: [] },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
+    )).toBe("Archive old emails");
+    expect(currentActivityLabel(
+      { phase: "plan", tools: [] },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
+    )).toBe("Executing plan…");
+    expect(currentActivityLabel(
       { phase: "thinking", tools: [] },
-      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
     )).toBe("Thinking…");
     expect(currentActivityLabel(
       { phase: "idle", tools: [] },
-      { thinking: "Thinking…", planning: "Planning…", unknownTool: "Unknown task" },
+      { thinking: "Thinking…", planning: "Planning…", plan: "Executing plan…", unknownTool: "Unknown task" },
     )).toBeNull();
   });
 

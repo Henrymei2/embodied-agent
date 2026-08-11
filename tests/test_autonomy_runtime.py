@@ -19,6 +19,7 @@ from src.open_llm_vtuber.autonomy.driver import (
     _ensure_tool_proximity,
     _execute_validated_tool,
     _publish_completion,
+    _run_tool_calls,
 )
 from src.open_llm_vtuber.config_manager.tts_preprocessor import (
     TTSPreprocessorConfig,
@@ -393,6 +394,75 @@ async def test_validated_tool_step_rejects_schema_mismatch_before_dispatch():
                 }
             },
         )
+
+
+async def test_run_tool_calls_forwards_sanitized_updates_without_inputs():
+    class FakeToolExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del caller_mode
+            assert calls == [
+                {"id": "agenda_tool_t1", "name": "search_emails", "args": {}}
+            ]
+            yield {
+                "type": "agent_activity",
+                "phase": "tools",
+                "tools": [
+                    {
+                        "tool_id": "t1",
+                        "tool_name": "search_emails",
+                        "status": "pending",
+                    }
+                ],
+            }
+            yield {
+                "type": "tool_call_status",
+                "tool_id": "t1",
+                "tool_name": "search_emails",
+                "status": "running",
+                "content": "Input: {\"query\": \"secret-criteria\"}",
+            }
+            yield {
+                "type": "final_tool_results",
+                "results": [
+                    {"tool_id": "t1", "content": "Found messages.", "is_error": False}
+                ],
+            }
+
+    received: list[dict] = []
+
+    async def on_update(update: dict) -> None:
+        received.append(update)
+
+    results = await _run_tool_calls(
+        FakeToolExecutor(),
+        [{"id": "agenda_tool_t1", "name": "search_emails", "args": {}}],
+        on_update=on_update,
+    )
+
+    assert results == [
+        {"tool_id": "t1", "content": "Found messages.", "is_error": False}
+    ]
+    assert [item["type"] for item in received] == [
+        "agent_activity",
+        "tool_call_status",
+    ]
+    assert received[1]["status"] == "running"
+    assert "content" not in received[1]
+    assert "secret-criteria" not in str(received)
+
+
+async def test_run_tool_calls_forwards_without_on_update_callback():
+    class FakeToolExecutor:
+        async def execute_tools(self, calls, caller_mode):
+            del calls, caller_mode
+            yield {"type": "tool_call_status", "status": "running"}
+            yield {
+                "type": "final_tool_results",
+                "results": [{"content": "ok", "is_error": False}],
+            }
+
+    results = await _run_tool_calls(FakeToolExecutor(), [{"id": "t", "name": "x"}])
+    assert results == [{"content": "ok", "is_error": False}]
 
 
 async def test_ensure_tool_proximity_moves_before_gated_tool_when_far():

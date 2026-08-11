@@ -41,6 +41,16 @@ class AgentActivityTracker:
         return {"type": "agent_activity", "phase": "planning", "tools": []}
 
     @staticmethod
+    def plan(label: str) -> dict[str, Any]:
+        """Announce that the agenda is executing one bounded intention."""
+        return {
+            "type": "agent_activity",
+            "phase": "plan",
+            "label": str(label or "")[:300],
+            "tools": [],
+        }
+
+    @staticmethod
     def idle() -> dict[str, Any]:
         return {"type": "agent_activity", "phase": "idle", "tools": []}
 

@@ -141,9 +141,11 @@ async def process_single_conversation(
 
         try:
             # agent.chat yields Union[SentenceOutput, Dict[str, Any]]
-            if report:
-                await websocket_send(json.dumps(activity.thinking()))
-                activity_visible = True
+            # Activity is transient UI state and is also shown for silent
+            # autonomous turns (report=False), so the head bubble reflects
+            # plan execution. It never enters the transcript or TTS pipeline.
+            await websocket_send(json.dumps(activity.thinking()))
+            activity_visible = True
             # Everything between the transcript and the model request is
             # context assembly: provenance ingestion dispatch, batch input,
             # history. That is what `retrieve` names, and it was the last stage
@@ -160,8 +162,7 @@ async def process_single_conversation(
                     activity_message = activity.replace_tools(
                         output_item.get("tools", [])
                     )
-                    if report:
-                        await websocket_send(json.dumps(activity_message))
+                    await websocket_send(json.dumps(activity_message))
 
                 elif (
                     isinstance(output_item, dict)
@@ -173,9 +174,12 @@ async def process_single_conversation(
 
                     if report:
                         await websocket_send(json.dumps(output_item))
-                        await websocket_send(
-                            json.dumps(activity.update_tool(output_item))
-                        )
+                    # The raw tool_call_status carries tool inputs and lands in
+                    # the frontend chat history. Silent autonomous turns only
+                    # get the sanitized activity event (name/status, no inputs).
+                    await websocket_send(
+                        json.dumps(activity.update_tool(output_item))
+                    )
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
                     if not first_output_seen:
@@ -184,7 +188,7 @@ async def process_single_conversation(
                         # activity frames before it belong to planning.
                         latency.complete("first_token")
                         first_output_seen = True
-                    if report and activity_visible:
+                    if activity_visible:
                         await websocket_send(json.dumps(activity.idle()))
                         activity_visible = False
                     if report:
@@ -319,13 +323,12 @@ async def process_single_conversation(
                     "Interrupted conversation provenance could not be persisted: "
                     f"{type(exc).__name__}"
                 )
-        if report:
-            try:
-                await websocket_send(json.dumps(activity.idle()))
-            except Exception:
-                logger.debug(
-                    "Unable to clear agent activity during connection cleanup."
-                )
+        try:
+            await websocket_send(json.dumps(activity.idle()))
+        except Exception:
+            logger.debug(
+                "Unable to clear agent activity during connection cleanup."
+            )
         from ..study import log_turn_finished
 
         # Closes the turn whether it completed, errored, or was interrupted, so

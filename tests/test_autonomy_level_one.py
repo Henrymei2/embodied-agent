@@ -53,13 +53,15 @@ def _executive(store, planner, settings=None, run_step=None, **kwargs):
     async def default_run_step(_entry, _checkpoint):
         return "done"
 
+    emit = kwargs.pop("emit", _emit)
+
     return AgendaExecutive(
         client_uid="client",
         store=store,
         planner=planner,
         settings=settings or AutonomySettings(restart_recovery_grace_seconds=0),
         run_step=run_step or default_run_step,
-        emit=_emit,
+        emit=emit,
         capabilities={"read_file", "execute_bash"},
         object_names={"computer"},
         capability_objects={
@@ -437,6 +439,106 @@ async def test_due_schedule_preempts_an_autonomous_step(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_user_preemption_terminates_side_effecting_step_and_reports(tmp_path):
+    started = asyncio.Event()
+    canceled = asyncio.Event()
+
+    class Planner:
+        async def next_step(self, _entry, _context):
+            return ExecutionCheckpoint(
+                step_id="write-step",
+                kind="invoke_tool",
+                state="planned",
+                required_capability="execute_bash",
+                required_object="computer",
+                side_effecting=True,
+                timeout_seconds=60,
+            )
+
+        async def evaluate_completion(self, _entry, _evidence):
+            raise AssertionError("cancelled plans must not be evaluated")
+
+        async def reconsider(self, _entry, _context):
+            raise AssertionError("terminal plans must absorb without reconsideration")
+
+    async def run_step(_entry, _checkpoint):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            canceled.set()
+
+    store = AgendaStore(tmp_path)
+    pursuit = _pursuit(status="active", report_policy="on_completion")
+    store.add(pursuit)
+    executive = _executive(
+        store,
+        Planner(),
+        settings=AutonomySettings(
+            human_preemption_timeout_seconds=1.0,
+            restart_recovery_grace_seconds=0,
+        ),
+        run_step=run_step,
+    )
+    assert await executive._advance() is True
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    user = await executive.preempt_for_user("User request")
+    await asyncio.wait_for(canceled.wait(), timeout=1)
+
+    state = store.load()
+    original = next(item for item in state.entries if item.id == pursuit.id)
+    assert original.status == "suspended"
+    plan_id = original.metadata["resumable_plan_id"]
+    plan = executive.plan_bridge.store.get(plan_id)
+    assert plan.state == "cancelled"
+    assert plan.current_step.state == "cancelled"
+
+    await executive.finish_user(user.id)
+
+    state = store.load()
+    original = next(item for item in state.entries if item.id == pursuit.id)
+    assert original.status == "failed"
+    assert "not replayed" in original.progress_summary
+    assert any("not replayed" in report.summary for report in state.reports)
+
+
+@pytest.mark.asyncio
+async def test_entry_execution_emits_plan_then_idle_activity(tmp_path):
+    class Planner:
+        async def next_step(self, _entry, _context):
+            return ExecutionCheckpoint(
+                step_id="quick-step",
+                kind="reflect",
+                state="planned",
+                timeout_seconds=60,
+            )
+
+        async def evaluate_completion(self, _entry, _evidence):
+            return True, "Quick step finished."
+
+    async def run_step(_entry, _checkpoint):
+        return "done"
+
+    emitted: list[dict] = []
+
+    async def emit(payload: dict) -> None:
+        emitted.append(payload)
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="queued", title="Archive old emails")
+    store.add(entry)
+    store.transition(entry.id, "active")
+    executive = _executive(store, Planner(), run_step=run_step, emit=emit)
+    await executive._advance_entry(store.load().entries[0])
+
+    activity = [item for item in emitted if item.get("type") == "agent_activity"]
+    assert activity[0]["phase"] == "plan"
+    assert activity[0]["label"] == "Archive old emails"
+    assert any(item.get("phase") == "idle" for item in activity[1:])
+
+
+@pytest.mark.asyncio
 async def test_due_schedule_preempts_an_intention_still_being_planned(tmp_path):
     planning_started = asyncio.Event()
 
@@ -614,7 +716,7 @@ async def test_expired_uncertain_step_is_not_reconsidered_or_replayed(tmp_path):
             return "resume"
 
     store = AgendaStore(tmp_path)
-    entry = _pursuit(status="suspended")
+    entry = _pursuit(status="suspended", report_policy="on_completion")
     entry.budget.deadline_at = (utc_now() - timedelta(seconds=1)).isoformat()
     entry.checkpoint = ExecutionCheckpoint(
         step_id="uncertain-step",
@@ -634,6 +736,9 @@ async def test_expired_uncertain_step_is_not_reconsidered_or_replayed(tmp_path):
     assert "not replayed" in current.progress_summary
     assert planner.reconsider_calls == 0
     assert store.load().dead_letters[-1].category == "activity_reconciliation"
+    reports = store.load().reports
+    assert len(reports) == 1
+    assert "not replayed" in reports[0].summary
 
 
 @pytest.mark.asyncio

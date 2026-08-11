@@ -195,7 +195,10 @@ def get_email(message_id: str) -> str:
     """Read one Gmail message, including its bounded text body."""
     try:
         fixture = simulated_fixture()
-        if fixture is not None and message_id == fixture["email"]["message_id"]:
+        if fixture is not None:
+            # The simulated mailbox holds exactly one message, so any requested
+            # id resolves to it.  This keeps identifier hallucination inside the
+            # demo instead of escaping into a real Gmail request.
             return json.dumps(fixture["email"], ensure_ascii=False)
         message = (
             _messages()
@@ -218,7 +221,7 @@ async def materialize_email(message_id: str) -> str:
         return "Error: email cards are only available in VR mode"
     try:
         fixture = simulated_fixture()
-        if fixture is not None and message_id == fixture["email"]["message_id"]:
+        if fixture is not None:
             rendered = fixture["email"]
         else:
             message = (

@@ -10,6 +10,7 @@ from loguru import logger
 
 from ..agent.output_types import DisplayText
 from ..chat_history_manager import store_message
+from ..conversations.agent_activity import AgentActivityTracker
 from ..conversations.types import AgentTurnResult
 from .activity import ActivityRunResult
 from .agenda import get_agenda_store
@@ -62,12 +63,26 @@ def _agenda_step_metadata(entry, checkpoint) -> dict:
     }
 
 
-async def _run_tool_calls(tool_executor, calls: list[dict]) -> list[dict]:
-    """Run validated tool calls and raise on the first tool-level error."""
+async def _run_tool_calls(tool_executor, calls: list[dict], on_update=None) -> list[dict]:
+    """Run validated tool calls and raise on the first tool-level error.
+
+    ``on_update`` (optional async callable) receives every non-final update so
+    callers can surface sanitized tool activity without exposing tool inputs.
+    """
     final_results: list[dict] | None = None
     async for update in tool_executor.execute_tools(calls, caller_mode="Prompt"):
         if update.get("type") == "final_tool_results":
             final_results = update.get("results", [])
+            continue
+        if on_update is not None:
+            if update.get("type") == "tool_call_status":
+                # Tool inputs must never leave the server; only the caller of
+                # execute_tools sees the original update.
+                sanitized = dict(update)
+                sanitized.pop("content", None)
+                await on_update(sanitized)
+            else:
+                await on_update(update)
     if not final_results:
         raise RuntimeError("Tool execution returned no result.")
     for result in final_results:
@@ -82,6 +97,8 @@ async def _ensure_tool_proximity(
     tool_manager,
     capability: str,
     step_id: str,
+    *,
+    on_update=None,
 ) -> None:
     """Move to a tool's required object before execution when it is out of reach.
 
@@ -107,6 +124,7 @@ async def _ensure_tool_proximity(
                 "args": {"target": required_object},
             }
         ],
+        on_update=on_update,
     )
 
 
@@ -115,6 +133,7 @@ async def _execute_validated_tool(
     checkpoint,
     *,
     tool_schemas: dict[str, dict] | None = None,
+    on_update=None,
 ) -> str:
     """Execute an already-authorized tool choice without another LLM turn."""
     capability = str(checkpoint.required_capability or "").strip()
@@ -136,7 +155,9 @@ async def _execute_validated_tool(
         "name": capability,
         "args": dict(checkpoint.arguments or {}),
     }
-    final_results = await _run_tool_calls(tool_executor, [call])
+    final_results = await _run_tool_calls(
+        tool_executor, [call], on_update=on_update
+    )
     result = final_results[0]
     content = str(result.get("content", "")).strip()
     return content or f"Tool '{capability}' completed successfully."
@@ -250,6 +271,25 @@ async def agenda_loop(
                 minimum_remaining_seconds=1,
             )
 
+        activity_tracker = AgentActivityTracker()
+
+        async def forward_tool_update(update: dict) -> None:
+            """Surface sanitized tool activity (name/status only, no inputs)."""
+            if update.get("type") == "agent_activity":
+                await emit(
+                    activity_tracker.replace_tools(update.get("tools", []))
+                )
+            elif update.get("type") == "tool_call_status":
+                await emit(
+                    activity_tracker.update_tool(
+                        {
+                            "tool_id": update.get("tool_id"),
+                            "tool_name": update.get("tool_name"),
+                            "status": update.get("status"),
+                        }
+                    )
+                )
+
         async def execute_step():
             if checkpoint.kind == "invoke_tool":
                 tool_executor = getattr(context, "tool_executor", None)
@@ -258,11 +298,13 @@ async def agenda_loop(
                     tool_manager,
                     str(checkpoint.required_capability or "").strip(),
                     checkpoint.step_id,
+                    on_update=forward_tool_update,
                 )
                 return await _execute_validated_tool(
                     tool_executor,
                     checkpoint,
                     tool_schemas=tool_schemas,
+                    on_update=forward_tool_update,
                 )
             instruction = _agenda_step_instruction(entry, checkpoint)
             return await process_single_conversation(

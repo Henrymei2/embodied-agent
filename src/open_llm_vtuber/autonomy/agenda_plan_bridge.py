@@ -16,11 +16,42 @@ from .plan_execution import (
 )
 from .plan_state import (
     CounterfactualAssessment,
+    PlanConflictError,
     ResumablePlan,
     ResumablePlanStore,
     build_plan,
     build_plan_step,
+    result_digest,
 )
+
+
+# Synthetic reconciliation for preempted side-effecting steps. The outcome is
+# deliberately recorded as unknown so the plan terminates without replaying an
+# effect that may or may not have landed.
+_UNKNOWN_OUTCOME_REF = "agenda-outcome:unknown"
+_UNKNOWN_OUTCOME_DIGEST = result_digest("outcome:unknown")
+
+
+def reconcile_cancelling_plan(
+    plan_store: ResumablePlanStore,
+    plan: ResumablePlan,
+) -> ResumablePlan:
+    """Terminate a ``cancelling`` plan without replaying its unknown outcome.
+
+    Only plans parked in ``cancelling`` are touched. Terminal plans are
+    returned unchanged; a stale race that already reconciled the plan raises
+    ``PlanConflictError`` and is treated as already reconciled.
+    """
+    if plan is None or plan.terminal or plan.state != "cancelling":
+        return plan
+    try:
+        return plan_store.reconcile_cancellation(
+            plan.plan_id,
+            outcome_ref=_UNKNOWN_OUTCOME_REF,
+            outcome_digest=_UNKNOWN_OUTCOME_DIGEST,
+        )
+    except PlanConflictError:
+        return plan_store.get(plan.plan_id) or plan
 
 
 @dataclass(frozen=True)
@@ -45,6 +76,8 @@ def abandon_entry_safely(agenda_store: AgendaStore, entry_id: str) -> AgendaEntr
         )
     cancelled = plan_store.cancel(plan_id, reason="user abandoned agenda entry")
     if not cancelled.terminal:
+        cancelled = reconcile_cancelling_plan(plan_store, cancelled)
+    if not cancelled.terminal:
         return agenda_store.transition(
             entry_id,
             "suspended",
@@ -52,11 +85,18 @@ def abandon_entry_safely(agenda_store: AgendaStore, entry_id: str) -> AgendaEntr
                 "Stop requested; the side-effect outcome requires reconciliation."
             ),
         )
+    report_summary = None
+    if entry.kind != "user" and entry.report_policy != "silent":
+        report_summary = (
+            "Stopped by the user; the last step's outcome could not be "
+            "confirmed and was not replayed."
+        )
     absorbed = agenda_store.absorb_resumable_plan(
         entry_id,
         plan_id=plan_id,
         status="abandoned",
         progress_summary="Stopped by user.",
+        report_summary=report_summary,
     )
     if cancelled.terminal_report_state == "pending":
         plan_store.claim_terminal_report(plan_id)
@@ -211,6 +251,7 @@ class AgendaPlanBridge:
         restored = 0
         acknowledged = 0
         released = 0
+        reconciled = 0
         state = self.agenda_store.load()
         for entry in state.entries:
             absorbed = entry.metadata.get("resumable_plan_absorbed")
@@ -232,10 +273,28 @@ class AgendaPlanBridge:
                     reason_code="process_restart",
                 )
                 released += 1
+            if plan is not None and plan.state == "cancelling":
+                plan = reconcile_cancelling_plan(self.store, plan)
+                reconciled += 1
+                if (
+                    plan.terminal
+                    and entry.kind != "user"
+                    and entry.report_policy != "silent"
+                ):
+                    # A legacy entry may already be terminal while its plan was
+                    # parked in cancelling with no report ever queued. Backfill
+                    # an honest completion report; enqueue_report is idempotent
+                    # per entry and report key.
+                    self.agenda_store.enqueue_report(
+                        entry.id,
+                        "Interrupted before completion; the last step's outcome "
+                        "could not be confirmed and was not replayed.",
+                    )
         return {
             "restored": restored,
             "acknowledged": acknowledged,
             "released": released,
+            "reconciled": reconciled,
         }
 
     async def execute(
@@ -252,6 +311,7 @@ class AgendaPlanBridge:
         plan = self.ensure_plan(
             entry, checkpoint, retry_budget=retry_budget, repair_budget=1
         )
+        plan = reconcile_cancelling_plan(self.store, plan)
         result_summary = ""
         digest = plan.plan_id.split(":", 1)[-1]
         capability_ref = (

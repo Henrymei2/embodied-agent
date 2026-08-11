@@ -15,6 +15,7 @@ from src.open_llm_vtuber.autonomy.agenda import (
 from src.open_llm_vtuber.autonomy.agenda_plan_bridge import (
     AgendaPlanBridge,
     abandon_entry_safely,
+    reconcile_cancelling_plan,
 )
 from src.open_llm_vtuber.autonomy.dual_loop import (
     DualLoopCoordinator,
@@ -644,7 +645,12 @@ async def test_agenda_absorption_is_atomic_idempotent_and_restart_reconciled(
 
     restarted = AgendaPlanBridge(agenda, ActivityExecutor(agenda, run_step, emit))
     reconciled = restarted.reconcile_startup()
-    assert reconciled == {"restored": 0, "acknowledged": 1, "released": 0}
+    assert reconciled == {
+        "restored": 0,
+        "acknowledged": 1,
+        "released": 0,
+        "reconciled": 0,
+    }
     final = agenda.load()
     assert final.entries[0].status == "completed"
     assert final.entries[0].metadata["resumable_plan_absorbed"] is None
@@ -687,6 +693,7 @@ def test_startup_relinks_plan_created_before_agenda_reference(tmp_path):
         "restored": 1,
         "acknowledged": 0,
         "released": 0,
+        "reconciled": 0,
     }
     recovered = agenda.load().entries[0]
     assert recovered.metadata["resumable_plan_id"] == created.plan_id
@@ -952,10 +959,151 @@ def test_startup_reconciliation_fences_an_interrupted_side_effect(tmp_path):
         "restored": 0,
         "acknowledged": 0,
         "released": 1,
+        "reconciled": 0,
     }
     recovered = restarted.store.get(plan.plan_id)
     assert recovered.state == "cancelling"
     assert recovered.fencing_token == 2
+
+
+def test_startup_reconciliation_heals_legacy_cancelling_plan_and_backfills_report(
+    tmp_path,
+):
+    agenda = AgendaStore(tmp_path)
+    entry = create_entry(
+        kind="pursuit",
+        title="Reconcile interrupted write after restart",
+        description="A preempted side-effecting plan must terminate without replay.",
+        origin="autonomous",
+        evidence_refs=["observation:restart-write"],
+        completion_condition="The write outcome is reconciled.",
+        time_budget_seconds=60,
+        status="suspended",
+        report_policy="on_completion",
+    )
+    agenda.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="interrupted-write-step",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="calendar.write",
+        side_effecting=True,
+    )
+
+    async def run_step(_entry, _checkpoint):
+        raise AssertionError("legacy cancelling plans must never replay")
+
+    async def emit(_payload):
+        return None
+
+    bridge = AgendaPlanBridge(agenda, ActivityExecutor(agenda, run_step, emit))
+    plan = bridge.ensure_plan(entry, checkpoint, retry_budget=2)
+    bridge.store.claim(
+        plan.plan_id,
+        owner_id="old-process",
+        fencing_token=1,
+        lease_seconds=30,
+    )
+    bridge.store.begin_step(
+        plan.plan_id,
+        owner_id="old-process",
+        fencing_token=1,
+    )
+    bridge.store.release_for_preemption(
+        plan.plan_id, fencing_token=1, reason_code="human_preemption"
+    )
+    assert bridge.store.get(plan.plan_id).state == "cancelling"
+
+    restarted = AgendaPlanBridge(agenda, ActivityExecutor(agenda, run_step, emit))
+    healed = restarted.reconcile_startup(fencing_token=2)
+    assert healed["reconciled"] == 1
+
+    final_plan = restarted.store.get(plan.plan_id)
+    assert final_plan.state == "cancelled"
+    assert final_plan.terminal_report_state == "pending"
+    assert final_plan.current_step.state == "cancelled"
+
+    reports = agenda.load().reports
+    assert len(reports) == 1
+    assert "not replayed" in reports[0].summary
+
+
+def test_reconcile_cancelling_plan_is_idempotent(tmp_path):
+    store = ResumablePlanStore(tmp_path, clock=lambda: NOW)
+    store.create(_plan(plan_id="write-plan", side_effecting=True))
+    store.claim("write-plan", owner_id="owner-a", fencing_token=1, lease_seconds=30)
+    store.begin_step("write-plan", owner_id="owner-a", fencing_token=1)
+    parked = store.release_for_preemption(
+        "write-plan", fencing_token=1, reason_code="human_preemption"
+    )
+    assert parked.state == "cancelling"
+
+    healed = reconcile_cancelling_plan(store, parked)
+    assert healed.state == "cancelled"
+    assert healed.current_step.state == "cancelled"
+    assert healed.terminal_report_state == "pending"
+
+    again = reconcile_cancelling_plan(store, store.get("write-plan"))
+    assert again.state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_bridge_execute_reconciles_cancelling_plan_without_replay(tmp_path):
+    agenda = AgendaStore(tmp_path)
+    entry = create_entry(
+        kind="pursuit",
+        title="Finish an interrupted write",
+        description="Reconcile the parked plan instead of replaying it.",
+        origin="autonomous",
+        evidence_refs=["observation:restart-write"],
+        completion_condition="The write outcome is reconciled.",
+        time_budget_seconds=60,
+        status="active",
+        report_policy="on_completion",
+    )
+    agenda.add(entry)
+    checkpoint = ExecutionCheckpoint(
+        step_id="interrupted-write-step",
+        kind="invoke_tool",
+        state="planned",
+        required_capability="calendar.write",
+        side_effecting=True,
+    )
+
+    async def run_step(_entry, _checkpoint):
+        raise AssertionError("cancelling plans must never be dispatched")
+
+    async def emit(_payload):
+        return None
+
+    bridge = AgendaPlanBridge(agenda, ActivityExecutor(agenda, run_step, emit))
+    plan = bridge.ensure_plan(entry, checkpoint, retry_budget=2)
+    bridge.store.claim(
+        plan.plan_id,
+        owner_id="owner-a",
+        fencing_token=1,
+        lease_seconds=30,
+    )
+    bridge.store.begin_step(
+        plan.plan_id,
+        owner_id="owner-a",
+        fencing_token=1,
+    )
+    bridge.store.release_for_preemption(
+        plan.plan_id, fencing_token=1, reason_code="human_preemption"
+    )
+
+    result = await bridge.execute(
+        entry,
+        checkpoint,
+        owner_id="owner-a",
+        fencing_token=1,
+        capabilities=set(),
+        object_names=set(),
+        retry_budget=2,
+    )
+    assert result.plan.state == "cancelled"
+    assert result.plan.current_step.state == "cancelled"
 
 
 def test_offline_abandon_cancels_sidecar_before_terminal_agenda_transition(tmp_path):

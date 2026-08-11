@@ -91,3 +91,9 @@ def test_tracker_has_explicit_thinking_and_idle_events():
         "phase": "planning",
         "tools": [],
     }
+    assert AgentActivityTracker.plan("Archive old emails") == {
+        "type": "agent_activity",
+        "phase": "plan",
+        "label": "Archive old emails",
+        "tools": [],
+    }

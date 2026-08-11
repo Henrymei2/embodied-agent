@@ -52,6 +52,8 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
     ? t("agentActivity.planningNext")
     : activity.phase === "thinking"
       ? t("agentActivity.thinking")
+    : activity.phase === "plan"
+      ? activity.label || t("agentActivity.executingPlan")
     : tools.length > 1
       ? t("agentActivity.multipleTasks")
       : `${friendlyToolName(tools[0]?.tool_name || "", t("agentActivity.unknownTask"))}…`;
@@ -105,8 +107,8 @@ function AgentActivityBubble({ edge }: { edge: "left" | "center" | "right" }) {
           height: "6px",
           flexShrink: 0,
           borderRadius: "full",
-          bg: ["thinking", "planning"].includes(activity.phase) ? accent[400] : "#7bdda1",
-          boxShadow: ["thinking", "planning"].includes(activity.phase)
+          bg: ["thinking", "planning", "plan"].includes(activity.phase) ? accent[400] : "#7bdda1",
+          boxShadow: ["thinking", "planning", "plan"].includes(activity.phase)
             ? `0 0 10px ${accent.glow}`
             : "0 0 10px rgba(123,221,161,0.75)",
           animation: "pulse 1.8s ease-in-out infinite",

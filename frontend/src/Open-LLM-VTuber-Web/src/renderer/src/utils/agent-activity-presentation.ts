@@ -24,6 +24,39 @@ const FRIENDLY_VERBS: Record<string, string> = {
   close: "Closing",
   set: "Setting",
   run: "Running",
+  archive: "Archiving",
+  materialize: "Materializing",
+  offer: "Offering",
+  dismiss: "Dismissing",
+  schedule: "Scheduling",
+  mark: "Marking",
+  verify: "Verifying",
+  summarize: "Summarizing",
+  inspect: "Inspecting",
+  review: "Reviewing",
+  prepare: "Preparing",
+  draft: "Drafting",
+  save: "Saving",
+  share: "Sharing",
+  sync: "Syncing",
+  upload: "Uploading",
+  download: "Downloading",
+  publish: "Publishing",
+  reply: "Replying",
+  respond: "Responding",
+  start: "Starting",
+  stop: "Stopping",
+  enable: "Enabling",
+  disable: "Disabling",
+  rename: "Renaming",
+  approve: "Approving",
+  cancel: "Cancelling",
+  pause: "Pausing",
+  resume: "Resuming",
+  monitor: "Monitoring",
+  watch: "Watching",
+  track: "Tracking",
+  refresh: "Refreshing",
 };
 
 export function friendlyToolName(toolName: string, unknownLabel: string) {
@@ -52,6 +85,7 @@ export function selectCurrentActivityTool(tools: AgentActivityTool[]) {
 interface ActivityLabels {
   thinking: string;
   planning: string;
+  plan: string;
   unknownTool: string;
 }
 
@@ -62,6 +96,7 @@ export function currentActivityLabel(
   if (activity.phase === "idle") return null;
   if (activity.phase === "thinking") return labels.thinking;
   if (activity.phase === "planning") return labels.planning;
+  if (activity.phase === "plan") return activity.label || labels.plan;
   const tool = selectCurrentActivityTool(activity.tools);
   return `${friendlyToolName(tool?.tool_name || "", labels.unknownTool)}…`;
 }

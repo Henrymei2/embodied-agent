@@ -17,7 +17,6 @@ from .mcpp.mcp_client import MCPClient
 from .mcpp.tool_executor import ToolExecutor
 from .mcpp.tool_adapter import ToolAdapter
 from .authorization.transaction import ActionTransactionCoordinator
-from .authorization.frontend_verifier import build_frontend_action_verifier
 
 from .asr.asr_factory import ASRFactory
 from .tts.fallback_tts import build_tts_engine
@@ -190,20 +189,38 @@ class ServiceContext:
             # 5. Initialize ToolExecutor
             if self.mcp_client and self.tool_manager:
                 from .workspace import ensure_workspace
+                from .authorization.frontend_verifier import (
+                    build_frontend_action_verifier,
+                )
+                from .authorization.readback_verifier import (
+                    build_workspace_readback_verifier,
+                )
 
                 workspace_root = ensure_workspace(
                     os.environ.get("EMBODIED_AGENT_WORKSPACE")
                 ).root
+                frontend_verifier = build_frontend_action_verifier(
+                    conf_uid or getattr(self.character_config, "conf_uid", None) or "",
+                    self.scene_mode,
+                )
+                readback_verifier = build_workspace_readback_verifier(workspace_root)
+
+                async def combined_verifier(
+                    descriptor, profile, arguments, tool_result
+                ):
+                    for candidate in (frontend_verifier, readback_verifier):
+                        verification = await candidate(
+                            descriptor, profile, arguments, tool_result
+                        )
+                        if verification is not None:
+                            return verification
+                    return None
+
                 action_transactions = ActionTransactionCoordinator(
                     workspace_root=workspace_root,
                     client_uid=self.client_uid or "anonymous",
                     tool_manager=self.tool_manager,
-                    verifier=build_frontend_action_verifier(
-                        conf_uid
-                        or getattr(self.character_config, "conf_uid", None)
-                        or "",
-                        self.scene_mode,
-                    ),
+                    verifier=combined_verifier,
                 )
                 self.tool_executor = ToolExecutor(
                     self.mcp_client,
@@ -232,7 +249,9 @@ class ServiceContext:
         host = self.system_config.host or "localhost"
         if host in {"0.0.0.0", "::"}:
             host = "127.0.0.1"
-        scheme = "https" if getattr(self.system_config, "ssl_certfile", None) else "http"
+        scheme = (
+            "https" if getattr(self.system_config, "ssl_certfile", None) else "http"
+        )
         backend_url = f"{scheme}://{host}:{self.system_config.port}"
         from .workspace import ensure_workspace
 

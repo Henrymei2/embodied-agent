@@ -67,6 +67,7 @@ export interface MessageEvent {
   type: string;
   phase?: AgentActivityPhase;
   tools?: AgentActivityTool[];
+  label?: string;
   action?: string;
   args?: Record<string, unknown>;
   audio?: string;

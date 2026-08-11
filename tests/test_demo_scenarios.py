@@ -235,6 +235,11 @@ def test_simulated_google_tools_never_construct_a_real_service(tmp_path, monkeyp
     )
 
     gmail = json.loads(gmail_tools.search_emails("is:unread"))
+    read = json.loads(
+        gmail_tools.get_email(
+            "89bc0a7350259e2d6c9d7744216b5fef0f3227a0620c125478fec7123991b37d"
+        )
+    )
     calendar = json.loads(calendar_tools.list_calendar_events())
     draft = json.loads(
         gmail_tools.create_email_draft(
@@ -244,5 +249,7 @@ def test_simulated_google_tools_never_construct_a_real_service(tmp_path, monkeyp
         )
     )
     assert gmail["simulated"] is True
+    assert read["simulated"] is True
+    assert read["message_id"] == "scenario-meeting-moved"
     assert calendar["simulated"] is True
     assert draft["simulated"] is True
