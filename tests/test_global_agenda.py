@@ -14,6 +14,7 @@ from src.open_llm_vtuber.autonomy.agenda_context import AgendaContext
 from src.open_llm_vtuber.autonomy.agenda_planner import (
     PlannerResponseError,
     StructuredAgendaPlanner,
+    _json_object,
     normalize_generated_kind,
 )
 from src.open_llm_vtuber.autonomy.activity import (
@@ -100,6 +101,32 @@ async def test_structured_planner_classifies_empty_reconsideration_response():
         await StructuredAgendaPlanner(complete).reconsider({}, context)
 
 
+def test_json_object_accepts_fenced_nested_json_and_visible_prefix():
+    parsed = _json_object(
+        "Planner result:\n```json\n"
+        '{"kind":"invoke_tool","arguments":{"path":"notes/today.md"}}'
+        "\n```\nDone."
+    )
+
+    assert parsed["arguments"] == {"path": "notes/today.md"}
+
+
+def test_json_object_skips_non_json_braces_before_valid_object():
+    parsed = _json_object('Use {field} carefully. Result: {"complete": true}')
+
+    assert parsed == {"complete": True}
+
+
+def test_json_object_rejects_genuinely_malformed_json():
+    with pytest.raises(PlannerResponseError, match="malformed JSON"):
+        _json_object('{"kind": "invoke_tool", "arguments": {')
+
+
+def test_json_object_rejects_array_wrapped_output():
+    with pytest.raises(PlannerResponseError, match="JSON object"):
+        _json_object('[{"kind": "idle"}]')
+
+
 def test_store_enforces_one_foreground_and_suspends_previous(tmp_path):
     store = AgendaStore(tmp_path)
     first = pursuit(status="active")
@@ -126,6 +153,30 @@ def test_restart_recovery_marks_side_effect_uncertain(tmp_path):
     recovered = store.load().entries[0]
     assert recovered.status == "suspended"
     assert recovered.checkpoint.state == "uncertain"
+
+
+def test_restart_recovery_discards_intention_and_checkpoint(tmp_path):
+    store = AgendaStore(tmp_path)
+    entry = pursuit(status="active")
+    entry.checkpoint = ExecutionCheckpoint(
+        step_id="side-effect",
+        kind="invoke_tool",
+        state="running",
+        side_effecting=True,
+    )
+    store.add(entry)
+
+    assert store.recover_interrupted(discard_uncheckpointed_intentions=True) == [
+        entry.id
+    ]
+    recovered = store.load().entries[0]
+    assert recovered.status == "abandoned"
+    assert recovered.checkpoint is None
+    assert recovered.metadata["execution_path"] == "intention"
+    assert recovered.metadata["intention_outcome"] == "interrupted"
+    event = store.load().events[-1]
+    assert event.type == "intention_interrupted"
+    assert event.data["uncertain_side_effect"] is True
 
 
 def test_due_schedule_is_claimed_once_and_recurrence_advances(tmp_path):

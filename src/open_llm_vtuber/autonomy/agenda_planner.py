@@ -54,19 +54,18 @@ def _json_object(text: str) -> dict[str, Any]:
     text = text.strip()
     if not text:
         raise PlannerResponseError("planner returned an empty response")
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    candidate = (
-        fenced.group(1) if fenced else text[text.find("{") : text.rfind("}") + 1]
-    )
-    if not candidate.strip() or "{" not in candidate or "}" not in candidate:
-        raise PlannerResponseError("planner returned malformed JSON")
-    try:
-        value = json.loads(candidate)
-    except json.JSONDecodeError as exc:
-        raise PlannerResponseError("planner returned malformed JSON") from exc
-    if not isinstance(value, dict):
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S | re.I)
+    candidate = fenced.group(1).strip() if fenced else text
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"[\[{]", candidate):
+        try:
+            value, _end = decoder.raw_decode(candidate, match.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
         raise PlannerResponseError("planner output must be a JSON object")
-    return value
+    raise PlannerResponseError("planner returned malformed JSON")
 
 
 def _completion_condition(value: Any) -> str:

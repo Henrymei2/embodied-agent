@@ -1701,11 +1701,81 @@ class AgendaStore:
 
         return self.mutate(operation)
 
-    def recover_interrupted(self) -> list[str]:
+    def interrupt_intention(
+        self,
+        entry_id: str,
+        *,
+        reason: str,
+    ) -> Optional[AgendaEntry]:
+        """Terminate an in-memory intention chain without making it resumable."""
+
+        def operation(state: AgendaState) -> Optional[AgendaEntry]:
+            entry = self._find(state, entry_id)
+            if entry.status != "active" or entry.metadata.get("execution_path") != (
+                "intention"
+            ):
+                return None
+            uncertain_side_effect = bool(
+                entry.checkpoint is not None
+                and entry.checkpoint.side_effecting
+                and entry.checkpoint.state in {"running", "uncertain"}
+            )
+            entry.status = "abandoned"
+            entry.ended_at = _iso()
+            entry.progress_summary = "Interrupted; this intention will not be resumed."
+            entry.checkpoint = None
+            entry.metadata["intention_outcome"] = "interrupted"
+            entry.metadata["interruption_reason"] = str(reason)[:100]
+            self._event(
+                state,
+                entry.id,
+                "intention_interrupted",
+                {"uncertain_side_effect": uncertain_side_effect},
+            )
+            return entry
+
+        return self.mutate(operation)
+
+    def recover_interrupted(
+        self,
+        *,
+        discard_uncheckpointed_intentions: bool = False,
+    ) -> list[str]:
         def operation(state: AgendaState) -> list[str]:
             recovered: list[str] = []
             for entry in state.entries:
                 if entry.status != "active":
+                    continue
+                discard_intention = bool(
+                    entry.kind in {"pursuit", "scheduled"}
+                    and not entry.metadata.get("resumable_plan_id")
+                    and (
+                        entry.metadata.get("execution_path") == "intention"
+                        or discard_uncheckpointed_intentions
+                    )
+                )
+                if discard_intention:
+                    uncertain_side_effect = bool(
+                        entry.checkpoint is not None
+                        and entry.checkpoint.side_effecting
+                        and entry.checkpoint.state in {"running", "uncertain"}
+                    )
+                    entry.status = "abandoned"
+                    entry.ended_at = _iso()
+                    entry.progress_summary = (
+                        "Interrupted; this intention will not be resumed."
+                    )
+                    entry.checkpoint = None
+                    entry.metadata["execution_path"] = "intention"
+                    entry.metadata["intention_outcome"] = "interrupted"
+                    entry.metadata["interruption_reason"] = "runtime_recovery"
+                    recovered.append(entry.id)
+                    self._event(
+                        state,
+                        entry.id,
+                        "intention_interrupted",
+                        {"uncertain_side_effect": uncertain_side_effect},
+                    )
                     continue
                 if entry.checkpoint and entry.checkpoint.side_effecting:
                     entry.checkpoint.state = "uncertain"

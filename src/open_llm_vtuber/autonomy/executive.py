@@ -141,7 +141,9 @@ class AgendaExecutive:
 
         subscription = subscribe_agenda_changes(self.store.root, self.wake)
         try:
-            recovered = self.store.recover_interrupted()
+            recovered = self.store.recover_interrupted(
+                discard_uncheckpointed_intentions=self.run_intention is not None
+            )
             recovered_plans = self.plan_bridge.store.recover_expired()
             reconciliation_fence = (
                 self.lease_handle.fencing_token
@@ -204,6 +206,10 @@ class AgendaExecutive:
                             if task is not None
                         ),
                         return_exceptions=True,
+                    )
+                    self._interrupt_intention(
+                        self._entry_task_entry_id,
+                        reason="runtime_ownership_changed",
                     )
                     self._release_event_claims(
                         "Agenda ownership changed during successor planning."
@@ -367,7 +373,11 @@ class AgendaExecutive:
         loop = asyncio.get_running_loop()
         started = loop.time()
         cancellation = asyncio.create_task(
-            self._cancel_entry_work(), name="agenda-human-preemption"
+            self._cancel_entry_work(
+                interrupt_intention=True,
+                interruption_reason="user_preemption",
+            ),
+            name="agenda-human-preemption",
         )
         done, _pending = await asyncio.wait(
             {cancellation}, timeout=self.settings.human_preemption_timeout_seconds
@@ -423,7 +433,10 @@ class AgendaExecutive:
 
     async def pause(self, paused: bool) -> None:
         if paused:
-            await self._cancel_entry_work()
+            await self._cancel_entry_work(
+                interrupt_intention=True,
+                interruption_reason="agenda_paused",
+            )
         self.store.pause(paused)
         self.wake()
         await self.emit(
@@ -492,7 +505,10 @@ class AgendaExecutive:
             return True
         due = self.store.claim_due()
         if due:
-            await self._cancel_entry_work()
+            await self._cancel_entry_work(
+                interrupt_intention=True,
+                interruption_reason="scheduled_preemption",
+            )
             state = self.store.load()
             active = next(
                 (item for item in state.entries if item.status == "active"),
@@ -539,7 +555,10 @@ class AgendaExecutive:
             and foreground_policy is not None
             and foreground_policy.preempt_interruptible_background
         ):
-            await self._cancel_entry_work()
+            await self._cancel_entry_work(
+                interrupt_intention=True,
+                interruption_reason="foreground_event_preemption",
+            )
             current = next(
                 (
                     item
@@ -955,7 +974,33 @@ class AgendaExecutive:
         await self.broadcast_snapshot()
         return True
 
-    async def _cancel_entry_work(self) -> None:
+    def _interrupt_intention(self, entry_id: str | None, *, reason: str) -> bool:
+        if entry_id is None:
+            return False
+        current = next(
+            (entry for entry in self.store.load().entries if entry.id == entry_id),
+            None,
+        )
+        if (
+            current is None
+            or current.status != "active"
+            or current.metadata.get("execution_path") != "intention"
+        ):
+            return False
+        interrupted = self.store.interrupt_intention(entry_id, reason=reason)
+        if interrupted is None:
+            return False
+        if self.discard_intention is not None:
+            self.discard_intention(entry_id)
+        self.wake()
+        return True
+
+    async def _cancel_entry_work(
+        self,
+        *,
+        interrupt_intention: bool = False,
+        interruption_reason: str = "agenda_preemption",
+    ) -> None:
         await self._cancel_reconsideration()
         settling = self._settling_task
         if settling is not None and not settling.done():
@@ -971,6 +1016,8 @@ class AgendaExecutive:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
         finally:
+            if interrupt_intention:
+                self._interrupt_intention(entry_id, reason=interruption_reason)
             if entry_id is not None:
                 self._release_interrupted_plan(entry_id)
             if self._entry_task is task:
@@ -1198,6 +1245,8 @@ class AgendaExecutive:
                 or f"event:{claimed_event.id}" in proposal.motivation.evidence_refs
             )
             if verdict.accepted and event_grounded:
+                if self.run_intention is not None and proposal.kind != "idle":
+                    proposal.metadata["execution_path"] = "intention"
                 if proposal.kind == "idle":
                     proposal.budget.time_budget_seconds = max(
                         self.settings.idle_min_seconds,
@@ -1689,6 +1738,8 @@ class AgendaExecutive:
 
     async def _run_intention_entry(self, entry: AgendaEntry) -> bool:
         """Run the production single-chain path without per-step planning."""
+        if entry.metadata.get("execution_path") != "intention":
+            self.store.update_metadata(entry.id, execution_path="intention")
         checkpoint = entry.checkpoint
         if checkpoint is not None and checkpoint.state == "uncertain":
             self.store.transition(

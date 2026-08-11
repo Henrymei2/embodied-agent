@@ -333,3 +333,78 @@ async def test_late_chain_result_cannot_revive_terminal_entry(tmp_path):
     assert current.status == "abandoned"
     assert current.progress_summary == "Scenario stopped."
     assert discarded == [entry.id]
+
+
+@pytest.mark.asyncio
+async def test_preempted_intention_is_discarded_and_fresh_work_is_planned(tmp_path):
+    entered = asyncio.Event()
+    discarded = []
+    (tmp_path / "MEMORY.md").write_text("A grounded fresh signal.", encoding="utf-8")
+
+    async def run_intention(_entry):
+        entered.set()
+        await asyncio.Event().wait()
+
+    class Planner:
+        calls = 0
+
+        async def propose_intention(self, _context):
+            self.calls += 1
+            return create_entry(
+                kind="pursuit",
+                title="Plan a fresh intention",
+                description="Start over without the interrupted conversation.",
+                origin="autonomous",
+                evidence_refs=["memory:MEMORY.md"],
+                completion_condition="A fresh bounded intention is queued.",
+                time_budget_seconds=300,
+                status="proposed",
+            )
+
+        async def reconsider(self, *_args):
+            raise AssertionError("interrupted intentions must not be reconsidered")
+
+    async def unused_step(*_args):
+        raise AssertionError("legacy activity execution must not run")
+
+    async def emit(_payload):
+        return None
+
+    store = AgendaStore(tmp_path)
+    entry = _entry()
+    store.add(entry)
+    planner = Planner()
+    executive = AgendaExecutive(
+        client_uid="client",
+        store=store,
+        planner=planner,
+        settings=AutonomySettings(
+            restart_recovery_grace_seconds=0,
+            planner_retry_backoff_seconds=0,
+        ),
+        run_step=unused_step,
+        run_intention=run_intention,
+        discard_intention=discarded.append,
+        emit=emit,
+        capabilities={"search_emails"},
+    )
+
+    assert await executive._advance() is True
+    await entered.wait()
+    user = await executive.preempt_for_user("User request")
+
+    interrupted = next(item for item in store.load().entries if item.id == entry.id)
+    assert interrupted.status == "abandoned"
+    assert interrupted.checkpoint is None
+    assert interrupted.metadata["intention_outcome"] == "interrupted"
+    assert discarded == [entry.id]
+
+    await executive.finish_user(user.id)
+    await executive._generate_successor()
+
+    fresh = next(
+        item for item in store.load().entries if item.title == "Plan a fresh intention"
+    )
+    assert fresh.status == "queued"
+    assert fresh.metadata["execution_path"] == "intention"
+    assert planner.calls == 1

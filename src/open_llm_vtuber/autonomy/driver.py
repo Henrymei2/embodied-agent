@@ -284,7 +284,7 @@ async def agenda_loop(
         logger.warning("agenda: configured agent does not expose a stateless LLM")
         return
 
-    raw_complete = make_llm_complete(llm)
+    raw_complete = make_llm_complete(llm, raise_errors=True)
 
     async def complete(prompt: str) -> str:
         return await raw_complete([{"role": "user", "content": prompt}], "")
