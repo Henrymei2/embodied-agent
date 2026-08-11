@@ -90,7 +90,8 @@ class Service:
 
 
 @pytest.fixture
-def gmail():
+def gmail(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path))
     sys.modules.pop("mcp_servers.gmail_tools", None)
     module = importlib.import_module("mcp_servers.gmail_tools")
     module = importlib.reload(module)

@@ -14,7 +14,11 @@ from src.open_llm_vtuber.autonomy.agenda import (
 )
 from src.open_llm_vtuber.autonomy.activity import ActivityExecutor
 from src.open_llm_vtuber.autonomy.driver import _agenda_step_instruction
-from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
+from src.open_llm_vtuber.autonomy.executive import (
+    AgendaExecutive,
+    PlannerCallTimeout,
+)
+from src.open_llm_vtuber.autonomy.idle_relocation import IdleObject, IdleScene
 from src.open_llm_vtuber.autonomy.observation import (
     clear_client_presence,
     update_client_presence,
@@ -47,6 +51,35 @@ def _pursuit(**overrides):
 
 async def _emit(_payload: dict) -> None:
     return None
+
+
+class _TraceSpan:
+    def __init__(self):
+        self.attributes = {}
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+
+class _TraceContext:
+    def __init__(self, span):
+        self.span = span
+
+    def __enter__(self):
+        return self.span
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _Tracer:
+    def __init__(self):
+        self.spans = []
+
+    def span(self, *_args, **_kwargs):
+        span = _TraceSpan()
+        self.spans.append(span)
+        return _TraceContext(span)
 
 
 def _executive(store, planner, settings=None, run_step=None, **kwargs):
@@ -83,6 +116,47 @@ def test_agenda_revision_advances_on_every_mutation(tmp_path):
     assert first == 1
     assert store.load().revision == 2
     assert store.snapshot()["revision"] == 2
+
+
+def test_conditional_transition_cannot_revive_terminal_entry(tmp_path):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    store.add(entry)
+    store.transition(entry.id, "abandoned", progress_summary="Stopped by user.")
+    revision = store.load().revision
+
+    applied = store.transition_if_status(
+        entry.id,
+        "suspended",
+        "queued",
+        metadata_updates={"reconsider_failures": 0},
+    )
+
+    current = store.load().entries[0]
+    assert applied is None
+    assert current.status == "abandoned"
+    assert "reconsider_failures" not in current.metadata
+    assert store.load().revision == revision
+
+
+def test_conditional_terminal_transition_preserves_completion_report(tmp_path):
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended", report_policy="on_completion")
+    entry.metadata["trigger_foreground"] = True
+    store.add(entry)
+
+    applied = store.transition_if_status(
+        entry.id,
+        "suspended",
+        "failed",
+        progress_summary="Planner reconsider timed out.",
+    )
+
+    state = store.load()
+    assert applied is not None
+    assert state.entries[0].status == "failed"
+    assert len(state.reports) == 1
+    assert state.reports[0].summary == "Planner reconsider timed out."
 
 
 @pytest.mark.asyncio
@@ -643,6 +717,98 @@ async def test_planner_failures_are_capped_before_reconsideration(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phase",
+    ["propose", "next_step", "evaluate_completion", "reconsider", "idle_placement"],
+)
+async def test_every_planner_phase_has_a_content_free_hard_timeout(tmp_path, phase):
+    store = AgendaStore(tmp_path)
+    executive = _executive(store, object())
+    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+    span = _TraceSpan()
+
+    async def hangs():
+        await asyncio.Event().wait()
+
+    with pytest.raises(PlannerCallTimeout) as caught:
+        await executive._run_planner_call(hangs(), phase=phase, span=span)
+
+    assert caught.value.phase == phase
+    assert span.attributes["agenda.planner_phase"] == phase
+    assert span.attributes["agenda.planner_outcome"] == "timed_out"
+    assert span.attributes["agenda.planner_timeout_seconds"] == 0.01
+    assert "prompt" not in repr(span.attributes).lower()
+
+
+@pytest.mark.asyncio
+async def test_proposal_timeout_ends_pass_without_repeating_model_call(tmp_path):
+    class Planner:
+        calls = 0
+
+        async def propose_intention(self, _context):
+            self.calls += 1
+            await asyncio.Event().wait()
+
+    planner = Planner()
+    store = AgendaStore(tmp_path)
+    executive = _executive(store, planner)
+    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+
+    await executive._generate_successor()
+
+    assert planner.calls == 1
+    assert store.load().entries[-1].kind == "idle"
+
+
+@pytest.mark.asyncio
+async def test_idle_placement_timeout_safely_selects_no_movement(tmp_path):
+    class Planner:
+        async def choose_idle_placement(self, _context, _scene):
+            await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    executive = _executive(store, Planner())
+    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+    scene = IdleScene(
+        current_position=(0.0, 0.0),
+        objects=(IdleObject("sofa", "Sofa", 1.0, 1.0, 1.4, "sitting"),),
+    )
+
+    placement = await executive._choose_idle_placement(
+        executive._agenda_context(), scene
+    )
+
+    assert placement.object_id is None
+
+
+@pytest.mark.asyncio
+async def test_next_step_timeout_suspends_without_execution_failure(tmp_path):
+    class Planner:
+        started = asyncio.Event()
+
+        async def next_step(self, _entry, _context):
+            self.started.set()
+            await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="active")
+    store.add(entry)
+    planner = Planner()
+    executive = _executive(store, planner)
+    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+
+    assert await executive._advance() is True
+    await planner.started.wait()
+    await asyncio.sleep(0.02)
+    assert await executive._advance() is True
+
+    current = store.load().entries[0]
+    assert current.status == "suspended"
+    assert current.metadata["planner_timeout_failures"] == 1
+    assert "execution_failures" not in current.metadata
+
+
+@pytest.mark.asyncio
 async def test_short_generated_pursuit_gets_a_complete_execution_window(tmp_path):
     (tmp_path / "MEMORY.md").write_text("A grounded item to check.", encoding="utf-8")
 
@@ -827,6 +993,126 @@ async def test_reconsideration_failure_is_deferred_instead_of_hot_looping(tmp_pa
     await executive._reconsider_suspended()
     assert planner.reconsider_calls == 1
     assert store.load().entries[0].status == "suspended"
+
+
+@pytest.mark.asyncio
+async def test_reconsider_timeout_uses_bounded_failure_backoff(tmp_path):
+    class Planner:
+        async def reconsider(self, _entry, _context):
+            await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    store.add(entry)
+    executive = _executive(store, Planner())
+    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+
+    await executive._reconsider_suspended()
+
+    current = store.load().entries[0]
+    assert current.status == "suspended"
+    assert current.metadata["reconsider_failures"] == 1
+    assert current.metadata["reconsider_deferred_until"]
+    assert "PlannerCallTimeout" in current.metadata["reconsider_deferred_reason"]
+
+
+@pytest.mark.asyncio
+async def test_abandon_cancels_inflight_suspended_reconsideration_promptly(tmp_path):
+    started = asyncio.Event()
+    cancellation_seen = asyncio.Event()
+    release_provider = asyncio.Event()
+
+    class Planner:
+        async def reconsider(self, _entry, _context):
+            started.set()
+            try:
+                await release_provider.wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await release_provider.wait()
+            return "resume"
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    store.add(entry)
+    executive = _executive(store, Planner())
+    object.__setattr__(executive.settings, "human_preemption_timeout_seconds", 0.01)
+
+    assert await executive._advance() is True
+    await started.wait()
+    loop = asyncio.get_running_loop()
+    abandon_started = loop.time()
+    await executive.abandon(entry.id)
+
+    assert loop.time() - abandon_started < 0.1
+    assert cancellation_seen.is_set()
+    assert store.load().entries[0].status == "abandoned"
+    release_provider.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert store.load().entries[0].status == "abandoned"
+
+
+@pytest.mark.asyncio
+async def test_new_runnable_work_preempts_background_reconsideration(tmp_path):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class Planner:
+        async def reconsider(self, _entry, _context):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+    store = AgendaStore(tmp_path)
+    suspended = _pursuit(status="suspended")
+    store.add(suspended)
+    executive = _executive(store, Planner())
+
+    assert await executive._advance() is True
+    await started.wait()
+    runnable = _pursuit(status="queued", title="New foreground work")
+    runnable.metadata["trigger_foreground"] = True
+    store.add(runnable)
+
+    assert await executive._advance() is True
+
+    assert cancelled.is_set()
+    current = next(item for item in store.load().entries if item.id == runnable.id)
+    assert current.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_late_reconsider_result_cannot_revive_terminal_entry(tmp_path):
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Planner:
+        async def reconsider(self, _entry, _context):
+            started.set()
+            await release.wait()
+            return "resume"
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit(status="suspended")
+    store.add(entry)
+    executive = _executive(store, Planner())
+    tracer = _Tracer()
+    executive.tracer = tracer
+
+    reconsider = asyncio.create_task(executive._reconsider_suspended())
+    await started.wait()
+    store.transition(entry.id, "abandoned", progress_summary="Stopped by user.")
+    terminal_metadata = dict(store.load().entries[0].metadata)
+    release.set()
+    await reconsider
+
+    current = store.load().entries[0]
+    assert current.status == "abandoned"
+    assert current.metadata == terminal_metadata
+    assert tracer.spans[-1].attributes["agenda.planner_outcome"] == ("stale_discarded")
 
 
 @pytest.mark.asyncio

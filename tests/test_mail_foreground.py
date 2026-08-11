@@ -197,6 +197,34 @@ async def test_executive_claims_mail_through_mandatory_path(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_completed_mail_entry_does_not_block_a_new_scenario_event(tmp_path):
+    store = AgendaStore(tmp_path)
+    done = _mail_entry(status="queued")
+    store.add(done)
+    store.transition(done.id, "completed", progress_summary="Handled.")
+    event = _mail_event(store, simulated=True)
+    lease = WorkspaceLease(tmp_path)
+    handle = lease.acquire("mail-owner", priority=100, holder_label="live")
+    assert handle is not None
+    planner = _TriggeredPlanner()
+    executive = _executive(store, planner, lease_handle=handle)
+
+    with lease_context(handle):
+        await executive._generate_successor()
+
+    state = store.load()
+    linked = next(
+        item
+        for item in state.entries
+        if item.origin == "external_event" and item.id != done.id
+    )
+    assert planner.triggered == 1
+    assert linked.status == "queued"
+    acknowledged = next(item for item in state.inbox if item.id == event.id)
+    assert acknowledged.status == "acknowledged"
+
+
+@pytest.mark.asyncio
 async def test_mail_preempts_safe_background_but_not_user_work(tmp_path):
     store = AgendaStore(tmp_path / "background")
     background = create_entry(

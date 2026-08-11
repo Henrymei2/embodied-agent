@@ -643,6 +643,84 @@ class AgendaStore:
 
         return self.mutate(operation)
 
+    def transition_if_status(
+        self,
+        entry_id: str,
+        expected_status: str,
+        status: str,
+        *,
+        metadata_updates: Optional[dict[str, Any]] = None,
+        progress_summary: Optional[str] = None,
+    ) -> Optional[AgendaEntry]:
+        """Atomically transition only while an entry still has the expected state.
+
+        Terminal targets retain the reporting semantics of ``transition`` while
+        allowing a stale caller to lose the race without raising.
+        """
+        if expected_status not in ENTRY_STATUSES or status not in ENTRY_STATUSES:
+            raise ValueError("invalid agenda status")
+
+        def operation(state: AgendaState) -> Optional[AgendaEntry]:
+            entry = self._find(state, entry_id)
+            if entry.status != expected_status:
+                return None
+            if status == "active":
+                self._suspend_active(state, except_id=entry_id)
+                entry.started_at = entry.started_at or _iso()
+                if not entry.budget.deadline_at:
+                    entry.budget.deadline_at = _iso(
+                        utc_now() + timedelta(seconds=entry.budget.time_budget_seconds)
+                    )
+            if status in TERMINAL_STATUSES:
+                entry.ended_at = _iso()
+                entry.checkpoint = None
+            entry.status = status
+            if progress_summary is not None:
+                entry.progress_summary = progress_summary[:1000]
+            for key, value in (metadata_updates or {}).items():
+                if value is None:
+                    entry.metadata.pop(str(key), None)
+                else:
+                    entry.metadata[str(key)] = value
+            if (
+                status in TERMINAL_STATUSES
+                and entry.metadata.get("trigger_foreground")
+                and entry.report_policy != "silent"
+                and not any(
+                    report.entry_id == entry_id and report.report_key == "completion"
+                    for report in state.reports
+                )
+            ):
+                report = ReportOutboxItem(
+                    id=f"report_{uuid.uuid4().hex}",
+                    entry_id=entry_id,
+                    summary=(
+                        entry.progress_summary
+                        or (
+                            "The email task completed."
+                            if status == "completed"
+                            else f"The email task ended with status {status}."
+                        )
+                    )[:2000],
+                )
+                state.reports.append(report)
+                entry.metadata["report_status"] = "pending"
+                self._event(
+                    state,
+                    entry_id,
+                    "report_queued",
+                    {"report_id": report.id, "report_key": "completion"},
+                )
+            self._event(
+                state,
+                entry_id,
+                "conditional_transition",
+                {"expected_status": expected_status, "status": status},
+            )
+            return entry
+
+        return self.mutate(operation)
+
     def pause(self, paused: bool) -> AgendaState:
         def operation(state: AgendaState) -> AgendaState:
             state.paused = paused

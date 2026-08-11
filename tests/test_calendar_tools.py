@@ -75,7 +75,8 @@ class FakeService:
 
 
 @pytest.fixture
-def calendar(monkeypatch):
+def calendar(tmp_path, monkeypatch):
+    monkeypatch.setenv("EMBODIED_AGENT_WORKSPACE", str(tmp_path))
     sys.modules.pop("mcp_servers.calendar_tools", None)
     module = importlib.import_module("mcp_servers.calendar_tools")
     module = importlib.reload(module)

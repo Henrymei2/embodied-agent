@@ -17,6 +17,7 @@ from .agenda import (
     AgendaEntry,
     AgendaStore,
     ProposalRejection,
+    TERMINAL_STATUSES,
     create_entry,
     utc_now,
 )
@@ -45,6 +46,15 @@ class PlannerQuotaExceeded(RuntimeError):
     def __init__(self, reset_at: str) -> None:
         super().__init__(f"planner quota exhausted until {reset_at}")
         self.reset_at = reset_at
+
+
+class PlannerCallTimeout(TimeoutError):
+    """A planner model call exceeded its bounded execution window."""
+
+    def __init__(self, phase: str, timeout_seconds: float) -> None:
+        super().__init__(f"planner {phase} timed out after {timeout_seconds:g} seconds")
+        self.phase = phase
+        self.timeout_seconds = timeout_seconds
 
 
 class AgendaExecutive:
@@ -115,6 +125,9 @@ class AgendaExecutive:
         self._activity_task: Optional[asyncio.Task] = None
         self._entry_task: Optional[asyncio.Task] = None
         self._entry_task_entry_id: Optional[str] = None
+        self._reconsider_task: Optional[asyncio.Task] = None
+        self._reconsider_task_entry_id: Optional[str] = None
+        self._detached_planner_tasks: set[asyncio.Task] = set()
         self._settling_task: Optional[asyncio.Task] = None
         self._settling_interrupted = False
         self._report_result = report_result
@@ -169,6 +182,7 @@ class AgendaExecutive:
                     except asyncio.TimeoutError:
                         pass
                 except asyncio.CancelledError:
+                    await self._cancel_reconsideration()
                     if self._entry_task and not self._entry_task.done():
                         self._entry_task.cancel()
                     if self._activity_task and not self._activity_task.done():
@@ -284,6 +298,52 @@ class AgendaExecutive:
     def wake(self) -> None:
         self._wake.set()
 
+    def _detach_planner_task(self, task: asyncio.Task) -> None:
+        """Keep a timed-out/cancelled provider task alive only for safe cleanup."""
+        self._detached_planner_tasks.add(task)
+
+        def consume(done: asyncio.Task) -> None:
+            self._detached_planner_tasks.discard(done)
+            if done.cancelled():
+                return
+            try:
+                done.exception()
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        task.add_done_callback(consume)
+
+    async def _run_planner_call(self, awaitable, *, phase: str, span):
+        """Run one planner call with a hard deadline and content-free tracing."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        timeout = self.settings.planner_timeout_seconds
+        task = asyncio.create_task(awaitable, name=f"agenda-planner:{phase}")
+        outcome = "failed"
+        try:
+            done, _pending = await asyncio.wait({task}, timeout=timeout)
+            if task not in done:
+                outcome = "timed_out"
+                task.cancel()
+                self._detach_planner_task(task)
+                raise PlannerCallTimeout(phase, timeout)
+            result = task.result()
+            outcome = "completed"
+            return result
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            if not task.done():
+                task.cancel()
+                self._detach_planner_task(task)
+            raise
+        finally:
+            span.set_attribute(
+                "agenda.planner_duration_seconds", round(loop.time() - started, 6)
+            )
+            span.set_attribute("agenda.planner_timeout_seconds", timeout)
+            span.set_attribute("agenda.planner_phase", phase)
+            span.set_attribute("agenda.planner_outcome", outcome)
+
     def observation_changed(self) -> None:
         if self.connected_client:
             self.store.expedite_pending_reports()
@@ -366,6 +426,7 @@ class AgendaExecutive:
         await self.broadcast_snapshot()
 
     async def abandon(self, entry_id: str) -> None:
+        await self._cancel_reconsideration(entry_id)
         state = self.store.load()
         entry = next(item for item in state.entries if item.id == entry_id)
         if entry.status == "active":
@@ -487,6 +548,27 @@ class AgendaExecutive:
                 )
             state = self.store.load()
 
+        if self._reconsider_task is not None:
+            if not self._reconsider_task.done():
+                newly_runnable = pending_external_event or any(
+                    item.status == "queued" for item in state.entries
+                )
+                if not newly_runnable:
+                    return False
+                await self._cancel_reconsideration()
+                state = self.store.load()
+            else:
+                task = self._reconsider_task
+                self._reconsider_task = None
+                self._reconsider_task_entry_id = None
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    pass
+                except LeaseLostError:
+                    raise
+                return True
+
         if self._entry_task is not None:
             if not self._entry_task.done():
                 return False
@@ -499,6 +581,12 @@ class AgendaExecutive:
             except asyncio.CancelledError:
                 return True
             except LeaseLostError:
+                raise
+            except PlannerCallTimeout as exc:
+                if entry_id is not None:
+                    self._defer_entry_for_planner_timeout(entry_id, exc)
+                    await self.broadcast_snapshot()
+                    return True
                 raise
             except Exception as exc:
                 if entry_id is not None:
@@ -586,7 +674,13 @@ class AgendaExecutive:
             and self._suspension_defer_is_due(item, now)
         ]
         if suspended and not pending_external_event:
-            await self._reconsider_suspended()
+            entry = suspended[-1]
+            self._reconsider_task = asyncio.create_task(
+                self._reconsider_entry(entry.id),
+                name=f"agenda-reconsider:{entry.id}",
+            )
+            self._reconsider_task_entry_id = entry.id
+            self._reconsider_task.add_done_callback(lambda _task: self.wake())
             return True
         if not self.connected_client and any(
             item.status == "suspended" and bool(item.metadata.get("waiting_for_client"))
@@ -697,12 +791,19 @@ class AgendaExecutive:
                     "agenda.execution_mode": "live",
                     "agenda.room_object_count": len(scene.objects),
                 },
-            ):
-                placement = await self.planner.choose_idle_placement(context, scene)
+            ) as span:
+                placement = await self._run_planner_call(
+                    self.planner.choose_idle_placement(context, scene),
+                    phase="idle_placement",
+                    span=span,
+                )
         except asyncio.CancelledError:
             raise
         except LeaseLostError:
             raise
+        except PlannerCallTimeout as exc:
+            logger.warning(f"agenda: idle placement planner failed: {exc}")
+            return IdlePlacement(None, "Idle placement planning timed out.")
         except Exception as exc:
             logger.warning(f"agenda: idle placement planner failed: {exc}")
             placement = IdlePlacement(None, "The idle placement planner failed.")
@@ -840,6 +941,7 @@ class AgendaExecutive:
         return True
 
     async def _cancel_entry_work(self) -> None:
+        await self._cancel_reconsideration()
         settling = self._settling_task
         if settling is not None and not settling.done():
             self._settling_interrupted = True
@@ -866,6 +968,32 @@ class AgendaExecutive:
         self._release_event_claims(
             "Agenda work was interrupted before successor planning completed."
         )
+
+    async def _cancel_reconsideration(self, entry_id: str | None = None) -> None:
+        task = self._reconsider_task
+        owned_entry_id = self._reconsider_task_entry_id
+        if task is None or (entry_id is not None and owned_entry_id != entry_id):
+            return
+        self._reconsider_task = None
+        self._reconsider_task_entry_id = None
+        if task is asyncio.current_task():
+            return
+        if task.done():
+            try:
+                task.result()
+            except (asyncio.CancelledError, Exception):
+                pass
+            return
+        task.cancel()
+        done, _pending = await asyncio.wait(
+            {task}, timeout=self.settings.human_preemption_timeout_seconds
+        )
+        if task not in done:
+            logger.warning(
+                "agenda: reconsideration cancellation exceeded the foreground "
+                f"budget for entry_id={owned_entry_id}"
+            )
+            self._detach_planner_task(task)
 
     def _release_interrupted_plan(self, entry_id: str) -> None:
         try:
@@ -995,11 +1123,19 @@ class AgendaExecutive:
                 ) as span:
                     planner_started = time.perf_counter()
                     if handling_policy is not None and handling_policy.foreground:
-                        proposal = await self.planner.propose_triggered_intention(
-                            context, claimed_event, handling_policy
+                        proposal = await self._run_planner_call(
+                            self.planner.propose_triggered_intention(
+                                context, claimed_event, handling_policy
+                            ),
+                            phase="propose",
+                            span=span,
                         )
                     else:
-                        proposal = await self.planner.propose_intention(context)
+                        proposal = await self._run_planner_call(
+                            self.planner.propose_intention(context),
+                            phase="propose",
+                            span=span,
+                        )
                     planner_seconds = time.perf_counter() - planner_started
                     span.set_attribute(
                         "agenda.planner_duration_seconds",
@@ -1017,6 +1153,10 @@ class AgendaExecutive:
                 last_reason = reason
                 self._record_rejection("<planner failure>", reason)
                 logger.warning(f"agenda: {reason}")
+                if isinstance(exc, PlannerCallTimeout):
+                    # A hard timeout ends this planning pass. Repeating the same
+                    # remote call immediately can otherwise block for N×timeout.
+                    break
                 if attempt + 1 < self.settings.planner_retry_limit:
                     await asyncio.sleep(
                         min(
@@ -1034,7 +1174,7 @@ class AgendaExecutive:
                 comparison_entries=[
                     item
                     for item in state.entries
-                    if item.status not in {"failed", "abandoned"}
+                    if item.status not in TERMINAL_STATUSES
                 ],
             )
             event_grounded = (
@@ -1325,7 +1465,11 @@ class AgendaExecutive:
                 attributes={"agenda.entry_id": entry.id},
             ) as span:
                 planner_started = time.perf_counter()
-                checkpoint = await self.planner.next_step(asdict(entry), context)
+                checkpoint = await self._run_planner_call(
+                    self.planner.next_step(asdict(entry), context),
+                    phase="next_step",
+                    span=span,
+                )
                 planner_seconds = time.perf_counter() - planner_started
                 span.set_attribute(
                     "agenda.planner_duration_seconds",
@@ -1335,6 +1479,8 @@ class AgendaExecutive:
                     f"agenda.planner_timing kind=next_step entry={entry.id} "
                     f"seconds={planner_seconds:.3f}"
                 )
+            if entry.metadata.get("planner_timeout_failures"):
+                self.store.update_metadata(entry.id, planner_timeout_failures=0)
             verdict = self.step_policy.validate(entry, checkpoint)
             if not verdict.accepted:
                 if verdict.retryable:
@@ -1496,8 +1642,10 @@ class AgendaExecutive:
             attributes={"agenda.entry_id": entry.id},
         ) as span:
             planner_started = time.perf_counter()
-            complete, summary = await self.planner.evaluate_completion(
-                asdict(entry), [result]
+            complete, summary = await self._run_planner_call(
+                self.planner.evaluate_completion(asdict(entry), [result]),
+                phase="evaluate_completion",
+                span=span,
             )
             planner_seconds = time.perf_counter() - planner_started
             span.set_attribute(
@@ -1508,6 +1656,8 @@ class AgendaExecutive:
                 f"agenda.planner_timing kind=evaluate_completion entry={entry.id} "
                 f"seconds={planner_seconds:.3f}"
             )
+        if entry.metadata.get("planner_timeout_failures"):
+            self.store.update_metadata(entry.id, planner_timeout_failures=0)
         target = "completed" if complete else "queued"
         self.store.absorb_resumable_plan(
             entry.id,
@@ -1537,7 +1687,14 @@ class AgendaExecutive:
         ]
         if not candidates:
             return
-        entry = candidates[-1]
+        await self._reconsider_entry(candidates[-1].id)
+
+    async def _reconsider_entry(self, entry_id: str) -> None:
+        self._assert_lease()
+        state = self.store.load()
+        entry = next((item for item in state.entries if item.id == entry_id), None)
+        if entry is None or entry.status != "suspended":
+            return
         linked = self.plan_bridge.restore_plan_reference(entry)
         if linked is not None and linked.state in {"failed", "cancelled"}:
             # A preempted plan was already reconciled as terminal (for example
@@ -1648,38 +1805,91 @@ class AgendaExecutive:
                 "agenda.planner.reconsider",
                 trace_id=entry.metadata.get("trace_id"),
                 attributes={"agenda.entry_id": entry.id},
-            ):
-                decision = await self.planner.reconsider(asdict(entry), context)
+            ) as span:
+                decision = await self._run_planner_call(
+                    self.planner.reconsider(asdict(entry), context),
+                    phase="reconsider",
+                    span=span,
+                )
+                current = next(
+                    (item for item in self.store.load().entries if item.id == entry.id),
+                    None,
+                )
+                if current is None or current.status != "suspended":
+                    span.set_attribute("agenda.planner_outcome", "stale_discarded")
+                    logger.info(
+                        "agenda: discarded stale reconsideration result "
+                        f"entry_id={entry.id}"
+                    )
+                    return
+                if decision != "abandon":
+                    target = {"resume": "queued", "queue": "queued"}[decision]
+                    applied = self.store.transition_if_status(
+                        entry.id,
+                        "suspended",
+                        target,
+                        metadata_updates={
+                            "reconsider_failures": 0,
+                            "reconsider_deferred_until": None,
+                            "reconsider_deferred_reason": None,
+                            "planner_timeout_failures": 0,
+                        },
+                    )
+                    if applied is None:
+                        span.set_attribute("agenda.planner_outcome", "stale_discarded")
+                        logger.info(
+                            "agenda: discarded reconsideration result after state "
+                            f"changed entry_id={entry.id}"
+                        )
+                    return
         except (asyncio.CancelledError, LeaseLostError):
             raise
         except Exception as exc:
+            current = next(
+                (item for item in self.store.load().entries if item.id == entry.id),
+                None,
+            )
+            if current is None or current.status != "suspended":
+                logger.info(
+                    "agenda: ignored reconsideration failure after state changed "
+                    f"entry_id={entry.id}"
+                )
+                return
             failures = int(entry.metadata.get("reconsider_failures", 0)) + 1
             reason = f"Reconsideration failed: {type(exc).__name__}."
             if failures >= self.settings.planner_retry_limit:
-                self.store.update_metadata(entry.id, reconsider_failures=failures)
-                self.store.transition(entry.id, "failed", progress_summary=reason)
-                self.store.add_dead_letter(
-                    category="reconsideration",
-                    reference_id=entry.id,
-                    reason=reason,
-                    attempts=failures,
-                    data={"checkpoint_state": checkpoint.state if checkpoint else None},
+                applied = self.store.transition_if_status(
+                    entry.id,
+                    "suspended",
+                    "failed",
+                    metadata_updates={"reconsider_failures": failures},
+                    progress_summary=reason,
                 )
+                if applied is not None:
+                    self.store.add_dead_letter(
+                        category="reconsideration",
+                        reference_id=entry.id,
+                        reason=reason,
+                        attempts=failures,
+                        data={
+                            "checkpoint_state": checkpoint.state if checkpoint else None
+                        },
+                    )
             else:
                 delay = max(
                     5.0,
                     self.settings.planner_retry_backoff_seconds * (2 ** (failures - 1)),
                 )
                 retry_at = (utc_now() + timedelta(seconds=delay)).isoformat()
-                self.store.update_metadata(
-                    entry.id,
-                    reconsider_failures=failures,
-                    reconsider_deferred_until=retry_at,
-                    reconsider_deferred_reason=reason,
-                )
-                self.store.transition(
+                self.store.transition_if_status(
                     entry.id,
                     "suspended",
+                    "suspended",
+                    metadata_updates={
+                        "reconsider_failures": failures,
+                        "reconsider_deferred_until": retry_at,
+                        "reconsider_deferred_reason": reason,
+                    },
                     progress_summary=f"{reason} Retry deferred until {retry_at}.",
                 )
             logger.warning(
@@ -1689,19 +1899,22 @@ class AgendaExecutive:
             )
             await self.broadcast_snapshot()
             return
-        self.store.update_metadata(
-            entry.id,
-            reconsider_failures=0,
-            reconsider_deferred_until=None,
-            reconsider_deferred_reason=None,
-        )
         if decision == "abandon":
-            await self.abandon(entry.id)
+            if entry.metadata.get("resumable_plan_id"):
+                await self.abandon(entry.id)
+            else:
+                self.store.transition_if_status(
+                    entry.id,
+                    "suspended",
+                    "abandoned",
+                    metadata_updates={
+                        "reconsider_failures": 0,
+                        "reconsider_deferred_until": None,
+                        "reconsider_deferred_reason": None,
+                        "planner_timeout_failures": 0,
+                    },
+                )
             return
-        target = {"resume": "queued", "queue": "queued", "abandon": "abandoned"}[
-            decision
-        ]
-        self.store.transition(entry.id, target)
 
     def _assert_lease(self) -> None:
         if self.lease_handle is not None:
@@ -1763,6 +1976,37 @@ class AgendaExecutive:
             entry.id,
             "suspended",
             progress_summary=f"Deferred by autonomy quota until {reset_at}.",
+        )
+
+    def _defer_entry_for_planner_timeout(
+        self, entry_id: str, error: PlannerCallTimeout
+    ) -> None:
+        current = next(
+            (item for item in self.store.load().entries if item.id == entry_id), None
+        )
+        if current is None or current.status != "active":
+            return
+        failures = int(current.metadata.get("planner_timeout_failures", 0)) + 1
+        delay = min(
+            self.settings.planner_circuit_max_seconds,
+            max(
+                5.0,
+                self.settings.planner_retry_backoff_seconds * (2 ** (failures - 1)),
+            ),
+        )
+        retry_at = (utc_now() + timedelta(seconds=delay)).isoformat()
+        self.store.transition_if_status(
+            entry_id,
+            "active",
+            "suspended",
+            metadata_updates={
+                "planner_timeout_failures": failures,
+                "reconsider_deferred_until": retry_at,
+                "reconsider_deferred_reason": str(error)[:300],
+            },
+            progress_summary=(
+                f"Planner {error.phase} timed out; retry deferred until {retry_at}."
+            ),
         )
 
     async def _queue_quota_idle(self, reset_at: str) -> None:

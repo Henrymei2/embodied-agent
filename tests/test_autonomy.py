@@ -14,6 +14,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
         idle_min_seconds=1,
         idle_max_seconds=1,
         planner_retry_limit=0,
+        planner_timeout_seconds=1,
         fallback_reconsideration_seconds=1,
         human_preemption_timeout_seconds=0,
     )
@@ -23,6 +24,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
     assert settings.idle_min_seconds == 5
     assert settings.idle_max_seconds == 5
     assert settings.planner_retry_limit == 1
+    assert settings.planner_timeout_seconds == 5.0
     assert settings.fallback_reconsideration_seconds == 10
     assert settings.human_preemption_timeout_seconds == 0.05
 
@@ -34,8 +36,10 @@ def test_latency_settings_default_to_fast_hard_limits():
     )
 
     assert config.step_timeout_seconds == 30
+    assert config.planner_timeout_seconds == 30.0
     assert config.max_plausible_duration_seconds == 0.0
     assert settings.step_timeout_seconds == 30
+    assert settings.planner_timeout_seconds == 30.0
     assert settings.max_plausible_duration_seconds == 0.0
     assert config.welcome_back_greeting_enabled is True
     assert config.welcome_back_min_absence_minutes == 30
