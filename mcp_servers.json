@@ -67,7 +67,7 @@
       },
       "time": {
         "command": "uvx",
-        "args": ["mcp-server-time"]
+        "args": ["--from", "mcp-server-time", "--with", "mcp<2", "mcp-server-time"]
       },
       "ddg-search": {
         "command": "uvx",
