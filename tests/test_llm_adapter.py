@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from src.open_llm_vtuber.agent.stateless_llm.stateless_llm_interface import (
@@ -51,3 +53,26 @@ async def test_default_completion_preserves_memory_error_fallback():
     )
 
     assert await complete([{"role": "user", "content": "summarize"}]) == ""
+
+
+@pytest.mark.asyncio
+async def test_json_completion_returns_before_provider_stream_finishes():
+    class HangingAfterJson(StatelessLLMInterface):
+        async def chat_completion(self, _messages, system=None, tools=None):
+            yield {"type": "reasoning_content", "text": "hidden"}
+            yield '{"kind":"idle","metadata":'
+            yield '{"reason":"done"}}'
+            await asyncio.Event().wait()
+
+    complete = make_llm_complete(
+        HangingAfterJson(),
+        raise_errors=True,
+        json_object=True,
+    )
+
+    result = await asyncio.wait_for(
+        complete([{"role": "user", "content": "plan"}]),
+        timeout=0.1,
+    )
+
+    assert result == '{"kind":"idle","metadata":{"reason":"done"}}'

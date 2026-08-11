@@ -47,6 +47,7 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
   const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
+  const frontendActionControllers = useRef(new Map<string, AbortController>());
   const { interrupt } = useInterrupt();
   const { setBrowserViewData } = useBrowser();
   const { handleFrontendAction, setStageFromServer } = useDynamicStage();
@@ -153,29 +154,43 @@ function WebSocketHandler({ children }: { children: React.ReactNode }) {
         }
         break;
       case 'frontend_action_request':
+        {
+          const requestId = message.request_id;
+          const controller = new AbortController();
+          if (requestId) frontendActionControllers.current.set(requestId, controller);
         (selectedMode === 'vr' ? handleVrFrontendAction : handleFrontendAction)({
-          request_id: message.request_id,
+          request_id: requestId,
           action: message.action,
           args: message.args,
+          signal: controller.signal,
         }).then((result) => {
           wsService.sendMessage({
             type: 'frontend_action_result',
-            request_id: message.request_id,
+            request_id: requestId,
             result,
           });
         }).catch((error) => {
           wsService.sendMessage({
             type: 'frontend_action_result',
-            request_id: message.request_id,
+            request_id: requestId,
             result: {
-              request_id: message.request_id,
+              request_id: requestId,
               action: message.action,
               ok: false,
               error: error instanceof Error ? error.message : String(error),
             },
           });
+        }).finally(() => {
+          if (requestId) frontendActionControllers.current.delete(requestId);
         });
         break;
+        }
+      case 'frontend_action_cancel': {
+        if (message.request_id) {
+          frontendActionControllers.current.get(message.request_id)?.abort();
+        }
+        break;
+      }
       case 'stage-state':
         if (message.stage) {
           const result = setStageFromServer(message.stage as never);

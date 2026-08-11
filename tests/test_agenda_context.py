@@ -1,5 +1,7 @@
+import json
+
 from src.open_llm_vtuber import furniture_state, skill_state
-from src.open_llm_vtuber.autonomy.agenda import AgendaStore
+from src.open_llm_vtuber.autonomy.agenda import AgendaStore, create_entry
 from src.open_llm_vtuber.autonomy.agenda_context import build_agenda_context
 
 
@@ -99,3 +101,40 @@ def test_agenda_context_defaults_tool_schemas_to_empty(tmp_path):
     context = build_agenda_context(AgendaStore(tmp_path), client_uid="client")
 
     assert context.payload["tool_schemas"] == {}
+
+
+def test_agenda_context_projects_small_decision_history(tmp_path):
+    store = AgendaStore(tmp_path)
+    for index in range(20):
+        entry = create_entry(
+            kind="pursuit",
+            title=f"Historical intention {index}",
+            description="full process detail " * 200,
+            origin="autonomous",
+            evidence_refs=[f"memory:signal-{index}"],
+            completion_condition="A bounded historical result exists.",
+            time_budget_seconds=300,
+            status="queued",
+            progress_summary="result " * 200,
+            required_capabilities=["read_file"],
+            metadata={"private_process": "hidden " * 500},
+        )
+        store.add(entry)
+        store.transition(entry.id, "completed")
+
+    context = build_agenda_context(store, client_uid="client")
+    history = context.payload["recent_entries"]
+    serialized = json.dumps(context.payload, ensure_ascii=False)
+
+    assert len(history) == 8
+    assert len(serialized) < 20_000
+    assert history[0]["title"] == "Historical intention 19"
+    assert len(history[0]["progress_summary"]) <= 300
+    assert "description" not in history[0]
+    assert "completion_condition" not in history[0]
+    assert "budget" not in history[0]
+    assert "checkpoint" not in history[0]
+    assert "metadata" not in history[0]
+    assert "private_process" not in serialized
+    assert "memory:signal-19" in context.payload["available_evidence_refs"]
+    assert "memory:signal-0" not in context.payload["available_evidence_refs"]

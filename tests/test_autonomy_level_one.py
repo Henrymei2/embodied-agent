@@ -18,7 +18,11 @@ from src.open_llm_vtuber.autonomy.executive import (
     AgendaExecutive,
     PlannerCallTimeout,
 )
-from src.open_llm_vtuber.autonomy.idle_relocation import IdleObject, IdleScene
+from src.open_llm_vtuber.autonomy.idle_relocation import (
+    IdleObject,
+    IdleScene,
+    choose_idle_placement,
+)
 from src.open_llm_vtuber.autonomy.observation import (
     clear_client_presence,
     update_client_presence,
@@ -186,6 +190,52 @@ async def test_workspace_runtime_has_one_owner_and_hands_off(tmp_path):
     assert stopped == ["first"]
     assert runtime.owner_uid == "second"
     assert started == ["first", "second"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_runtime_debug_reset_clears_agenda_on_every_connect(tmp_path):
+    started: list[str] = []
+
+    async def runner(client_uid, _settings, _presence):
+        started.append(client_uid)
+        await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    store.add(_pursuit(title="Left over from the previous connection"))
+    runtime = WorkspaceAgendaRuntime(tmp_path, runner=runner)
+    settings = AutonomySettings(debug_reset_agenda_on_connect=True)
+
+    await runtime.attach("first", settings, None)
+    await asyncio.sleep(0)
+
+    assert store.load().entries == []
+    assert runtime.owner_uid == "first"
+
+    store.add(_pursuit(title="Created during the first connection"))
+    await runtime.attach("second", settings, None)
+    await asyncio.sleep(0)
+
+    assert store.load().entries == []
+    assert runtime.owner_uid == "second"
+    assert started == ["first", "second"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_runtime_keeps_agenda_when_debug_reset_is_disabled(tmp_path):
+    async def runner(_client_uid, _settings, _presence):
+        await asyncio.Event().wait()
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit()
+    store.add(entry)
+    runtime = WorkspaceAgendaRuntime(tmp_path, runner=runner)
+
+    await runtime.attach("client", AutonomySettings(), None)
+    await asyncio.sleep(0)
+
+    assert [item.id for item in store.load().entries] == [entry.id]
     await runtime.close()
 
 
@@ -760,25 +810,15 @@ async def test_proposal_timeout_ends_pass_without_repeating_model_call(tmp_path)
     assert store.load().entries[-1].kind == "idle"
 
 
-@pytest.mark.asyncio
-async def test_idle_placement_timeout_safely_selects_no_movement(tmp_path):
-    class Planner:
-        async def choose_idle_placement(self, _context, _scene):
-            await asyncio.Event().wait()
-
-    store = AgendaStore(tmp_path)
-    executive = _executive(store, Planner())
-    object.__setattr__(executive.settings, "planner_timeout_seconds", 0.01)
+def test_idle_placement_is_local_and_available_without_planner():
     scene = IdleScene(
         current_position=(0.0, 0.0),
         objects=(IdleObject("sofa", "Sofa", 1.0, 1.0, 1.4, "sitting"),),
     )
 
-    placement = await executive._choose_idle_placement(
-        executive._agenda_context(), scene
-    )
+    placement = choose_idle_placement(scene)
 
-    assert placement.object_id is None
+    assert placement.object_id == "sofa"
 
 
 @pytest.mark.asyncio
@@ -809,7 +849,7 @@ async def test_next_step_timeout_suspends_without_execution_failure(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_short_generated_pursuit_gets_a_complete_execution_window(tmp_path):
+async def test_generated_pursuit_always_gets_configured_maximum_window(tmp_path):
     (tmp_path / "MEMORY.md").write_text("A grounded item to check.", encoding="utf-8")
 
     class Planner:
@@ -832,7 +872,7 @@ async def test_short_generated_pursuit_gets_a_complete_execution_window(tmp_path
 
     entry = store.load().entries[0]
     assert entry.status == "queued"
-    assert entry.budget.time_budget_seconds == 240
+    assert entry.budget.time_budget_seconds == 1800
 
 
 @pytest.mark.asyncio

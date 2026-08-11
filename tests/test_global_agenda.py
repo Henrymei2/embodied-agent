@@ -42,7 +42,10 @@ def pursuit(**overrides):
 
 @pytest.mark.asyncio
 async def test_structured_planner_normalizes_object_completion_condition():
+    prompts = []
+
     async def complete(_prompt):
+        prompts.append(_prompt)
         return """{
             "kind": "pursuit",
             "title": "Inspect the room",
@@ -58,9 +61,13 @@ async def test_structured_planner_normalizes_object_completion_condition():
         capabilities=set(),
         object_names=set(),
     )
-    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+    entry = await StructuredAgendaPlanner(
+        complete, maximum_pursuit_seconds=777
+    ).propose_intention(context)
 
     assert entry.completion_condition.description == "One object is inspected."
+    assert entry.budget.time_budget_seconds == 777
+    assert "time_budget_seconds" not in prompts[0]
 
 
 @pytest.mark.asyncio
@@ -136,6 +143,30 @@ def test_store_enforces_one_foreground_and_suspends_previous(tmp_path):
 
     state = store.load()
     assert [entry.status for entry in state.entries] == ["suspended", "active"]
+
+
+def test_debug_reset_clears_agenda_but_preserves_fencing(tmp_path):
+    store = AgendaStore(tmp_path)
+    store.add(pursuit())
+    store.mutate(
+        lambda state: (
+            setattr(state, "paused", True),
+            setattr(state, "fencing_token", 7),
+            setattr(state.quota, "planner_calls", 3),
+        )
+    )
+    revision = store.load().revision
+
+    removed = store.reset_for_debug()
+
+    state = store.load()
+    assert removed["entries"] == 1
+    assert state.entries == []
+    assert state.events == []
+    assert state.paused is False
+    assert state.quota.planner_calls == 0
+    assert state.fencing_token == 7
+    assert state.revision == revision + 1
 
 
 def test_restart_recovery_marks_side_effect_uncertain(tmp_path):
@@ -224,6 +255,24 @@ def test_policy_rejects_unseen_grounding_and_duplicates():
     )
     assert not verdict.accepted
     assert "duplicate" in verdict.reason
+
+
+def test_policy_rejects_completion_that_waits_for_user_response():
+    policy = AgendaPolicy()
+    proposal = pursuit(
+        completion_condition="The user confirms the time or asks to cancel."
+    )
+
+    verdict = policy.validate(
+        proposal,
+        supplied_evidence_refs={"memory:today.md"},
+        capabilities=set(),
+        object_names=set(),
+        comparison_entries=[],
+    )
+
+    assert not verdict.accepted
+    assert "future user response" in verdict.reason
 
 
 def test_terminal_entries_cannot_be_reactivated(tmp_path):

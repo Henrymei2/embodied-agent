@@ -9,7 +9,6 @@ from typing import Any, Awaitable, Callable
 
 from .agenda import MOTIVATION_TYPES, ExecutionCheckpoint, create_entry, new_entry_id
 from .agenda_context import AgendaContext
-from .idle_relocation import IdlePlacement, IdleScene
 from .step_policy import capability_requires_approval
 from .triggers import TriggerHandlingPolicy, trigger_from_event
 
@@ -80,43 +79,7 @@ def _completion_condition(value: Any) -> str:
 @dataclass
 class StructuredAgendaPlanner:
     complete: LLMComplete
-    default_pursuit_seconds: int = 900
-
-    async def choose_idle_placement(
-        self,
-        context: AgendaContext,
-        scene: IdleScene,
-    ) -> IdlePlacement:
-        """Choose exactly one destination from a live, bounded room snapshot."""
-        objects = [
-            {
-                "object_id": obj.object_id,
-                "label": obj.label,
-                "position": {"x": obj.x, "y": obj.y},
-                "distance_from_agent": obj.distance,
-                "posture_on_arrival": obj.posture,
-            }
-            for obj in scene.objects
-        ]
-        raw = _json_object(
-            await self.complete(
-                "You choose where an embodied agent should wait while deciding what "
-                "to do next. Return JSON only with object_id and reason. Choose "
-                "object_id verbatim from the supplied room objects; never invent an "
-                "object. Prefer a place that makes semantic sense given the recently "
-                "finished work, time, presence, and room labels. A currently suitable "
-                "place may be chosen again. Known seats will apply the posture shown; "
-                "all other destinations remain standing. "
-                f"Current position: {json.dumps(scene.current_position)}\n"
-                f"Room objects: {json.dumps(objects, ensure_ascii=False)}\n"
-                f"Agenda context: {json.dumps(context.payload, ensure_ascii=False)}"
-            )
-        )
-        object_id = raw.get("object_id")
-        return IdlePlacement(
-            object_id=str(object_id) if object_id is not None else None,
-            reason=str(raw.get("reason", ""))[:200],
-        )
+    maximum_pursuit_seconds: int = 1800
 
     async def propose_intention(self, context: AgendaContext):
         prompt = (
@@ -128,7 +91,7 @@ class StructuredAgendaPlanner:
             "Use on_completion for worthwhile care/social interaction; reserve "
             "silent delivery for internal housekeeping. Return JSON only with "
             "kind, title, description, motivation_type, evidence_refs, novelty, "
-            "completion_condition, time_budget_seconds, preferred_object, "
+            "completion_condition, preferred_object, "
             "required_capabilities, report_policy, risk, requires_approval. "
             'The "kind" field MUST be exactly "pursuit" or "idle"; never use '
             '"task", "plan", "intention", or another synonym. Never create a user '
@@ -136,6 +99,9 @@ class StructuredAgendaPlanner:
             "listed verbatim in the supplied context. When attention.mode is "
             "observe_only, attention budget, snooze, focus, and stale presence are "
             "diagnostic only and must not by themselves cause an idle proposal. "
+            "The completion condition must be achievable by this private execution "
+            "without waiting for a future user reply. A social check-in completes "
+            "when its message is prepared for on_completion delivery. "
             "Context:\n" + json.dumps(context.payload, ensure_ascii=False)
         )
         raw = _json_object(await self.complete(prompt))
@@ -146,9 +112,7 @@ class StructuredAgendaPlanner:
             origin="autonomous",
             evidence_refs=[str(value) for value in raw["evidence_refs"]],
             completion_condition=_completion_condition(raw["completion_condition"]),
-            time_budget_seconds=int(
-                raw.get("time_budget_seconds", self.default_pursuit_seconds)
-            ),
+            time_budget_seconds=self.maximum_pursuit_seconds,
             status="proposed",
             motivation_type=normalize_motivation_type(raw.get("motivation_type")),
             preferred_object=raw.get("preferred_object"),
@@ -174,7 +138,7 @@ class StructuredAgendaPlanner:
             "available. You MUST create one bounded pursuit to inspect and handle "
             "that exact email; do not choose idle and do not merely restate the "
             "notification. Return JSON only with title, description, "
-            "time_budget_seconds, preferred_object, required_capabilities, risk. "
+            "preferred_object, required_capabilities, risk. "
             "The initial pursuit may name read-only, navigation, inspection, "
             "drafting, and planning capabilities. Consequential external writes "
             "will be caught by the authorization kernel at the exact action "
@@ -208,9 +172,7 @@ class StructuredAgendaPlanner:
                 "writing-desk action is in place or behind an approval boundary; "
                 "a clear outcome is queued for the user."
             ),
-            time_budget_seconds=int(
-                raw.get("time_budget_seconds", self.default_pursuit_seconds)
-            ),
+            time_budget_seconds=self.maximum_pursuit_seconds,
             status="proposed",
             preferred_object=raw.get("preferred_object"),
             required_capabilities=required,

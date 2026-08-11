@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import dataclass
 from typing import Literal
 
@@ -20,16 +21,22 @@ MAX_IDLE_SCENE_OBJECTS = 128
 
 
 def _load_world(conf_uid: str, scene_mode: str):
-    return load_scene_world(conf_uid, "vr") if scene_mode == "vr" else load_world(conf_uid)
+    return (
+        load_scene_world(conf_uid, "vr") if scene_mode == "vr" else load_world(conf_uid)
+    )
 
 
 def _load_stage(conf_uid: str, scene_mode: str):
-    return load_scene_state(conf_uid, "vr") if scene_mode == "vr" else load_stage_state(conf_uid)
+    return (
+        load_scene_state(conf_uid, "vr")
+        if scene_mode == "vr"
+        else load_stage_state(conf_uid)
+    )
 
 
 @dataclass(frozen=True)
 class IdleObject:
-    """One planner-visible destination from the current room snapshot."""
+    """One locally selectable destination from the current room snapshot."""
 
     object_id: str
     label: str
@@ -41,7 +48,7 @@ class IdleObject:
 
 @dataclass(frozen=True)
 class IdleScene:
-    """The bounded spatial context used for an idle-placement decision."""
+    """The bounded spatial context used for a local idle-placement decision."""
 
     current_position: tuple[float, float] | None
     objects: tuple[IdleObject, ...]
@@ -49,7 +56,7 @@ class IdleScene:
 
 @dataclass(frozen=True)
 class IdlePlacement:
-    """A constrained planner choice; ``object_id=None`` means stay put."""
+    """A local weighted choice; ``object_id=None`` means stay put."""
 
     object_id: str | None
     reason: str
@@ -81,22 +88,29 @@ def idle_scene_snapshot(conf_uid: str, scene_mode: str = "normal") -> IdleScene:
     return IdleScene(current_position=current, objects=objects)
 
 
-def validate_idle_placement(
-    placement: IdlePlacement,
+def choose_idle_placement(
     scene: IdleScene,
+    previous_object_id: str | None = None,
+    *,
+    rng: random.Random | None = None,
 ) -> IdlePlacement:
-    """Constrain a planner result to the supplied room, with a sofa fallback."""
-    object_ids = {obj.object_id for obj in scene.objects}
-    if placement.object_id in object_ids:
-        return IdlePlacement(placement.object_id, placement.reason[:200])
-    if "sofa" in object_ids:
-        return IdlePlacement(
-            "sofa",
-            "The planner did not return a current room object; using the sofa.",
-        )
+    """Choose a local weighted destination without invoking a planner model."""
+    candidates = list(scene.objects)
+    if len(candidates) > 1 and previous_object_id is not None:
+        alternatives = [
+            obj for obj in candidates if obj.object_id != previous_object_id
+        ]
+        if alternatives:
+            candidates = alternatives
+    if not candidates:
+        return IdlePlacement(None, "No live room objects are available.")
+
+    chooser = rng or random
+    weights = [3.0 if obj.posture == "sitting" else 1.0 for obj in candidates]
+    selected = chooser.choices(candidates, weights=weights, k=1)[0]
     return IdlePlacement(
-        None,
-        "The planner did not return a current room object and no sofa is present.",
+        selected.object_id,
+        f"Locally selected {selected.label!r} for an idle wait.",
     )
 
 
@@ -116,8 +130,6 @@ async def _relocate_for_idle(
         (obj for obj in world.objects if obj.id == placement.object_id),
         None,
     )
-    if destination is None and placement.object_id != "sofa":
-        destination = next((obj for obj in world.objects if obj.id == "sofa"), None)
     if destination is None:
         logger.info(
             "agenda: idle relocation skipped because no safe destination exists"
@@ -131,7 +143,9 @@ async def _relocate_for_idle(
             destination.id,
         )
         if final_position is None:
-            logger.warning(f"agenda: idle relocation has no VR docking point: {docking_error}")
+            logger.warning(
+                f"agenda: idle relocation has no VR docking point: {docking_error}"
+            )
             return False
     path = world.path_to(final_position)
     ok, _result, error = await request_frontend_action(
@@ -143,6 +157,7 @@ async def _relocate_for_idle(
         },
         client_uid=client_uid,
         conf_uid=conf_uid,
+        owner="idle_relocation",
     )
     if not ok:
         logger.warning(f"agenda: idle relocation to {destination.id!r} failed: {error}")
@@ -169,6 +184,7 @@ async def _relocate_for_idle(
             },
             client_uid=client_uid,
             conf_uid=conf_uid,
+            owner="idle_relocation",
         )
         if not ok:
             logger.warning(

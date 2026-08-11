@@ -11,6 +11,9 @@ from .agenda import AgendaStore
 
 _FURNITURE_ITEM_LIMIT = 5
 _FURNITURE_STRING_LIMIT = 600
+_PLANNER_RECENT_ENTRY_LIMIT = 8
+_PLANNER_PROGRESS_LIMIT = 300
+_PLANNER_PHYSICAL_CONTEXT_LIMIT = 2000
 
 
 @dataclass
@@ -22,7 +25,7 @@ class AgendaContext:
 
 
 def _memory_passages(
-    root: Path, limit_chars: int = 5000
+    root: Path, limit_chars: int = 3000
 ) -> tuple[list[dict], set[str]]:
     passages: list[dict] = []
     references: set[str] = set()
@@ -149,6 +152,31 @@ def _has_furniture_content(snapshot: Any) -> bool:
     )
 
 
+def _planner_entry(entry) -> dict[str, Any]:
+    """Project durable work into the small history needed for a new decision."""
+    interruption = None
+    if entry.metadata.get("intention_outcome") == "interrupted":
+        interruption = {
+            "outcome": "interrupted",
+            "reason": str(entry.metadata.get("interruption_reason", ""))[:100],
+        }
+    return {
+        "id": entry.id,
+        "kind": entry.kind,
+        "title": entry.title,
+        "origin": entry.origin,
+        "status": entry.status,
+        "motivation_type": entry.motivation.type,
+        "evidence_refs": list(entry.motivation.evidence_refs),
+        "progress_summary": entry.progress_summary[:_PLANNER_PROGRESS_LIMIT],
+        "preferred_object": entry.preferred_object,
+        "required_capabilities": list(entry.required_capabilities),
+        "report_policy": entry.report_policy,
+        "ended_at": entry.ended_at,
+        "interruption": interruption,
+    }
+
+
 def build_agenda_context(
     store: AgendaStore,
     *,
@@ -159,12 +187,15 @@ def build_agenda_context(
     execution_mode: str = "live",
 ) -> AgendaContext:
     state = store.load()
-    recent = sorted(state.entries, key=lambda item: item.created_at, reverse=True)[:20]
+    recent = sorted(state.entries, key=lambda item: item.created_at, reverse=True)[
+        :_PLANNER_RECENT_ENTRY_LIMIT
+    ]
     memory, refs = _memory_passages(store.root)
     furniture_state, furniture_refs = _furniture_snapshots()
     refs.update(furniture_refs)
     for entry in recent:
         refs.add(f"agenda:{entry.id}")
+        refs.update(entry.motivation.evidence_refs)
     inbox = [event for event in state.inbox if event.status in {"pending", "claimed"}][
         :5
     ]
@@ -217,10 +248,11 @@ def build_agenda_context(
             "paused": state.paused,
             "next_reconsideration_at": state.next_reconsideration_at,
             "active": next(
-                (asdict(item) for item in recent if item.status == "active"), None
+                (_planner_entry(item) for item in recent if item.status == "active"),
+                None,
             ),
-            "recent_entries": [asdict(item) for item in recent],
-            "rejections": [asdict(item) for item in state.rejections[-10:]],
+            "recent_entries": [_planner_entry(item) for item in recent],
+            "rejections": [asdict(item) for item in state.rejections[-5:]],
             "memory_passages": memory,
             "furniture_state": furniture_state,
             "external_events": [
@@ -230,7 +262,7 @@ def build_agenda_context(
                     "kind": event.kind,
                     "summary": event.summary,
                     "evidence_ref": event.evidence_ref,
-                    "payload": event.payload,
+                    "payload": _bounded_furniture_value(event.payload),
                     "status": event.status,
                     "attempts": event.attempts,
                 }
@@ -238,7 +270,7 @@ def build_agenda_context(
             ],
             "presence": presence,
             "attention": attention,
-            "physical_context": physical_context,
+            "physical_context": physical_context[:_PLANNER_PHYSICAL_CONTEXT_LIMIT],
             "continuity_health": {
                 "planner": asdict(state.planner_health),
                 "pending_reports": sum(
@@ -261,6 +293,7 @@ def build_agenda_context(
             "capabilities": sorted(capabilities or set()),
             "objects": sorted(object_names or set()),
             "tool_schemas": dict(tool_schemas or {}),
+            "available_evidence_refs": sorted(refs),
         },
         evidence_refs=refs,
         capabilities=capabilities or set(),

@@ -53,6 +53,13 @@ class AgendaPolicy:
             return PolicyVerdict(False, "preferred furniture is not present")
         if proposal.requires_approval and proposal.report_policy != "ask_first":
             return PolicyVerdict(False, "approval-gated work must use ask_first")
+        if proposal.kind != "idle" and self._waits_for_user_response(
+            proposal.completion_condition.description
+        ):
+            return PolicyVerdict(
+                False,
+                "completion condition depends on a future user response",
+            )
         approval_gated = sorted(
             capability
             for capability in proposal.required_capabilities
@@ -71,6 +78,17 @@ class AgendaPolicy:
     @staticmethod
     def _normalized(value: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+    @staticmethod
+    def _waits_for_user_response(value: str) -> bool:
+        normalized = " ".join(value.lower().split())
+        patterns = (
+            r"\b(?:the )?user (?:responds|replies|answers|confirms|chooses|decides|indicates|requests|asks)\b",
+            r"\b(?:wait for|await|receive) (?:a |the )?user(?:'s)? (?:response|reply|answer|confirmation|decision)\b",
+            r"(?:等待|收到|获得)用户(?:回复|回应|回答|确认|决定)",
+            r"用户(?:回复|回应|回答|确认|决定)(?:后|时|即可|或)",
+        )
+        return any(re.search(pattern, normalized) for pattern in patterns)
 
     def _is_duplicate(
         self, proposal: AgendaEntry, entries: Iterable[AgendaEntry]

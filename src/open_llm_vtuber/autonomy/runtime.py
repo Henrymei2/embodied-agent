@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
+from .agenda import AgendaStore
 from .driver import agenda_loop
 from .lease import (
     LeaseError,
@@ -21,6 +22,7 @@ from .lease import (
     lease_context,
 )
 from .presence import PresenceLedger
+from .plan_state import ResumablePlanStore
 from .settings import AutonomySettings
 
 AgendaRunner = Callable[[str, AutonomySettings, PresenceLedger | None], Awaitable[None]]
@@ -62,6 +64,12 @@ class WorkspaceAgendaRuntime:
     ) -> None:
         async with self._lock:
             self.clients[client_uid] = _ClientBinding(settings, presence)
+            if settings.debug_reset_agenda_on_connect:
+                await self._stop_owner_locked()
+                self._reset_agenda_for_debug_locked(client_uid)
+                self._start_locked(client_uid, self.clients[client_uid])
+                await asyncio.sleep(0)
+                return
             if self.owner_uid == self.background_uid:
                 await self._stop_owner_locked()
                 self._start_locked(client_uid, self.clients[client_uid])
@@ -155,6 +163,19 @@ class WorkspaceAgendaRuntime:
             await asyncio.gather(task, return_exceptions=True)
         self.lease_handle = None
         self.lease_status = "standby"
+
+    def _reset_agenda_for_debug_locked(self, client_uid: str) -> None:
+        removed_plans = ResumablePlanStore(self.workspace_root).reset_for_debug()
+        removed = AgendaStore(self.workspace_root).reset_for_debug()
+        logger.warning(
+            "agenda runtime: debug reset on live client connect "
+            "client={} entries={} reports={} events={} plans={}",
+            client_uid,
+            removed["entries"],
+            removed["reports"],
+            removed["events"] + removed["inbox"],
+            removed_plans,
+        )
 
     def _start_locked(
         self,

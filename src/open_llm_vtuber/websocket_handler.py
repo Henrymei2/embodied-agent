@@ -1020,6 +1020,7 @@ class WebSocketHandler:
         from .frontend_bridge import (
             owns_pending_request,
             pending_request_action,
+            pending_request_owner,
             resolve_action_result,
         )
 
@@ -1042,16 +1043,22 @@ class WebSocketHandler:
         ok = bool(result.get("ok", False))
         error = result.get("error")
         pending_action = pending_request_action(request_id, client_uid)
+        pending_owner = pending_request_owner(request_id, client_uid)
+        cancelled_idle_move = (
+            result.get("cancelled") is True
+            and pending_action == "move_to"
+            and pending_owner == "idle_relocation"
+        )
+
+        def finite_number(value: object) -> bool:
+            return (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+
         if ok and pending_action in {"move_to", "move_to_user"}:
             position = result.get("position")
-
-            def finite_number(value: object) -> bool:
-                return (
-                    isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                    and math.isfinite(value)
-                )
-
             valid_position = (
                 isinstance(position, dict)
                 and finite_number(position.get("x"))
@@ -1067,12 +1074,43 @@ class WebSocketHandler:
                 ok = False
                 error = "move_to result is missing verified arrival data"
                 result = {**result, "ok": False, "error": error}
+        if cancelled_idle_move:
+            position = result.get("position")
+            state_nodes = (
+                result.get("state", {}).get("nodes", [])
+                if isinstance(result.get("state"), dict)
+                else []
+            )
+            avatar = next(
+                (
+                    node
+                    for node in state_nodes
+                    if isinstance(node, dict) and node.get("id") == "avatar"
+                ),
+                None,
+            )
+            valid_cancel = (
+                isinstance(position, dict)
+                and finite_number(position.get("x"))
+                and finite_number(position.get("y"))
+                and finite_number(result.get("duration_ms"))
+                and isinstance(result.get("state"), dict)
+                and isinstance(avatar, dict)
+                and finite_number(avatar.get("x"))
+                and finite_number(avatar.get("y"))
+                and abs(float(avatar["x"]) - float(position["x"])) <= 2.0
+                and abs(float(avatar["y"]) - float(position["y"])) <= 2.0
+            )
+            if not valid_cancel:
+                cancelled_idle_move = False
+                error = "cancelled idle move is missing verified partial state"
+                result = {**result, "ok": False, "error": error}
         logger.info(
             "frontend action result received "
             f"request={request_id} client={client_uid} ok={ok}"
         )
         if (
-            ok
+            (ok or cancelled_idle_move)
             and owns_pending_request(request_id, client_uid)
             and isinstance(result.get("state"), dict)
         ):

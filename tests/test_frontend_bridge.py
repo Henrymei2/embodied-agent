@@ -146,6 +146,51 @@ async def test_disconnect_fails_pending_action_without_waiting_for_timeout():
 
 
 @pytest.mark.asyncio
+async def test_cancelling_owned_idle_action_sends_targeted_frontend_cancel():
+    messages: list[dict] = []
+    cancelled = asyncio.Event()
+
+    async def send(message: str) -> None:
+        payload = json.loads(message)
+        messages.append(payload)
+        if payload["type"] == "frontend_action_cancel":
+            cancelled.set()
+
+    frontend_bridge.register_client_sender("client", send, "character")
+    task = asyncio.create_task(
+        frontend_bridge.request_frontend_action(
+            "move_to",
+            {},
+            client_uid="client",
+            timeout=1,
+            owner="idle_relocation",
+        )
+    )
+    while not messages:
+        await asyncio.sleep(0)
+    request_id = messages[0]["request_id"]
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+    assert messages[-1] == {
+        "type": "frontend_action_cancel",
+        "request_id": request_id,
+    }
+    assert frontend_bridge.pending_request_owner(request_id, "client") == (
+        "idle_relocation"
+    )
+    assert frontend_bridge.resolve_action_result(
+        request_id,
+        False,
+        {"ok": False, "cancelled": True},
+        client_uid="client",
+    )
+
+
+@pytest.mark.asyncio
 async def test_malformed_frontend_result_fails_pending_action_safely():
     sent = asyncio.Event()
     request: dict = {}
@@ -364,6 +409,65 @@ async def test_accepted_frontend_state_is_persisted_for_owning_client(
         node for node in load_stage_state(conf_uid)["nodes"] if node["id"] == "avatar"
     )
     assert (persisted_avatar["x"], persisted_avatar["y"]) == (321, 123)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_owned_idle_move_persists_verified_partial_position(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.chdir(tmp_path)
+    messages: list[dict] = []
+
+    async def send(message: str) -> None:
+        messages.append(json.loads(message))
+
+    client_uid = "client"
+    conf_uid = "character"
+    frontend_bridge.register_client_sender(client_uid, send, conf_uid)
+    handler = WebSocketHandler(default_context_cache=None)
+    handler.client_contexts[client_uid] = SimpleNamespace(
+        character_config=SimpleNamespace(conf_uid=conf_uid)
+    )
+    action_task = asyncio.create_task(
+        frontend_bridge.request_frontend_action(
+            "move_to",
+            {},
+            client_uid=client_uid,
+            owner="idle_relocation",
+        )
+    )
+    while not messages:
+        await asyncio.sleep(0)
+    request_id = messages[0]["request_id"]
+    action_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await action_task
+
+    stage = get_default_stage(conf_uid)
+    avatar = next(node for node in stage["nodes"] if node["id"] == "avatar")
+    avatar.update(x=222, y=144)
+    await handler._handle_frontend_action_result(
+        SimpleNamespace(),
+        client_uid,
+        {
+            "request_id": request_id,
+            "result": {
+                "ok": False,
+                "cancelled": True,
+                "error": "frontend action cancelled",
+                "state": stage,
+                "duration_ms": 125,
+                "position": {"x": 222, "y": 144},
+            },
+        },
+    )
+
+    persisted_avatar = next(
+        node for node in load_stage_state(conf_uid)["nodes"] if node["id"] == "avatar"
+    )
+    assert (persisted_avatar["x"], persisted_avatar["y"]) == (222, 144)
+    assert request_id not in frontend_bridge._pending_requests
 
 
 @pytest.mark.asyncio

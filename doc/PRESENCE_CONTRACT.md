@@ -62,7 +62,6 @@ system_config:
   autonomy_config:
     enabled: true
     headless_enabled: true
-    default_pursuit_seconds: 900
     maximum_pursuit_seconds: 1800
     fallback_reconsideration_seconds: 300
     store_poll_seconds: 1

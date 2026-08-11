@@ -184,6 +184,20 @@ async def test_deepseek_request_repairs_missing_reasoning_on_tool_history():
 
 
 @pytest.mark.asyncio
+async def test_deepseek_json_completion_disables_thinking_and_requests_json():
+    llm = _fake_llm([('{"kind":"idle"}', None)])
+
+    assert [event async for event in llm.json_completion([])] == [
+        '{"kind":"idle"}'
+    ]
+
+    request = llm.completions.requests[0]
+    assert request["response_format"] == {"type": "json_object"}
+    assert request["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert request["tools"] is not None
+
+
+@pytest.mark.asyncio
 async def test_non_deepseek_request_does_not_inject_reasoning_content():
     llm = _fake_llm([])
     llm.base_url = "https://example.invalid/v1"

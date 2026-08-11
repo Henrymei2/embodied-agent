@@ -47,6 +47,8 @@ system_config:
     enabled: true
     presence_mode: enforced
     headless_enabled: true
+    # Debug only. Keep disabled unless every live connection should start fresh.
+    debug_reset_agenda_on_connect: false
     # Welcome the user on first use, or after they have been away this long.
     # The greeting still follows Presence gates in enforced mode; observe_only
     # records a gate override and continues.
@@ -55,10 +57,13 @@ system_config:
     lease_ttl_seconds: 30
     lease_renew_seconds: 10
     lease_retry_seconds: 2
-    default_pursuit_seconds: 900
+    # Every autonomous pursuit receives this fixed maximum execution window.
     maximum_pursuit_seconds: 1800
     idle_min_seconds: 60
     idle_max_seconds: 600
+    # Local, model-free wandering cadence while planning or explicitly idle.
+    idle_relocation_min_seconds: 10
+    idle_relocation_max_seconds: 30
     planner_retry_limit: 3
     planner_retry_backoff_seconds: 2
     # Base (and ceiling for the exponential) delay before re-executing a failed

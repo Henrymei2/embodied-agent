@@ -314,19 +314,6 @@ async def _capture_agenda(
             Callable[[StructuredAgendaPlanner], Awaitable[Any]],
         ]
     ] = []
-    scene = idle_scene_snapshot(conf_uid, scene_mode)
-    specs.append(
-        (
-            "agenda_idle",
-            "Autonomy: idle placement",
-            "When choosing where to wait.",
-            {
-                "object_id": scene.objects[0].object_id if scene.objects else None,
-                "reason": "snapshot",
-            },
-            lambda planner: planner.choose_idle_placement(context, scene),
-        )
-    )
     specs.append(
         (
             "agenda_intention",
@@ -340,7 +327,6 @@ async def _capture_agenda(
                 "evidence_refs": list(context.evidence_refs)[:1],
                 "novelty": "snapshot",
                 "completion_condition": "snapshot",
-                "time_budget_seconds": 60,
                 "preferred_object": None,
                 "required_capabilities": [],
                 "report_policy": "silent",

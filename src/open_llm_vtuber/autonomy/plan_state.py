@@ -641,6 +641,16 @@ class ResumablePlanStore:
         except Timeout as exc:
             raise OSError("plan store is busy") from exc
 
+    def reset_for_debug(self) -> int:
+        """Clear resumable plans paired with a debug agenda reset."""
+
+        def operation(state: PlanStoreState) -> int:
+            removed = len(state.plans)
+            state.plans.clear()
+            return removed
+
+        return self.mutate(operation)
+
     @staticmethod
     def _find(state: PlanStoreState, plan_id: str) -> ResumablePlan:
         try:

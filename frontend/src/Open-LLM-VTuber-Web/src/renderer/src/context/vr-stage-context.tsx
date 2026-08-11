@@ -6,6 +6,7 @@ import type {
   StageInteraction, StagePose, StageSpritesheet, StageTexture,
 } from "@/context/dynamic-stage-context";
 import { validateVrStageShape } from "@/utils/vr-helpers";
+import { cancelledMotionPosition } from "@/utils/motion-cancellation";
 
 export interface VrFrontendActionResult {
   request_id?: string;
@@ -19,6 +20,7 @@ export interface VrFrontendActionResult {
   reachable_objects?: string[];
   arrived?: boolean;
   duration_ms?: number;
+  cancelled?: boolean;
   capabilities?: Record<string, unknown>;
   summary?: string;
 }
@@ -121,6 +123,26 @@ interface VrStageValue {
 
 const VrStageContext = createContext<VrStageValue | null>(null);
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const waitForMotion = (durationMs: number, signal?: AbortSignal): Promise<boolean> => (
+  new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    let timer = 0;
+    const abort = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolve(false);
+    };
+    timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve(true);
+    }, durationMs);
+    signal?.addEventListener("abort", abort, { once: true });
+  })
+);
 
 const panelBlockLines = (value: unknown): string[] => {
   if (typeof value === "string") return [value];
@@ -288,7 +310,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, [commit]);
 
-  const handleFrontendAction = useCallback(async ({ request_id, action, args = {} }: FrontendActionRequest) => {
+  const handleFrontendAction = useCallback(async ({ request_id, action, args = {}, signal }: FrontendActionRequest) => {
     const current = stageRef.current;
     if (!current) return { request_id, action, ok: false, error: "VR stage has not loaded." };
     if (action === "stage_get_state") return { request_id, action, ok: true, state: current };
@@ -343,8 +365,40 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
         const next = mergePatch(active, { nodes: [{ id: "avatar", x: point.x, y: point.y, pose: undefined }] });
         const result = commit(next, action, request_id);
         if (!result.ok) return result;
+        const startedAt = performance.now();
+        if (!(await waitForMotion(plan.totalDurationMs, signal))) {
+          const legElapsed = Math.min(plan.totalDurationMs, Math.max(0, performance.now() - startedAt));
+          const position = cancelledMotionPosition(
+            plan.from,
+            plan.to,
+            legElapsed,
+            plan.walkDurationMs,
+            plan.turnDurationMs,
+          );
+          motionSequenceRef.current += 1;
+          setMotionPlan({
+            sequence: motionSequenceRef.current,
+            from: position,
+            to: position,
+            turnDurationMs: 0,
+            walkDurationMs: 0,
+            finalTurnDurationMs: 0,
+            totalDurationMs: 0,
+          });
+          const cancelled = commit(mergePatch(stageRef.current || active, {
+            nodes: [{ id: "avatar", x: position.x, y: position.y, pose: undefined }],
+            metadata: { updated_by: "idle_relocation_cancel" },
+          }), action, request_id);
+          return {
+            ...cancelled,
+            ok: false,
+            cancelled: true,
+            error: "frontend action cancelled",
+            duration_ms: elapsed + legElapsed,
+            position,
+          };
+        }
         elapsed += plan.totalDurationMs;
-        await new Promise<void>((resolve) => window.setTimeout(resolve, plan.totalDurationMs));
       }
       const finalPoint = path[path.length - 1];
       return successfulVrMoveResult(request_id, stageRef.current || current, elapsed, finalPoint);

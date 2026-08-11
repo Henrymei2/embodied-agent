@@ -12,15 +12,17 @@ class AutonomySettings:
     enabled: bool = True
     presence_mode: str = "enforced"
     headless_enabled: bool = True
+    debug_reset_agenda_on_connect: bool = False
     welcome_back_greeting_enabled: bool = True
     welcome_back_min_absence_minutes: int = 30
     lease_ttl_seconds: float = 30.0
     lease_renew_seconds: float = 10.0
     lease_retry_seconds: float = 2.0
-    default_pursuit_seconds: int = 900
     maximum_pursuit_seconds: int = 1800
     idle_min_seconds: int = 60
     idle_max_seconds: int = 600
+    idle_relocation_min_seconds: float = 10.0
+    idle_relocation_max_seconds: float = 30.0
     planner_retry_limit: int = 3
     planner_retry_backoff_seconds: float = 2.0
     retry_backoff_seconds: float = 2.0
@@ -89,19 +91,25 @@ class AutonomySettings:
             "maximum_pursuit_seconds",
             maximum_pursuit_seconds,
         )
-        object.__setattr__(
-            self,
-            "default_pursuit_seconds",
-            min(
-                maximum_pursuit_seconds,
-                max(30, int(self.default_pursuit_seconds)),
-            ),
-        )
         object.__setattr__(self, "idle_min_seconds", max(5, int(self.idle_min_seconds)))
         object.__setattr__(
             self,
             "idle_max_seconds",
             max(self.idle_min_seconds, int(self.idle_max_seconds)),
+        )
+        idle_relocation_min_seconds = max(1.0, float(self.idle_relocation_min_seconds))
+        object.__setattr__(
+            self,
+            "idle_relocation_min_seconds",
+            idle_relocation_min_seconds,
+        )
+        object.__setattr__(
+            self,
+            "idle_relocation_max_seconds",
+            max(
+                idle_relocation_min_seconds,
+                float(self.idle_relocation_max_seconds),
+            ),
         )
         object.__setattr__(
             self, "planner_retry_limit", max(1, int(self.planner_retry_limit))
@@ -285,6 +293,9 @@ class AutonomySettings:
             enabled=bool(getattr(cfg, "enabled", True)) and permitted,
             presence_mode=str(getattr(cfg, "presence_mode", "enforced")),
             headless_enabled=bool(getattr(cfg, "headless_enabled", True)),
+            debug_reset_agenda_on_connect=bool(
+                getattr(cfg, "debug_reset_agenda_on_connect", False)
+            ),
             welcome_back_greeting_enabled=bool(
                 getattr(cfg, "welcome_back_greeting_enabled", True)
             ),
@@ -294,10 +305,15 @@ class AutonomySettings:
             lease_ttl_seconds=float(getattr(cfg, "lease_ttl_seconds", 30)),
             lease_renew_seconds=float(getattr(cfg, "lease_renew_seconds", 10)),
             lease_retry_seconds=float(getattr(cfg, "lease_retry_seconds", 2)),
-            default_pursuit_seconds=int(getattr(cfg, "default_pursuit_seconds", 900)),
             maximum_pursuit_seconds=int(getattr(cfg, "maximum_pursuit_seconds", 1800)),
             idle_min_seconds=int(getattr(cfg, "idle_min_seconds", 60)),
             idle_max_seconds=int(getattr(cfg, "idle_max_seconds", 600)),
+            idle_relocation_min_seconds=float(
+                getattr(cfg, "idle_relocation_min_seconds", 10.0)
+            ),
+            idle_relocation_max_seconds=float(
+                getattr(cfg, "idle_relocation_max_seconds", 30.0)
+            ),
             planner_retry_limit=int(getattr(cfg, "planner_retry_limit", 3)),
             planner_retry_backoff_seconds=float(
                 getattr(cfg, "planner_retry_backoff_seconds", 2)

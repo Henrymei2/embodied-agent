@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import random
 import time
 from dataclasses import asdict
 from datetime import datetime, timedelta
@@ -30,7 +31,7 @@ from .plan_state import PlanConflictError
 from .idle_relocation import (
     IdlePlacement,
     IdleScene,
-    validate_idle_placement,
+    choose_idle_placement,
 )
 from .lease import LeaseHandle, LeaseLostError, WorkspaceLease, lease_context
 from .settings import AutonomySettings
@@ -134,6 +135,8 @@ class AgendaExecutive:
         self._detached_planner_tasks: set[asyncio.Task] = set()
         self._settling_task: Optional[asyncio.Task] = None
         self._settling_interrupted = False
+        self._idle_relocation_task: Optional[asyncio.Task] = None
+        self._idle_relocation_previous_object_id: str | None = None
         self._report_result = report_result
 
     async def run(self) -> None:
@@ -189,6 +192,7 @@ class AgendaExecutive:
                         pass
                 except asyncio.CancelledError:
                     await self._cancel_reconsideration()
+                    await self._stop_idle_relocation()
                     if self._entry_task and not self._entry_task.done():
                         self._entry_task.cancel()
                     if self._activity_task and not self._activity_task.done():
@@ -202,6 +206,7 @@ class AgendaExecutive:
                                 self._entry_task,
                                 self._activity_task,
                                 self._settling_task,
+                                self._idle_relocation_task,
                             )
                             if task is not None
                         ),
@@ -231,6 +236,7 @@ class AgendaExecutive:
                     )
                     await asyncio.sleep(self.settings.planner_retry_backoff_seconds)
         finally:
+            await self._stop_idle_relocation()
             unsubscribe_agenda_changes(subscription)
 
     def _next_wake_seconds(self) -> float:
@@ -277,9 +283,11 @@ class AgendaExecutive:
                         ),
                         None,
                     )
-                    if entry is None or entry.metadata.get(
-                        "terminal_voice_report"
-                    ) or entry.report_policy != "silent":
+                    if (
+                        entry is None
+                        or entry.metadata.get("terminal_voice_report")
+                        or entry.report_policy != "silent"
+                    ):
                         continue
                 due = datetime.fromisoformat(report.next_attempt_at)
                 if due.tzinfo is None:
@@ -633,6 +641,10 @@ class AgendaExecutive:
         active = next((item for item in state.entries if item.status == "active"), None)
         if active:
             if active.kind != "user":
+                if active.kind == "idle":
+                    self._ensure_idle_relocation()
+                else:
+                    await self._stop_idle_relocation()
                 self._entry_task = asyncio.create_task(
                     self._advance_entry(active),
                     name=f"agenda-entry:{active.id}",
@@ -690,8 +702,8 @@ class AgendaExecutive:
             if item.status in {"proposed", "blocked_approval"}
         ]
         if held:
-            # Exactly one generated successor is retained. Do not generate
-            # additional work or cosmetic movement while it awaits approval.
+            # Exactly one generated successor is retained. The already-running
+            # local idle loop may continue, but no additional work is generated.
             return False
         suspended = [
             item
@@ -803,66 +815,14 @@ class AgendaExecutive:
             logger.warning(f"agenda: could not inspect room for idle relocation: {exc}")
             return IdleScene(current_position=None, objects=())
 
-    async def _choose_idle_placement(
-        self,
-        context,
-        scene: IdleScene,
-    ) -> IdlePlacement:
-        if not self.connected_client or not scene.objects:
-            return IdlePlacement(None, "No live room objects are available.")
-        self._assert_lease()
-        try:
-            self._consume_planner_quota()
-        except PlannerQuotaExceeded:
-            return validate_idle_placement(
-                IdlePlacement(None, "Idle placement planner quota is exhausted."),
-                scene,
-            )
-        try:
-            with self.tracer.span(
-                "agenda.planner.idle_placement",
-                attributes={
-                    "agenda.execution_mode": "live",
-                    "agenda.room_object_count": len(scene.objects),
-                },
-            ) as span:
-                placement = await self._run_planner_call(
-                    self.planner.choose_idle_placement(context, scene),
-                    phase="idle_placement",
-                    span=span,
-                )
-        except asyncio.CancelledError:
-            raise
-        except LeaseLostError:
-            raise
-        except PlannerCallTimeout as exc:
-            logger.warning(f"agenda: idle placement planner failed: {exc}")
-            return IdlePlacement(None, "Idle placement planning timed out.")
-        except Exception as exc:
-            logger.warning(f"agenda: idle placement planner failed: {exc}")
-            placement = IdlePlacement(None, "The idle placement planner failed.")
-        return validate_idle_placement(placement, scene)
-
-    async def _relocate_idle_safely(self, placement: IdlePlacement) -> None:
+    async def _relocate_idle_safely(self, placement: IdlePlacement) -> bool:
         if (
             not self.connected_client
             or placement.object_id is None
             or self.relocate_idle is None
         ):
-            return
+            return False
         self._assert_lease()
-        quota = self.store.consume_quota(
-            category="capability",
-            key="idle_relocation",
-            limit=self.settings.capability_calls_per_window,
-            window_seconds=self.settings.quota_window_seconds,
-        )
-        if not quota.allowed:
-            logger.info(
-                "agenda: idle relocation skipped because its capability quota "
-                f"is exhausted until {quota.reset_at}"
-            )
-            return
         try:
             with self.tracer.span(
                 "agenda.activity.idle_relocation",
@@ -871,8 +831,9 @@ class AgendaExecutive:
                     "agenda.execution_mode": "live",
                 },
             ):
-                await self.relocate_idle(placement)
+                relocated = await self.relocate_idle(placement)
             self._assert_lease()
+            return relocated
         except asyncio.CancelledError:
             raise
         except LeaseLostError:
@@ -881,6 +842,64 @@ class AgendaExecutive:
             logger.warning(
                 f"agenda: idle relocation failed without blocking work: {exc}"
             )
+            return False
+
+    def _idle_relocation_done(self, task: asyncio.Task) -> None:
+        if self._idle_relocation_task is task:
+            self._idle_relocation_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning(f"agenda: idle relocation loop stopped: {exc}")
+            self.wake()
+
+    def _ensure_idle_relocation(self) -> None:
+        if (
+            not self.connected_client
+            or self.room_snapshot is None
+            or self.relocate_idle is None
+        ):
+            return
+        task = self._idle_relocation_task
+        if task is not None and not task.done():
+            return
+        task = asyncio.create_task(
+            self._idle_relocation_loop(),
+            name=f"agenda-idle-relocation:{self.client_uid}",
+        )
+        self._idle_relocation_task = task
+        task.add_done_callback(self._idle_relocation_done)
+
+    async def _idle_relocation_loop(self) -> None:
+        while True:
+            self._assert_lease()
+            scene = self._room_snapshot()
+            placement = choose_idle_placement(
+                scene,
+                self._idle_relocation_previous_object_id,
+            )
+            if placement.object_id is not None:
+                self._idle_relocation_previous_object_id = placement.object_id
+                await self._relocate_idle_safely(placement)
+            await asyncio.sleep(
+                random.uniform(
+                    self.settings.idle_relocation_min_seconds,
+                    self.settings.idle_relocation_max_seconds,
+                )
+            )
+
+    async def _stop_idle_relocation(self) -> None:
+        task = self._idle_relocation_task
+        if task is None:
+            return
+        self._idle_relocation_task = None
+        if task.done():
+            self._idle_relocation_done(task)
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     async def _run_settling_task(self, operation: Awaitable[None]) -> bool:
         task = asyncio.create_task(operation)
@@ -900,7 +919,9 @@ class AgendaExecutive:
                 self._settling_interrupted = False
 
     async def _generate_live_successor(self) -> None:
-        """Generate live work without putting cosmetic relocation in its path."""
+        """Generate live work while the local idle loop keeps the avatar moving."""
+
+        self._ensure_idle_relocation()
 
         async def generate() -> None:
             await self.emit(AgentActivityTracker.planning())
@@ -1002,6 +1023,7 @@ class AgendaExecutive:
         interruption_reason: str = "agenda_preemption",
     ) -> None:
         await self._cancel_reconsideration()
+        await self._stop_idle_relocation()
         settling = self._settling_task
         if settling is not None and not settling.done():
             self._settling_interrupted = True
@@ -1248,23 +1270,12 @@ class AgendaExecutive:
                 if self.run_intention is not None and proposal.kind != "idle":
                     proposal.metadata["execution_path"] = "intention"
                 if proposal.kind == "idle":
-                    proposal.budget.time_budget_seconds = max(
-                        self.settings.idle_min_seconds,
-                        min(
-                            proposal.budget.time_budget_seconds,
-                            self.settings.idle_max_seconds,
-                        ),
-                    )
+                    proposal.budget.time_budget_seconds = self.settings.idle_min_seconds
                 else:
-                    # A remote planner and one tool-capable agent round trip must
-                    # both fit before the high-level deadline. Tiny model-proposed
-                    # budgets previously collapsed healthy actions to one second.
-                    proposal.budget.time_budget_seconds = min(
-                        self.settings.maximum_pursuit_seconds,
-                        max(
-                            proposal.budget.time_budget_seconds,
-                            self.settings.step_timeout_seconds * 2,
-                        ),
+                    # The planner does not control lifecycle deadlines. Every
+                    # pursuit receives the deterministic configured maximum.
+                    proposal.budget.time_budget_seconds = (
+                        self.settings.maximum_pursuit_seconds
                     )
                 proposal.status = (
                     "blocked_approval" if proposal.requires_approval else "queued"
@@ -1439,17 +1450,7 @@ class AgendaExecutive:
             if deadline is None:
                 entry = self.store.transition(entry.id, "active")
                 deadline = entry.budget.deadline_at
-            if self.connected_client and not entry.metadata.get(
-                "idle_relocation_attempted"
-            ):
-                scene = self._room_snapshot()
-                if scene.objects:
-                    self.store.update_metadata(entry.id, idle_relocation_attempted=True)
-                    placement = await self._choose_idle_placement(
-                        self._agenda_context(), scene
-                    )
-                    await self._relocate_idle_safely(placement)
-                    return True
+            self._ensure_idle_relocation()
             if deadline and utc_now() < datetime.fromisoformat(deadline):
                 return False
             self.store.transition(entry.id, "completed")

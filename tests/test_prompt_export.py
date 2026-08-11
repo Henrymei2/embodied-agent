@@ -45,7 +45,6 @@ def test_latest_history_uses_newest_file_and_stops_at_last_human(
 def test_markdown_contains_all_request_families_and_native_shapes():
     keys = [
         "conversation",
-        "agenda_idle",
         "agenda_intention",
         "agenda_next_step",
         "agenda_completion",

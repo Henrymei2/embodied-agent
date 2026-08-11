@@ -470,6 +470,27 @@ class AgendaStore:
             notify_agenda_changed(self.root)
         return result
 
+    def reset_for_debug(self) -> dict[str, int]:
+        """Clear all global agenda history while preserving lease fencing."""
+
+        def operation(state: AgendaState) -> dict[str, int]:
+            removed = {
+                "entries": len(state.entries),
+                "events": len(state.events),
+                "rejections": len(state.rejections),
+                "reports": len(state.reports),
+                "inbox": len(state.inbox),
+                "dead_letters": len(state.dead_letters),
+            }
+            fresh = AgendaState(
+                revision=state.revision,
+                fencing_token=state.fencing_token,
+            )
+            state.__dict__.update(fresh.__dict__)
+            return removed
+
+        return self.mutate(operation)
+
     @staticmethod
     def _validate_state(state: AgendaState) -> None:
         active = 0

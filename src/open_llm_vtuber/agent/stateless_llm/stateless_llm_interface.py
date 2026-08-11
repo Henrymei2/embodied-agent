@@ -27,6 +27,20 @@ class StatelessLLMInterface(metaclass=abc.ABCMeta):
         """
         return None
 
+    async def json_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        system: str = None,
+    ) -> AsyncIterator[Any]:
+        """Stream a JSON-only completion, with provider tuning when available.
+
+        Providers without a dedicated structured-output mode retain the normal
+        chat behavior. Implementations may override this to disable expensive
+        hidden reasoning or request a native JSON response format.
+        """
+        async for event in self.chat_completion(messages, system=system):
+            yield event
+
     @abc.abstractmethod
     async def chat_completion(
         self,

@@ -284,7 +284,11 @@ async def agenda_loop(
         logger.warning("agenda: configured agent does not expose a stateless LLM")
         return
 
-    raw_complete = make_llm_complete(llm, raise_errors=True)
+    raw_complete = make_llm_complete(
+        llm,
+        raise_errors=True,
+        json_object=True,
+    )
 
     async def complete(prompt: str) -> str:
         return await raw_complete([{"role": "user", "content": prompt}], "")
@@ -624,7 +628,7 @@ async def agenda_loop(
         store=agenda_store,
         planner=StructuredAgendaPlanner(
             complete,
-            default_pursuit_seconds=settings.default_pursuit_seconds,
+            maximum_pursuit_seconds=settings.maximum_pursuit_seconds,
         ),
         settings=settings,
         run_step=run_step,

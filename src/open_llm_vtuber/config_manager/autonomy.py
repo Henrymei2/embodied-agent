@@ -45,6 +45,9 @@ class AutonomyConfig(I18nMixin):
         "enforced", alias="presence_mode"
     )
     headless_enabled: bool = Field(True, alias="headless_enabled")
+    debug_reset_agenda_on_connect: bool = Field(
+        False, alias="debug_reset_agenda_on_connect"
+    )
     welcome_back_greeting_enabled: bool = Field(
         True, alias="welcome_back_greeting_enabled"
     )
@@ -54,10 +57,11 @@ class AutonomyConfig(I18nMixin):
     lease_ttl_seconds: float = Field(30.0, ge=5, le=300)
     lease_renew_seconds: float = Field(10.0, ge=1, le=150)
     lease_retry_seconds: float = Field(2.0, ge=0.25, le=60)
-    default_pursuit_seconds: int = Field(900, ge=30, le=7200)
     maximum_pursuit_seconds: int = Field(1800, ge=60, le=14400)
     idle_min_seconds: int = Field(60, ge=5, le=3600)
     idle_max_seconds: int = Field(600, ge=5, le=7200)
+    idle_relocation_min_seconds: float = Field(10.0, ge=1, le=3600)
+    idle_relocation_max_seconds: float = Field(30.0, ge=1, le=7200)
     planner_retry_limit: int = Field(3, ge=1, le=10)
     planner_retry_backoff_seconds: float = Field(2.0, ge=0, le=60)
     retry_backoff_seconds: float = Field(2.0, ge=0, le=60)
@@ -114,6 +118,11 @@ class AutonomyConfig(I18nMixin):
                 "autonomy_config.tick_seconds is deprecated; migrated it to "
                 "fallback_reconsideration_seconds"
             )
+        if migrated.pop("default_pursuit_seconds", None) is not None:
+            logger.warning(
+                "autonomy_config.default_pursuit_seconds is obsolete; pursuits "
+                "now always use maximum_pursuit_seconds"
+            )
         for field_name in (
             "interruption_frequency",
             "help_style",
@@ -125,6 +134,15 @@ class AutonomyConfig(I18nMixin):
                 )
         return migrated
 
+    @model_validator(mode="after")
+    def validate_idle_relocation_range(self):
+        if self.idle_relocation_max_seconds < self.idle_relocation_min_seconds:
+            raise ValueError(
+                "idle_relocation_max_seconds must be greater than or equal to "
+                "idle_relocation_min_seconds"
+            )
+        return self
+
     DESCRIPTIONS: ClassVar[Dict[str, Description]] = {
         "enabled": Description(en="Whether the autonomous behavior loop runs"),
         "presence_mode": Description(
@@ -132,6 +150,9 @@ class AutonomyConfig(I18nMixin):
         ),
         "headless_enabled": Description(
             en="Keep safe autonomous continuity while no client is connected"
+        ),
+        "debug_reset_agenda_on_connect": Description(
+            en="Debug only: clear global agenda state whenever a live client connects"
         ),
         "welcome_back_greeting_enabled": Description(
             en="Welcome the user after a meaningful return"
@@ -144,10 +165,15 @@ class AutonomyConfig(I18nMixin):
         "lease_retry_seconds": Description(
             en="Standby delay before retrying workspace ownership"
         ),
-        "default_pursuit_seconds": Description(en="Default autonomous pursuit budget"),
         "maximum_pursuit_seconds": Description(en="Maximum autonomous pursuit budget"),
         "idle_min_seconds": Description(en="Minimum bounded idle duration"),
         "idle_max_seconds": Description(en="Maximum bounded idle duration"),
+        "idle_relocation_min_seconds": Description(
+            en="Minimum wait between local idle relocations"
+        ),
+        "idle_relocation_max_seconds": Description(
+            en="Maximum wait between local idle relocations"
+        ),
         "planner_retry_limit": Description(en="Rejected proposals allowed per pass"),
         "planner_retry_backoff_seconds": Description(
             en="Delay between planner retries"

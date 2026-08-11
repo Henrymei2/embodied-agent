@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { cancelledMotionPosition } from "@/utils/motion-cancellation";
 
 export type StageNodeType = "shape" | "text" | "image" | "avatar" | "panel";
 export type StageAssetFit = "contain" | "cover";
@@ -154,6 +155,7 @@ export interface FrontendActionRequest {
   request_id?: string;
   action?: string;
   args?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface FrontendActionResult {
@@ -170,6 +172,7 @@ export interface FrontendActionResult {
   reachable_objects?: string[];
   arrived?: boolean;
   duration_ms?: number;
+  cancelled?: boolean;
   capabilities?: {
     actions: string[];
     node_types: StageNodeType[];
@@ -1282,6 +1285,26 @@ const readWaypoints = (value: unknown): StagePosition[] => {
   ));
 };
 
+const waitForMotion = (durationMs: number, signal?: AbortSignal): Promise<boolean> => (
+  new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    let timer = 0;
+    const abort = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolve(false);
+    };
+    timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve(true);
+    }, durationMs);
+    signal?.addEventListener("abort", abort, { once: true });
+  })
+);
+
 export function DynamicStageProvider({ children }: { children: React.ReactNode }) {
   const [stage, setStage] = useState<DynamicStageDocument>(() => createDefaultStage());
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -1330,6 +1353,7 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
     request_id: requestId,
     action,
     args = {},
+    signal,
   }: FrontendActionRequest): Promise<FrontendActionResult> => {
     switch (action) {
       case "stage_get_state":
@@ -1436,6 +1460,9 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
         let elapsed = 0;
         for (const waypoint of path) {
           const avatar = stageRef.current.nodes.find((node) => node.id === "avatar");
+          const legStart = avatar
+            ? { x: avatar.x, y: avatar.y }
+            : { x: waypoint.x, y: waypoint.y };
           const duration = legDurationMs(
             avatar ? distanceBetween(avatar, waypoint) : 0,
             stageRef.current,
@@ -1454,10 +1481,31 @@ export function DynamicStageProvider({ children }: { children: React.ReactNode }
           setMotionDurationMs(duration);
           result = commitStage(nextStage, action, requestId);
           if (!result.ok) return result;
+          const startedAt = performance.now();
+          if (!(await waitForMotion(duration, signal))) {
+            const legElapsed = Math.min(duration, Math.max(0, performance.now() - startedAt));
+            const position = cancelledMotionPosition(
+              legStart, waypoint, legElapsed, duration,
+            );
+            setMotionDurationMs(0);
+            const cancelled = commitStage(applyStagePatch(stageRef.current, {
+              nodes: stageRef.current.nodes.map((node) => (
+                node.id === "avatar"
+                  ? { ...node, x: position.x, y: position.y, pose: undefined }
+                  : node
+              )),
+              metadata: { updated_by: "idle_relocation_cancel" },
+            }), action, requestId);
+            return {
+              ...cancelled,
+              ok: false,
+              cancelled: true,
+              error: "frontend action cancelled",
+              duration_ms: elapsed + legElapsed,
+              position,
+            };
+          }
           elapsed += duration;
-          await new Promise<void>((resolve) => {
-            window.setTimeout(resolve, duration);
-          });
         }
 
         const avatar = stageRef.current.nodes.find((node) => node.id === "avatar");

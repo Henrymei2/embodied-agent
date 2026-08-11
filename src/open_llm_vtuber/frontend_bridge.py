@@ -39,6 +39,7 @@ class _PendingRequest:
     client_uid: str
     action: str
     future: asyncio.Future
+    owner: str | None = None
 
 
 # client_uid -> connection metadata
@@ -136,6 +137,14 @@ def pending_request_action(request_id: str, client_uid: str) -> str | None:
     return pending.action
 
 
+def pending_request_owner(request_id: str, client_uid: str) -> str | None:
+    """Return the internal action owner only to the request's client."""
+    pending = _pending_requests.get(request_id)
+    if pending is None or pending.client_uid != client_uid:
+        return None
+    return pending.owner
+
+
 def _select_client(
     client_uid: str | None,
     conf_uid: str | None,
@@ -167,6 +176,7 @@ async def _send_action_request(
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     client_uid: str | None = None,
     conf_uid: str | None = None,
+    owner: str | None = None,
 ) -> tuple[bool, dict, Optional[str]]:
     """Low-level: send a frontend-action-request and await its result."""
     selected_client_uid, selection_error = _select_client(client_uid, conf_uid)
@@ -179,6 +189,7 @@ async def _send_action_request(
         client_uid=selected_client_uid,
         action=action,
         future=future,
+        owner=owner,
     )
 
     message = json.dumps(
@@ -212,6 +223,25 @@ async def _send_action_request(
             f"action={action} request={request_id} ok={ok}"
         )
         return ok, result, error
+    except asyncio.CancelledError:
+        if owner is not None and request_id in _pending_requests:
+            cancel_message = json.dumps(
+                {
+                    "type": "frontend_action_cancel",
+                    "request_id": request_id,
+                }
+            )
+            cancel_task = asyncio.create_task(send_text(cancel_message))
+            cancel_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+            asyncio.get_running_loop().call_later(
+                timeout,
+                lambda: _pending_requests.pop(request_id, None),
+            )
+        else:
+            _pending_requests.pop(request_id, None)
+        raise
     except asyncio.TimeoutError:
         _pending_requests.pop(request_id, None)
         logger.warning(
@@ -227,6 +257,7 @@ async def request_frontend_action(
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     client_uid: str | None = None,
     conf_uid: str | None = None,
+    owner: str | None = None,
 ) -> tuple[bool, dict, Optional[str]]:
     """Ask one unambiguously selected frontend to run an action."""
     return await _send_action_request(
@@ -235,6 +266,7 @@ async def request_frontend_action(
         timeout=timeout,
         client_uid=client_uid,
         conf_uid=conf_uid,
+        owner=owner,
     )
 
 

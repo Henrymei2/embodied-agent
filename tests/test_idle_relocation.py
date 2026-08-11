@@ -17,9 +17,9 @@ from src.open_llm_vtuber.autonomy.idle_relocation import (
     IdleObject,
     IdlePlacement,
     IdleScene,
+    choose_idle_placement,
     idle_scene_snapshot,
     relocate_for_idle,
-    validate_idle_placement,
 )
 from src.open_llm_vtuber.autonomy.observation import (
     clear_client_presence,
@@ -75,24 +75,27 @@ def _context() -> AgendaContext:
     )
 
 
-async def test_idle_planner_receives_bounded_room_and_returns_structured_choice():
-    prompts: list[str] = []
+def test_local_idle_choice_uses_seated_weight_and_excludes_previous():
+    captured: dict[str, object] = {}
 
-    async def complete(prompt: str) -> str:
-        prompts.append(prompt)
-        return '{"object_id":"reading_chair","reason":"A quiet place to reflect."}'
+    class ChoiceRecorder:
+        def choices(self, population, *, weights, k):
+            captured.update(population=population, weights=weights, k=k)
+            return [population[0]]
 
-    placement = await StructuredAgendaPlanner(complete).choose_idle_placement(
-        _context(),
+    placement = choose_idle_placement(
         _scene("sofa", "reading_chair", "bed"),
+        previous_object_id="sofa",
+        rng=ChoiceRecorder(),
     )
 
-    assert placement == IdlePlacement(
+    assert placement.object_id == "reading_chair"
+    assert [obj.object_id for obj in captured["population"]] == [
         "reading_chair",
-        "A quiet place to reflect.",
-    )
-    assert '"object_id": "reading_chair"' in prompts[0]
-    assert "choose where an embodied agent should wait" in prompts[0]
+        "bed",
+    ]
+    assert captured["weights"] == [3.0, 1.0]
+    assert captured["k"] == 1
 
 
 async def test_intention_planner_preserves_companion_motivation():
@@ -126,11 +129,12 @@ async def test_intention_planner_preserves_companion_motivation():
     assert entry.report_policy == "on_completion"
 
 
-def test_invalid_idle_choice_falls_back_to_sofa_then_staying_put():
-    invalid = IdlePlacement("invented_corner", "It sounded comfortable.")
-
-    assert validate_idle_placement(invalid, _scene("bed", "sofa")).object_id == "sofa"
-    assert validate_idle_placement(invalid, _scene("bed")).object_id is None
+def test_local_idle_choice_handles_empty_and_single_object_scenes():
+    assert choose_idle_placement(_scene()).object_id is None
+    assert (
+        choose_idle_placement(_scene("bed"), previous_object_id="bed").object_id
+        == "bed"
+    )
 
 
 def test_room_snapshot_exposes_every_non_avatar_world_object(monkeypatch):
@@ -204,7 +208,7 @@ async def test_relocation_verifies_arrival_and_only_sits_at_known_seats(
         assert avatar.get("pose") is None
 
 
-async def test_removed_destination_falls_back_to_live_sofa(monkeypatch):
+async def test_removed_destination_is_skipped_until_the_next_local_choice(monkeypatch):
     state = deepcopy(get_default_stage("character"))
     actions: list[tuple[str, dict]] = []
 
@@ -231,14 +235,12 @@ async def test_removed_destination_falls_back_to_live_sofa(monkeypatch):
         request,
     )
 
-    assert await relocate_for_idle(
+    assert not await relocate_for_idle(
         client_uid="client",
         conf_uid="character",
         placement=IdlePlacement("removed_chair", "It existed a moment ago."),
     )
-    sofa = next(node for node in state["nodes"] if node["id"] == "sofa")
-    assert actions[0][1]["x"] == sofa["x"]
-    assert actions[0][1]["y"] == sofa["y"]
+    assert actions == []
 
 
 async def test_relocation_timeout_returns_without_blocking(monkeypatch):
@@ -276,12 +278,7 @@ class _LifecyclePlanner:
     def __init__(self, proposal, *, generation_gate: asyncio.Event | None = None):
         self.proposal = proposal
         self.generation_gate = generation_gate
-        self.choose_calls = 0
         self.generation_started = asyncio.Event()
-
-    async def choose_idle_placement(self, _context, _scene):
-        self.choose_calls += 1
-        return IdlePlacement("sofa", "A comfortable place to think.")
 
     async def propose_intention(self, _context):
         self.generation_started.set()
@@ -347,7 +344,7 @@ async def _complete_entry(executive, store, entry_id: str) -> None:
     raise AssertionError(f"entry {entry_id} did not complete")
 
 
-async def test_explicit_idle_entry_may_relocate_once(tmp_path):
+async def test_explicit_idle_entry_starts_one_reusable_relocation_loop(tmp_path):
     proposal = _pursuit(title="Unused successor", status="proposed")
     planner = _LifecyclePlanner(proposal)
     relocations: list[IdlePlacement] = []
@@ -369,12 +366,17 @@ async def test_explicit_idle_entry_may_relocate_once(tmp_path):
     )
     store.add(idle)
 
-    assert await executive._advance_entry(idle) is True
+    assert await executive._advance_entry(idle) is False
+    await asyncio.sleep(0)
     assert len(relocations) == 1
-    assert store.load().entries[0].metadata["idle_relocation_attempted"] is True
+    task = executive._idle_relocation_task
+    assert task is not None and not task.done()
+    executive._ensure_idle_relocation()
+    assert executive._idle_relocation_task is task
+    await executive._stop_idle_relocation()
 
 
-async def test_successor_planning_does_not_start_or_wait_for_idle_relocation(tmp_path):
+async def test_successor_planning_runs_alongside_idle_relocation(tmp_path):
     generation_gate = asyncio.Event()
     completed = _pursuit(status="completed", title="Finished earlier work")
     proposal = _pursuit(
@@ -396,15 +398,52 @@ async def test_successor_planning_does_not_start_or_wait_for_idle_relocation(tmp
 
     advance = asyncio.create_task(executive._advance())
     await asyncio.wait_for(planner.generation_started.wait(), timeout=1)
+    for _ in range(10):
+        if relocations:
+            break
+        await asyncio.sleep(0)
+    assert len(relocations) == 1
     generation_gate.set()
     assert await asyncio.wait_for(advance, timeout=1) is True
-    assert relocations == []
-    assert planner.choose_calls == 0
     assert [entry.kind for entry in store.load().entries] == ["pursuit", "pursuit"]
     phases = [
         event["phase"] for event in emitted if event.get("type") == "agent_activity"
     ]
     assert phases == ["planning", "idle"]
+    assert executive._idle_relocation_task is not None
+
+    assert await executive._advance() is True  # queued pursuit becomes active
+    assert await executive._advance() is True  # execution takes ownership
+    assert executive._idle_relocation_task is None
+    await executive._cancel_entry_work()
+
+
+async def test_pausing_stops_an_active_idle_relocation_loop(tmp_path):
+    planner = _LifecyclePlanner(_pursuit(status="proposed"))
+    relocation_started = asyncio.Event()
+
+    async def relocate(_placement):
+        relocation_started.set()
+        await asyncio.Event().wait()
+
+    store, executive = _executive(tmp_path, planner, relocate)
+    idle = create_entry(
+        kind="idle",
+        title="Wait briefly",
+        description="Remain available.",
+        origin="recovery",
+        evidence_refs=["system:test"],
+        completion_condition="The wait ends.",
+        time_budget_seconds=60,
+        status="active",
+    )
+    store.add(idle)
+
+    assert await executive._advance_entry(idle) is False
+    await asyncio.wait_for(relocation_started.wait(), timeout=1)
+    await executive.pause(True)
+
+    assert executive._idle_relocation_task is None
 
 
 async def test_runnable_queued_work_does_not_trigger_idle_relocation(tmp_path):
@@ -421,12 +460,11 @@ async def test_runnable_queued_work_does_not_trigger_idle_relocation(tmp_path):
     store.add(queued)
 
     await _complete_entry(executive, store, queued.id)
-    assert planner.choose_calls == 0
     assert relocations == []
     assert store.load().entries[0].status == "completed"
 
 
-async def test_successor_generation_does_not_invoke_idle_relocation(
+async def test_successor_generation_uses_local_idle_relocation_without_planner_call(
     tmp_path,
 ):
     completed = _pursuit(status="completed", title="Finished autonomous work")
@@ -438,22 +476,21 @@ async def test_successor_generation_does_not_invoke_idle_relocation(
     planner = _LifecyclePlanner(proposal)
     placements: list[IdlePlacement] = []
 
-    async def invalid_choice(_context, _scene):
-        raise ValueError("malformed placement JSON")
-
-    planner.choose_idle_placement = invalid_choice
-
     async def relocate(placement):
         placements.append(placement)
-        raise RuntimeError("frontend disconnected")
+        return True
 
     store, executive = _executive(tmp_path, planner, relocate)
     store.add(completed)
 
     assert await asyncio.wait_for(executive._advance(), timeout=1) is True
-    assert placements == []
-    assert planner.choose_calls == 0
+    for _ in range(10):
+        if placements:
+            break
+        await asyncio.sleep(0)
+    assert len(placements) == 1
     assert any(entry.title == proposal.title for entry in store.load().entries)
+    await executive._stop_idle_relocation()
 
 
 async def test_held_state_does_not_start_idle_relocation(tmp_path):
@@ -468,20 +505,17 @@ async def test_held_state_does_not_start_idle_relocation(tmp_path):
 
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 0
 
     await executive.pause(True)
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 0
 
     await executive.pause(False)
     assert await executive._advance() is False
     assert await executive._advance() is False
-    assert planner.choose_calls == 0
 
 
-async def test_user_preempts_successor_generation_without_idle_relocation(tmp_path):
+async def test_user_preempts_successor_generation_and_idle_relocation(tmp_path):
     generation_gate = asyncio.Event()
     completed = _pursuit(status="completed", title="Finished autonomous work")
     proposal = _pursuit(
@@ -503,10 +537,15 @@ async def test_user_preempts_successor_generation_without_idle_relocation(tmp_pa
 
     advance = asyncio.create_task(executive._advance())
     await asyncio.wait_for(planner.generation_started.wait(), timeout=1)
+    for _ in range(10):
+        if relocations:
+            break
+        await asyncio.sleep(0)
     user = await executive.preempt_for_user("Help now")
 
     assert await asyncio.wait_for(advance, timeout=1) is True
-    assert relocations == []
+    assert len(relocations) == 1
+    assert executive._idle_relocation_task is None
     state = store.load()
     assert (
         next(entry for entry in state.entries if entry.id == user.id).status == "active"

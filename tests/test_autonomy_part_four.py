@@ -92,6 +92,14 @@ def test_plan_store_is_restart_safe_and_operator_snapshot_redacts_arguments(tmp_
     assert snapshot["plans"][0]["step_count"] == 1
 
 
+def test_plan_store_debug_reset_removes_resumable_plans(tmp_path):
+    store = ResumablePlanStore(tmp_path, clock=lambda: NOW)
+    store.create(_plan())
+
+    assert store.reset_for_debug() == 1
+    assert store.load().plans == []
+
+
 def test_plan_store_fails_closed_for_unknown_version_and_tampering(tmp_path):
     store = ResumablePlanStore(tmp_path, clock=lambda: NOW)
     store.create(_plan())

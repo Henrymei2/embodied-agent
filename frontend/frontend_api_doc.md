@@ -63,6 +63,13 @@ the destination is the only leg. Each leg lasts its own distance divided by
 `world.move_speed`, clamped to 250–1800 ms, so a short hop no longer takes as
 long as crossing the room.
 
+An internally owned idle walk can be preempted with
+`{"type":"frontend_action_cancel","request_id":"..."}`. The renderer stops
+that exact request, freezes the avatar at its interpolated position, and
+returns a normal `frontend_action_result` with `ok: false`, `cancelled: true`,
+the partial `position`, `duration_ms`, and updated `state`. Foreground actions
+are not assigned the idle owner and therefore are never targeted by this path.
+
 ```json
 {
   "type": "frontend_action_request",

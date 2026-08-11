@@ -9,10 +9,11 @@ from src.open_llm_vtuber.config_manager.main import Config
 
 def test_agenda_settings_apply_safe_lower_bounds():
     settings = AutonomySettings(
-        default_pursuit_seconds=1,
         maximum_pursuit_seconds=1,
         idle_min_seconds=1,
         idle_max_seconds=1,
+        idle_relocation_min_seconds=0,
+        idle_relocation_max_seconds=0,
         planner_retry_limit=0,
         planner_timeout_seconds=1,
         intention_model_timeout_seconds=1,
@@ -21,10 +22,11 @@ def test_agenda_settings_apply_safe_lower_bounds():
         human_preemption_timeout_seconds=0,
     )
 
-    assert settings.default_pursuit_seconds == 30
     assert settings.maximum_pursuit_seconds == 60
     assert settings.idle_min_seconds == 5
     assert settings.idle_max_seconds == 5
+    assert settings.idle_relocation_min_seconds == 1.0
+    assert settings.idle_relocation_max_seconds == 1.0
     assert settings.planner_retry_limit == 1
     assert settings.planner_timeout_seconds == 5.0
     assert settings.intention_model_timeout_seconds == 5.0
@@ -49,10 +51,26 @@ def test_latency_settings_default_to_fast_hard_limits():
     assert settings.intention_model_timeout_seconds == 30.0
     assert settings.intention_max_turns == 12
     assert settings.max_plausible_duration_seconds == 0.0
+    assert not hasattr(config, "default_pursuit_seconds")
+    assert not hasattr(settings, "default_pursuit_seconds")
+    assert config.idle_relocation_min_seconds == 10.0
+    assert config.idle_relocation_max_seconds == 30.0
+    assert settings.idle_relocation_min_seconds == 10.0
+    assert settings.idle_relocation_max_seconds == 30.0
     assert config.welcome_back_greeting_enabled is True
     assert config.welcome_back_min_absence_minutes == 30
+    assert config.debug_reset_agenda_on_connect is False
     assert settings.welcome_back_greeting_enabled is True
     assert settings.welcome_back_min_absence_minutes == 30
+    assert settings.debug_reset_agenda_on_connect is False
+
+
+def test_idle_relocation_config_rejects_reversed_wait_range():
+    with pytest.raises(ValueError, match="idle_relocation_max_seconds"):
+        AutonomyConfig(
+            idle_relocation_min_seconds=30,
+            idle_relocation_max_seconds=10,
+        )
 
 
 def test_welcome_back_absence_is_bounded():

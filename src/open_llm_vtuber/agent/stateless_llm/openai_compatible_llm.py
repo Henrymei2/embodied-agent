@@ -101,6 +101,8 @@ class AsyncLLM(StatelessLLMInterface):
         messages: List[Dict[str, Any]],
         system: str = None,
         tools: List[Dict[str, Any]] | NotGiven = NOT_GIVEN,
+        *,
+        _json_mode: bool = False,
     ) -> AsyncIterator[Any]:
         """
         Generates a chat completion using the OpenAI API asynchronously.
@@ -149,6 +151,15 @@ class AsyncLLM(StatelessLLMInterface):
                 and bool(available_tools)
                 else None
             )
+            provider_hint = f"{self.base_url} {self.model}".lower()
+            request_options: Dict[str, Any] = {}
+            if _json_mode and "deepseek" in provider_hint:
+                # DeepSeek V4 defaults to thinking mode. Agenda planners need a
+                # small structured decision, not a long hidden reasoning pass.
+                request_options = {
+                    "response_format": {"type": "json_object"},
+                    "extra_body": {"thinking": {"type": "disabled"}},
+                }
             log_llm_request(
                 provider="openai_compatible",
                 model=self.model,
@@ -160,6 +171,10 @@ class AsyncLLM(StatelessLLMInterface):
                     "stream": True,
                     "temperature": self.temperature,
                     "support_tools": self.support_tools,
+                    "json_mode": _json_mode,
+                    "thinking_mode": (
+                        "disabled" if request_options.get("extra_body") else "default"
+                    ),
                 },
             )
 
@@ -171,6 +186,7 @@ class AsyncLLM(StatelessLLMInterface):
                 stream=True,
                 temperature=self.temperature,
                 tools=available_tools,
+                **request_options,
             )
 
             async for chunk in stream:
@@ -374,3 +390,16 @@ class AsyncLLM(StatelessLLMInterface):
                 logger.debug("Chat completion finished.")
                 await stream.close()
                 logger.debug("Stream closed.")
+
+    async def json_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        system: str = None,
+    ) -> AsyncIterator[Any]:
+        """Use the provider's fast structured path for planner decisions."""
+        async for event in self.chat_completion(
+            messages,
+            system=system,
+            _json_mode=True,
+        ):
+            yield event

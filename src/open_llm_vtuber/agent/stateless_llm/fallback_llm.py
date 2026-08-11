@@ -111,11 +111,47 @@ class FallbackLLM(StatelessLLMInterface):
         system: str = None,
         tools: List[Dict[str, Any]] = None,
     ) -> AsyncIterator[Any]:
+        async for token in self._stream_completion(
+            messages,
+            system=system,
+            tools=tools,
+            json_mode=False,
+        ):
+            yield token
+
+    async def json_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        system: str = None,
+    ) -> AsyncIterator[Any]:
+        async for token in self._stream_completion(
+            messages,
+            system=system,
+            tools=None,
+            json_mode=True,
+        ):
+            yield token
+
+    async def _stream_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        system: str | None,
+        tools: List[Dict[str, Any]] | None,
+        json_mode: bool,
+    ) -> AsyncIterator[Any]:
         started = False
         try:
-            async for token in self._primary.chat_completion(
-                messages, system=system, tools=tools
-            ):
+            stream = (
+                self._primary.json_completion(messages, system=system)
+                if json_mode
+                else self._primary.chat_completion(
+                    messages,
+                    system=system,
+                    tools=tools,
+                )
+            )
+            async for token in stream:
                 started = True
                 yield token
             return

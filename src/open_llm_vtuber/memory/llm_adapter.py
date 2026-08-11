@@ -10,6 +10,8 @@ collapses either form into a single string.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Awaitable, Callable, Dict, List, Protocol
 
 from loguru import logger
@@ -29,6 +31,7 @@ def make_llm_complete(
     llm: StatelessLLMInterface,
     *,
     raise_errors: bool = False,
+    json_object: bool = False,
 ) -> Callable[..., Awaitable[str]]:
     """Wrap a StatelessLLM into an `LLMComplete` callable.
 
@@ -36,16 +39,23 @@ def make_llm_complete(
         llm: The stateless LLM to drive.
         raise_errors: Propagate provider failures instead of returning the memory
             subsystem's empty-string fallback.
+        json_object: Use the provider's structured-output path and return as soon
+            as one complete visible JSON object has streamed.
 
     Returns:
-        An async callable `(messages, system) -> str` that fully consumes the
-        stream and returns the concatenated text.
+        An async callable `(messages, system) -> str` that returns the
+        concatenated visible text. JSON mode may finish before the stream tail.
     """
 
     async def _complete(messages: List[Dict[str, Any]], system: str = "") -> str:
         chunks: List[str] = []
         try:
-            async for event in llm.chat_completion(messages, system or None):
+            stream = (
+                llm.json_completion(messages, system or None)
+                if json_object
+                else llm.chat_completion(messages, system or None)
+            )
+            async for event in stream:
                 if isinstance(event, str):
                     chunks.append(event)
                 elif isinstance(event, dict):
@@ -64,6 +74,8 @@ def make_llm_complete(
                                 )
                             )
                         )
+                if json_object and _has_complete_json_object("".join(chunks)):
+                    return "".join(chunks).strip()
                 # Anything else (tool events, sentinels) is ignored for memory.
         except Exception as exc:  # noqa: BLE001 - memory should never crash the agent
             if raise_errors:
@@ -73,3 +85,18 @@ def make_llm_complete(
         return "".join(chunks).strip()
 
     return _complete
+
+
+def _has_complete_json_object(text: str) -> bool:
+    """Recognize a complete root object without mistaking a nested object for it."""
+    candidate = text.lstrip()
+    fence = re.match(r"```(?:json)?\s*", candidate, re.I)
+    if fence is not None:
+        candidate = candidate[fence.end() :].lstrip()
+    if not candidate.startswith("{"):
+        return False
+    try:
+        value, _end = json.JSONDecoder().raw_decode(candidate)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(value, dict)
