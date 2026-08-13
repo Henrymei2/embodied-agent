@@ -294,8 +294,10 @@ def test_finished_paper_setup_uses_core_memory_and_restores_fixtures(
     event = next(item for item in agenda.load().inbox if item.id == run.event_id)
     policy = trigger_handling_policy(event)
     assert policy is not None
-    assert policy.policy_id == "demo-final-paper-ready-v1"
-    assert "write a pending plan" in policy.directive
+    assert policy.policy_id == "demo-context-only-v1"
+    assert policy.use_triggered_planner is False
+    assert policy.directive == ""
+    assert policy.completion_condition == ""
 
     prompt = build_workspace_prompt_context(
         workspace_dir=tmp_path,
@@ -369,14 +371,10 @@ def test_presentation_setup_uses_daily_memory_and_requires_physical_handoff(
     event = next(item for item in agenda.load().inbox if item.id == run.event_id)
     policy = trigger_handling_policy(event)
     assert policy is not None
-    assert policy.policy_id == "demo-presentation-practice-v1"
-    for action in (
-        "show_vr_panel",
-        "pick_up_entity",
-        "offer_entity",
-    ):
-        assert action in policy.directive
-    assert "only after" in policy.directive
+    assert policy.policy_id == "demo-context-only-v1"
+    assert policy.use_triggered_planner is False
+    assert policy.directive == ""
+    assert policy.completion_condition == ""
 
     asyncio.run(
         cancel_scenario(

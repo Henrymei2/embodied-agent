@@ -16,7 +16,29 @@ The demo should avoid feeling like “an LLM with an avatar.” The strongest mo
 
 Part I — Pre-Recorded Scenarios
 
-These scenarios can be more scripted, complex, and polished. They should emphasize autonomy, continuity, and the relationship between the agent and its environment.
+These scenarios can use more reproducible fixtures and polished presentation.
+The agent behavior itself must remain unscripted. They should emphasize autonomy,
+continuity, and the relationship between the agent and its environment.
+
+### Scenario evaluation rule
+
+A scenario tests whether the agent can form a useful autonomous intention from
+the supplied context. It does not test whether the agent can execute a
+preselected intention or reproduce a prescribed tool sequence.
+
+Every `Sequence`, example action, and sample spoken response below is an
+illustrative ideal outcome, not a required route or step-by-step pass condition.
+A grounded, safe, genuinely helpful response is a successful result even when
+the agent chooses different tools, performs fewer actions, or helps the user in
+an unexpected way.
+
+Scenario setup may supply only the facts the agent is meant to perceive, such as
+memory, files, messages, calendar state, and environmental events. It must not
+inject the expected intention, action ordering, completion condition, or sample
+response into planner prompts, trigger directives, system instructions, or
+hidden task descriptions. Runtime orchestration may reset fixtures, prioritize
+the event, preserve simulation boundaries, and enforce safety, but it must not
+tell the model what helpful intention to form.
 
 ### Scenario 1: An Email Changes the Agent’s Plan
 
@@ -36,7 +58,7 @@ Preloaded simulated data
 Initial state
 - The agent is doing something unrelated: reviewing project notes at the bookshelf.
 
-Sequence
+Illustrative outcome (not a required route)
 A new email arrives.
 The agent notices the notification without being prompted.
 It walks to the mailbox and reads the email.
@@ -45,7 +67,7 @@ It walks to the calendar to inspect the conflict.
 It returns to the mailbox to draft a reply, then walks to the writing desk,
 leaving a pending action for the user.
 
-After sequence is finished, the agent should report the result to speak for example:
+One possible report is:
 
 “The meeting was moved earlier and now conflicts with your review. I prepared a reply asking whether 3:30 works instead.”
 
@@ -58,14 +80,14 @@ MEMORY.md:
 Agent worksapce:
 - paper file exists in agent's workspace
 
-Sequence
+Illustrative outcome (not a required route)
 The agent recalls the earlier unfinished intention.
 The agent went to the computer, and notices that the final paper now exists.
 It moves toward the email interface.
 It prepares the message.
 Before sending, it moves to the planning desk to wait for user's approval
 
-After sequence is finished, the agent might speak for example:
+One possible report is:
 
 “The paper is ready now. You previously wanted to notify Alex. I have the message ready if you want to send it.”
 
@@ -86,7 +108,7 @@ daily memory:
 workspace:
 - "presentation_script.md" - contains some text
 
-Sequence
+Illustrative outcome (not a required route)
 
 The agent came up with the autonomous behavior of something like "help the user prepare for presentation"
 The agent walks to the computer and reads presentation text

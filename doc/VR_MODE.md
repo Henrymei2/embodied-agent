@@ -71,10 +71,13 @@ item and playback handshake so one bad segment cannot strand later speech.
 Spoken subtitles use a compact, high-resolution camera-relative ribbon below
 the center of view. The ribbon is visible only while audio is actually playing
 and, independently, for three seconds after the user toggles the microphone.
-Long responses retain the latest three wrapped lines, marking omitted earlier
-text with an ellipsis, so the caption advances instead of remaining on its
-opening words. Connection and transient audio or VR failures use a separate
-warning surface and therefore cannot keep the subtitle ribbon visible.
+Long responses begin with their first three wrapped lines and advance through
+the text using the active media element's playback progress, reaching the final
+three lines near the end of each audio segment. A new segment resets to its own
+opening lines; the short inter-segment grace retains the previous texture rather
+than revealing queued text before its audio starts. Connection and transient
+audio or VR failures use a separate warning surface and therefore cannot keep
+the subtitle ribbon visible.
 
 Agent activity is world-anchored above the companion instead of sharing the
 subtitle ribbon. The bubble follows the avatar, stays level while facing the
@@ -163,6 +166,16 @@ The scenario protocol is versioned independently from the stage document:
 client messages; `vr-scenario-state` is the authoritative catalogue/run
 snapshot. Request IDs are idempotent and snapshots carry a monotonic agenda
 revision so reconnects and reordered messages cannot repeat a launch.
+
+VR test scenarios are context-generation tests, not scripted task-execution
+tests. Their setup may create simulated messages, memory, files, room state, and
+typed events, while runtime policy may give those events foreground scheduling
+priority. Scenario descriptions and ideal sequences are catalogue copy for the
+human observer only: they must never be copied into planner prompts, trigger
+directives, completion conditions, or hidden agenda entries. Acceptance is based
+on whether the agent independently forms a grounded, useful, safe intention.
+Choosing a different route from the catalogue's example is valid and can be a
+better result.
 
 ### 2.4 Pointing and furniture panels
 
@@ -759,7 +772,10 @@ On a physical Meta Quest 3 over trusted HTTPS:
     only the accepted final transform.
 11. Exercise email-card, panel, offer/take/ignore, and user-walk-away scenarios.
     Judge whether the Agent's chosen channel fits privacy and attention rather
-    than requiring a particular tool sequence.
+    than requiring a particular tool sequence. For each test scenario, also
+    inspect the generated intention: a helpful context-grounded intention passes
+    even when it does not match the documented ideal route. Fail the setup if a
+    scenario-specific goal or procedure appears in the model prompt.
 
 ## 10. Non-goals and future work
 

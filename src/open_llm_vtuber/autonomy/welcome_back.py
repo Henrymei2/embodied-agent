@@ -20,6 +20,7 @@ from .presence import attention_cost, get_presence_ledger
 from .settings import AutonomySettings
 
 _DEDUPE_KEY = "welcome-back-greeting"
+_LOOK_AT_USER_DURATION_MS = 1200
 
 
 @dataclass
@@ -191,6 +192,33 @@ async def _emit_receipt(send, ledger, receipt) -> None:
     )
 
 
+async def _look_toward_player(client_uid: str, context) -> None:
+    """Slowly face a fresh VR user immediately before the welcome is spoken."""
+    if getattr(context, "scene_mode", "normal") != "vr":
+        return
+    from ..frontend_bridge import request_frontend_action
+
+    conf_uid = context.character_config.conf_uid
+    try:
+        ok, _result, error = await request_frontend_action(
+            "look_at_user",
+            {"duration_ms": _LOOK_AT_USER_DURATION_MS},
+            timeout=3.0,
+            client_uid=client_uid,
+            conf_uid=conf_uid,
+            owner="welcome_back",
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - greeting still speaks if gaze fails
+        logger.debug(
+            f"welcome-back look-at-user failed for {client_uid}: {type(exc).__name__}"
+        )
+        return
+    if not ok:
+        logger.debug(f"welcome-back look-at-user skipped for {client_uid}: {error}")
+
+
 async def _run_welcome(client_uid: str, *, context, send) -> None:
     session = _sessions.get(client_uid)
     ledger = get_presence_ledger(client_uid)
@@ -253,6 +281,7 @@ async def _run_welcome(client_uid: str, *, context, send) -> None:
                     "proactive_speak": True,
                     "synthetic_user": True,
                 },
+                before_first_speech=lambda: _look_toward_player(client_uid, context),
             )
             if not result.success or not result.response.strip():
                 raise RuntimeError(result.error or "welcome response was empty")

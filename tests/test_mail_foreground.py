@@ -14,7 +14,10 @@ from src.open_llm_vtuber.autonomy.agenda import (
     ExecutionCheckpoint,
     create_entry,
 )
-from src.open_llm_vtuber.autonomy.agenda_context import AgendaContext
+from src.open_llm_vtuber.autonomy.agenda_context import (
+    AgendaContext,
+    build_agenda_context,
+)
 from src.open_llm_vtuber.autonomy.agenda_planner import StructuredAgendaPlanner
 from src.open_llm_vtuber.autonomy.executive import AgendaExecutive
 from src.open_llm_vtuber.autonomy.lease import WorkspaceLease, lease_context
@@ -28,15 +31,20 @@ from src.open_llm_vtuber.autonomy.triggers import (
 )
 
 
-def _mail_event(store: AgendaStore, *, simulated: bool = False):
+def _mail_event(
+    store: AgendaStore,
+    *,
+    simulated: bool = False,
+    resource_id: str = "message-1",
+):
     return publish_trigger(
         store,
         TriggerEnvelope(
             TriggerReference(
                 source="gmail",
                 resource_type="message",
-                resource_id="message-1",
-                revision="message-1",
+                resource_id=resource_id,
+                revision=resource_id,
                 change_type="unread",
                 simulated=simulated,
             )
@@ -94,6 +102,29 @@ class _TriggeredPlanner:
         raise AssertionError("Gmail must not use the optional intention path")
 
 
+class _ContextOnlyPlanner:
+    def __init__(self):
+        self.normal = 0
+        self.triggered = 0
+
+    async def propose_triggered_intention(self, _context, _event, _policy):
+        self.triggered += 1
+        raise AssertionError("demo context must not use the guided trigger planner")
+
+    async def propose_intention(self, _context):
+        self.normal += 1
+        return create_entry(
+            kind="pursuit",
+            title="Model-chosen helpful intention",
+            description="A generic intention inferred from the supplied context.",
+            origin="autonomous",
+            evidence_refs=["model:inferred-context"],
+            completion_condition="The model-selected helpful outcome is complete.",
+            time_budget_seconds=300,
+            status="proposed",
+        )
+
+
 def _executive(store, planner, *, lease_handle=None):
     async def run_step(_entry, _checkpoint):
         return "done"
@@ -138,6 +169,26 @@ def test_gmail_policy_is_foreground_for_real_and_simulated_events(tmp_path):
         payload=real.payload,
     )
     assert trigger_handling_policy(spoofed) is None
+
+    scenario = publish_trigger(
+        AgendaStore(tmp_path / "scenario"),
+        TriggerEnvelope(
+            TriggerReference(
+                source="gmail",
+                resource_type="message",
+                resource_id="scenario-meeting-moved",
+                revision="scenario-run",
+                change_type="unread",
+                simulated=True,
+            )
+        ),
+    ).event
+    scenario_policy = trigger_handling_policy(scenario)
+    assert scenario_policy is not None
+    assert scenario_policy.policy_id == "demo-context-only-v1"
+    assert scenario_policy.use_triggered_planner is False
+    assert scenario_policy.directive == ""
+    assert scenario_policy.completion_condition == ""
 
 
 @pytest.mark.asyncio
@@ -186,57 +237,94 @@ async def test_mail_planner_forces_pursuit_reporting_and_untrusted_boundary(tmp_
 
 
 @pytest.mark.asyncio
-async def test_simulated_workspace_planner_uses_exact_scenario_policy(tmp_path):
-    prompts: list[str] = []
+@pytest.mark.parametrize(
+    ("resource_id", "simulated"),
+    [
+        ("message-1", False),
+        ("scenario-meeting-moved", True),
+    ],
+)
+async def test_new_gmail_is_prominent_in_next_autonomous_intention_context(
+    tmp_path, resource_id, simulated
+):
+    store = AgendaStore(tmp_path)
+    event = _mail_event(store, resource_id=resource_id, simulated=simulated)
+    lease = WorkspaceLease(tmp_path)
+    handle = lease.acquire("mail-context-owner", priority=100, holder_label="live")
+    assert handle is not None
+    with lease_context(handle):
+        claimed = store.claim_next_event(
+            owner_id=handle.owner_id,
+            fencing_token=handle.fencing_token,
+        )
+    assert claimed is not None
+    assert claimed.id == event.id
+
+    context = build_agenda_context(store, client_uid="mail-context-test")
+    external = context.payload["external_events"]
+    assert len(external) == 1
+    assert external[0]["status"] == "claimed"
+    assert external[0]["summary"] == "The mailbox received a new unread Gmail message."
 
     async def complete(prompt: str) -> str:
-        prompts.append(prompt)
+        notice = prompt.index("New external events are part of the current situation")
+        full_context = prompt.index("Context:\n")
+        assert notice < full_context
+        assert "The mailbox received a new unread Gmail message." in prompt[notice:]
+        assert '"source": "trigger:gmail"' in prompt[notice:]
+        assert '"kind": "message.unread"' in prompt[notice:]
         return json.dumps(
             {
-                "title": "Prepare presentation practice",
-                "description": "Read the script and physically offer its panel.",
-                "preferred_object": "computer",
-                "required_capabilities": [
-                    "read_file",
-                    "show_vr_panel",
-                    "pick_up_entity",
-                    "offer_entity",
-                ],
-                "risk": "low",
+                "kind": "pursuit",
+                "title": "Decide how to respond to the new mailbox change",
+                "description": "Consider the new message and choose a helpful response.",
+                "evidence_refs": ["model:new-mail-context"],
+                "completion_condition": "A suitable response has been prepared.",
+                "required_capabilities": [],
+                "report_policy": "on_completion",
+                "requires_approval": False,
             }
         )
 
+    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+
+    assert entry.kind == "pursuit"
+
+
+@pytest.mark.asyncio
+async def test_simulated_workspace_scenario_uses_context_only_intention_path(tmp_path):
     store = AgendaStore(tmp_path)
     event = _workspace_event(store, "presentation_script.md")
     policy = trigger_handling_policy(event)
     assert policy is not None
-    context = AgendaContext(
-        payload={"memory": "I have an important presentation later today."},
-        evidence_refs={event.evidence_ref, f"event:{event.id}"},
-        capabilities={
-            "read_file",
-            "show_vr_panel",
-            "pick_up_entity",
-            "offer_entity",
-        },
-        object_names={"computer"},
-    )
+    assert policy.policy_id == "demo-context-only-v1"
+    assert policy.use_triggered_planner is False
+    assert policy.directive == ""
+    assert policy.completion_condition == ""
 
-    entry = await StructuredAgendaPlanner(complete).propose_triggered_intention(
-        context, event, policy
-    )
+    lease = WorkspaceLease(tmp_path)
+    handle = lease.acquire("scenario-owner", priority=100, holder_label="live")
+    assert handle is not None
+    planner = _ContextOnlyPlanner()
+    executive = _executive(store, planner, lease_handle=handle)
 
-    assert entry.kind == "pursuit"
-    assert entry.metadata["trigger_policy"] == "demo-presentation-practice-v1"
-    assert "offered to the user" in entry.completion_condition.description
-    assert entry.required_capabilities == [
-        "read_file",
-        "show_vr_panel",
-        "pick_up_entity",
-        "offer_entity",
-    ]
-    assert "external resource" in prompts[0]
-    assert "presentation_script.md" in prompts[0]
+    with lease_context(handle):
+        await executive._generate_successor()
+
+    state = store.load()
+    acknowledged = next(item for item in state.inbox if item.id == event.id)
+    linked = next(
+        item for item in state.entries if item.id == acknowledged.linked_entry_id
+    )
+    assert planner.normal == 1
+    assert planner.triggered == 0
+    assert linked.origin == "autonomous"
+    assert linked.title == "Model-chosen helpful intention"
+    assert linked.status == "queued"
+    assert linked.metadata["trigger_foreground"] is True
+    assert linked.metadata["trigger_resource_id"] == "presentation_script.md"
+    assert "trigger_policy" not in linked.metadata
+    assert linked.motivation.evidence_refs == ["model:inferred-context"]
 
     real_event = _workspace_event(
         AgendaStore(tmp_path / "real"), "presentation_script.md", simulated=False

@@ -179,6 +179,7 @@ const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => (
 );
 
 export const VR_TURN_DURATION_MS = 600;
+export const VR_WELCOME_LOOK_DURATION_MS = 1200;
 
 export const createVrMotionPlan = (
   sequence: number,
@@ -204,6 +205,22 @@ export const createVrMotionPlan = (
     totalDurationMs: turnDurationMs + walkDurationMs + finalTurnDurationMs,
   };
 };
+
+export const createVrLookPlan = (
+  sequence: number,
+  avatar: { x: number; y: number },
+  user: { x: number; y: number },
+  durationMs = VR_WELCOME_LOOK_DURATION_MS,
+): VrAvatarMotionPlan => ({
+  sequence,
+  from: { x: avatar.x, y: avatar.y },
+  to: { x: avatar.x, y: avatar.y },
+  turnDurationMs: 0,
+  walkDurationMs: 0,
+  finalTurnDurationMs: Math.max(250, Math.min(3000, Math.round(durationMs))),
+  finalFacePoint: { x: user.x, y: user.y },
+  totalDurationMs: Math.max(250, Math.min(3000, Math.round(durationMs))),
+});
 
 export const endpointError = (stage: VrStageDocument, x: number, y: number) => {
   const avatar = stage.nodes.find((node) => node.id === "avatar");
@@ -338,7 +355,7 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
       return {
         request_id, action, ok: true,
         capabilities: {
-          actions: ["stage_get_state", "stage_set_state", "stage_patch_state", "stage_reset_state", "stage_list_capabilities", "get_object_position", "move_to", "list_objects", "get_scene_status", "list_physical_entities", "show_vr_panel", "materialize_email", "pick_up_entity", "put_down_entity", "offer_entity", "dismiss_entity", "get_user_location", "move_to_user"],
+          actions: ["stage_get_state", "stage_set_state", "stage_patch_state", "stage_reset_state", "stage_list_capabilities", "get_object_position", "move_to", "look_at_user", "list_objects", "get_scene_status", "list_physical_entities", "show_vr_panel", "materialize_email", "pick_up_entity", "put_down_entity", "offer_entity", "dismiss_entity", "get_user_location", "move_to_user"],
           node_types: ["avatar", "furniture", "prop"], version: 3,
           texture: "front-face texture", spritesheet: "avatar billboard spritesheet",
           furniture_window: "in-world panel", pose: "standing | sitting",
@@ -444,6 +461,39 @@ export function VrStageProvider({ children }: { children: React.ReactNode }) {
       const radians = pose.yaw * Math.PI / 180;
       return { x: pose.x + Math.sin(radians) * distanceCm, y: pose.y - Math.cos(radians) * distanceCm };
     };
+    if (action === "look_at_user") {
+      const pose = freshPose();
+      if (!pose) return { request_id, action, ok: false, error: "No fresh VR user pose is available." };
+      const active = stageRef.current || current;
+      const avatar = active.nodes.find((node) => node.id === "avatar");
+      if (!avatar) return { request_id, action, ok: false, error: "VR scene has no avatar." };
+      const requestedDuration = finite(args.duration_ms) ? args.duration_ms : VR_WELCOME_LOOK_DURATION_MS;
+      motionSequenceRef.current += 1;
+      const plan = createVrLookPlan(
+        motionSequenceRef.current,
+        avatar,
+        pose,
+        requestedDuration,
+      );
+      setMotionPlan(plan);
+      if (!(await waitForMotion(plan.totalDurationMs, signal))) {
+        return {
+          request_id,
+          action,
+          ok: false,
+          cancelled: true,
+          error: "frontend action cancelled",
+          duration_ms: 0,
+        };
+      }
+      return {
+        request_id,
+        action,
+        ok: true,
+        duration_ms: plan.totalDurationMs,
+        summary: "The agent slowly turned to face the user.",
+      };
+    }
     if (action === "show_vr_panel") {
       const pose = freshPose();
       if (!pose) return { request_id, action, ok: false, error: "No fresh VR user pose is available." };

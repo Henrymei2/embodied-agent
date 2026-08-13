@@ -64,6 +64,44 @@ def _executive(store, planner, settings=None, **kwargs):
 
 
 @pytest.mark.asyncio
+async def test_successor_planning_waits_for_configured_delay(tmp_path):
+    class Planner:
+        async def propose_intention(self, _context):
+            raise AssertionError("the delay should block successor planning")
+
+    store = AgendaStore(tmp_path)
+    entry = _pursuit()
+    store.add(entry)
+    store.transition(entry.id, "completed", progress_summary="Finished.")
+    executive = _executive(
+        store,
+        Planner(),
+        settings=AutonomySettings(
+            successor_delay_seconds=10,
+            restart_recovery_grace_seconds=0,
+        ),
+    )
+    generated: list[bool] = []
+
+    async def generate() -> None:
+        generated.append(True)
+
+    executive._generate_live_successor = generate
+
+    assert await executive._advance() is False
+    assert generated == []
+
+    def backdate(state):
+        current = next(item for item in state.entries if item.id == entry.id)
+        current.ended_at = (utc_now() - timedelta(seconds=11)).isoformat()
+
+    store.mutate(backdate)
+
+    assert await executive._advance() is True
+    assert generated == [True]
+
+
+@pytest.mark.asyncio
 async def test_runtime_hands_off_between_headless_and_live_owners(tmp_path):
     started: list[str] = []
     stopped: list[str] = []

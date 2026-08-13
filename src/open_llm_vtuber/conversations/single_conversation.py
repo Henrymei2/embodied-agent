@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Any, Optional
+from typing import Union, List, Dict, Any, Optional, Awaitable, Callable
 import asyncio
 import json
 from loguru import logger
@@ -32,6 +32,7 @@ async def process_single_conversation(
     images: Optional[List[Dict[str, Any]]] = None,
     session_emoji: str = np.random.choice(EMOJI_LIST),
     metadata: Optional[Dict[str, Any]] = None,
+    before_first_speech: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> AgentTurnResult:
     """Process a single-user conversation turn
 
@@ -43,6 +44,8 @@ async def process_single_conversation(
         images: Optional list of image data
         session_emoji: Emoji identifier for the conversation
         metadata: Optional metadata for special processing flags
+        before_first_speech: Optional hook run once immediately before the first
+            speakable output enters the display/TTS pipeline
 
     Returns:
         AgentTurnResult: Structured completion state and accumulated response
@@ -61,6 +64,7 @@ async def process_single_conversation(
     # evaluated at all, however fast the rest of the pipeline is.
     latency.adopt_client_timings(client_timings().take(client_uid))
     first_output_seen = False
+    before_speech_finished = False
     tts_requested = False
     full_response = ""  # Initialize full_response here
     report = not metadata or bool(metadata.get("report", True))
@@ -177,9 +181,7 @@ async def process_single_conversation(
                     # The raw tool_call_status carries tool inputs and lands in
                     # the frontend chat history. Silent autonomous turns only
                     # get the sanitized activity event (name/status, no inputs).
-                    await websocket_send(
-                        json.dumps(activity.update_tool(output_item))
-                    )
+                    await websocket_send(json.dumps(activity.update_tool(output_item)))
 
                 elif isinstance(output_item, (SentenceOutput, AudioOutput)):
                     if not first_output_seen:
@@ -188,6 +190,9 @@ async def process_single_conversation(
                         # activity frames before it belong to planning.
                         latency.complete("first_token")
                         first_output_seen = True
+                    if not before_speech_finished and before_first_speech is not None:
+                        await before_first_speech()
+                        before_speech_finished = True
                     if activity_visible:
                         await websocket_send(json.dumps(activity.idle()))
                         activity_visible = False
@@ -326,9 +331,7 @@ async def process_single_conversation(
         try:
             await websocket_send(json.dumps(activity.idle()))
         except Exception:
-            logger.debug(
-                "Unable to clear agent activity during connection cleanup."
-            )
+            logger.debug("Unable to clear agent activity during connection cleanup.")
         from ..study import log_turn_finished
 
         # Closes the turn whether it completed, errored, or was interrupted, so

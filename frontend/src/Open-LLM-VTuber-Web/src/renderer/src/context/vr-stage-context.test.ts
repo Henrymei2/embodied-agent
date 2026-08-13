@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   endpointError,
+  createVrLookPlan,
   createVrMotionPlan,
   parseVrMovePath,
   successfulVrMoveResult,
@@ -41,6 +42,25 @@ describe("VR frontend move action", () => {
     );
     expect(towardFurniture.finalFacePoint).toEqual({ x: 400, y: 100 });
     expect(towardFurniture.finalTurnDurationMs).toBe(600);
+  });
+
+  it("creates a slow in-place turn toward the user", () => {
+    const look = createVrLookPlan(
+      4,
+      { x: 80, y: 80 },
+      { x: 200, y: 240 },
+      1200,
+    );
+    expect(look).toMatchObject({
+      sequence: 4,
+      from: { x: 80, y: 80 },
+      to: { x: 80, y: 80 },
+      turnDurationMs: 0,
+      walkDurationMs: 0,
+      finalTurnDurationMs: 1200,
+      finalFacePoint: { x: 200, y: 240 },
+      totalDurationMs: 1200,
+    });
   });
 
   it("prefers valid waypoints and drops malformed points", () => {

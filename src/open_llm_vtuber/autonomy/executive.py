@@ -246,6 +246,12 @@ class AgendaExecutive:
         )
         now = utc_now()
         state = self.store.load()
+        successor_at = self._successor_available_at(state)
+        if successor_at is not None and successor_at > now:
+            timeout = min(
+                timeout,
+                max(0.1, (successor_at - now).total_seconds()),
+            )
         if state.next_reconsideration_at:
             try:
                 reconsider = datetime.fromisoformat(state.next_reconsideration_at)
@@ -813,11 +819,42 @@ class AgendaExecutive:
             except (TypeError, ValueError):
                 logger.warning("agenda: clearing invalid reconsideration timestamp")
             self.store.set_reconsideration(None)
+        successor_at = self._successor_available_at(state)
+        if (
+            not pending_external_event
+            and successor_at is not None
+            and successor_at > utc_now()
+        ):
+            return False
         if self.connected_client:
             await self._generate_live_successor()
         else:
             await self._run_settling_task(self._generate_successor())
         return True
+
+    def _successor_available_at(self, state) -> datetime | None:
+        """Return when a fresh autonomous intention may be planned."""
+        delay = self.settings.successor_delay_seconds
+        if delay <= 0:
+            return None
+        terminal_times: list[datetime] = []
+        for entry in state.entries:
+            if (
+                entry.kind not in {"pursuit", "scheduled"}
+                or entry.status not in {"completed", "failed"}
+                or not entry.ended_at
+            ):
+                continue
+            try:
+                ended_at = datetime.fromisoformat(entry.ended_at)
+            except (TypeError, ValueError):
+                continue
+            if ended_at.tzinfo is None:
+                ended_at = ended_at.replace(tzinfo=utc_now().tzinfo)
+            terminal_times.append(ended_at)
+        if not terminal_times:
+            return None
+        return max(terminal_times) + timedelta(seconds=delay)
 
     def _agenda_context(self):
         return build_agenda_context(
@@ -1231,7 +1268,11 @@ class AgendaExecutive:
                     },
                 ) as span:
                     planner_started = time.perf_counter()
-                    if handling_policy is not None and handling_policy.foreground:
+                    if (
+                        handling_policy is not None
+                        and handling_policy.foreground
+                        and handling_policy.use_triggered_planner
+                    ):
                         proposal = await self._run_planner_call(
                             self.planner.propose_triggered_intention(
                                 context, claimed_event, handling_policy
@@ -1286,12 +1327,7 @@ class AgendaExecutive:
                     if item.status not in TERMINAL_STATUSES
                 ],
             )
-            event_grounded = (
-                claimed_event is None
-                or claimed_event.evidence_ref in proposal.motivation.evidence_refs
-                or f"event:{claimed_event.id}" in proposal.motivation.evidence_refs
-            )
-            if verdict.accepted and event_grounded:
+            if verdict.accepted:
                 if self.run_intention is not None and proposal.kind != "idle":
                     proposal.metadata["execution_path"] = "intention"
                 if proposal.kind == "idle":
@@ -1345,11 +1381,7 @@ class AgendaExecutive:
                 await self.broadcast_snapshot()
                 return
 
-            rejection_reason = (
-                verdict.reason
-                if not verdict.accepted
-                else "proposal did not cite the claimed external event"
-            )
+            rejection_reason = verdict.reason
             self._record_rejection(proposal.title, rejection_reason)
             last_reason = rejection_reason
             logger.warning(

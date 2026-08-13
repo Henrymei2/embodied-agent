@@ -8,6 +8,8 @@ class FakeAudio extends EventTarget {
 
   currentTime = 0;
 
+  duration = Number.NaN;
+
   play = vi.fn(() => Promise.resolve());
 
   pause = vi.fn();
@@ -57,9 +59,12 @@ describe("AudioManager", () => {
 
   it("resolves active playback when interrupted", async () => {
     const playback = audioManager.playBase64Wav("AAAA");
+    await Promise.resolve();
+    expect(audioManager.getPlaybackProgress()).not.toBeNull();
     audioManager.stopCurrentAudio();
     await expect(playback).resolves.toBeUndefined();
     expect(instance.pause).toHaveBeenCalled();
+    expect(audioManager.getPlaybackProgress()).toBeNull();
   });
 
   it("classifies media decode failures", async () => {
@@ -82,5 +87,54 @@ describe("AudioManager", () => {
 
     expect(Audio).toHaveBeenCalledOnce();
     expect(instance.play).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports read-only timing for the active playback generation", async () => {
+    expect(audioManager.getPlaybackProgress()).toBeNull();
+    const playback = audioManager.playBase64Wav("AAAA");
+    await Promise.resolve();
+    instance.duration = 10;
+    instance.currentTime = 2.5;
+
+    expect(audioManager.getPlaybackProgress()).toEqual({
+      generation: expect.any(Number),
+      currentTime: 2.5,
+      duration: 10,
+      ratio: 0.25,
+    });
+
+    instance.dispatchEvent(new Event("ended"));
+    await playback;
+    expect(audioManager.getPlaybackProgress()).toBeNull();
+  });
+
+  it("starts at zero when media duration is not available", async () => {
+    const playback = audioManager.playBase64Wav("AAAA");
+    await Promise.resolve();
+    instance.currentTime = 4;
+
+    expect(audioManager.getPlaybackProgress()).toMatchObject({
+      currentTime: 4,
+      duration: null,
+      ratio: 0,
+    });
+
+    instance.dispatchEvent(new Event("ended"));
+    await playback;
+  });
+
+  it("assigns a new generation to each consecutive audio segment", async () => {
+    const first = audioManager.playBase64Wav("AAAA");
+    await Promise.resolve();
+    const firstGeneration = audioManager.getPlaybackProgress()!.generation;
+    instance.dispatchEvent(new Event("ended"));
+    await first;
+
+    const second = audioManager.playBase64Wav("BBBB");
+    await Promise.resolve();
+    const secondGeneration = audioManager.getPlaybackProgress()!.generation;
+    expect(secondGeneration).toBeGreaterThan(firstGeneration);
+    instance.dispatchEvent(new Event("ended"));
+    await second;
   });
 });

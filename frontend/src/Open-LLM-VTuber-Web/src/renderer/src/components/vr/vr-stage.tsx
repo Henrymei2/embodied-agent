@@ -54,6 +54,7 @@ import {
   type VrPanelDocument,
   type VrPanelViewState,
   updateFurniturePanelProximity,
+  captionWindowAtProgress,
   clampCaptionText,
   viewerForwardFromPose,
   viewerPoseCamera,
@@ -126,6 +127,9 @@ interface VrRuntime {
   panelViews: Map<string, VrPanelViewState>;
   scrollDirection: number;
   scrollNextAt: number;
+  captionGeneration: number | null;
+  captionText: string;
+  captionWindowKey: string;
 }
 
 interface PanelControlAction {
@@ -296,7 +300,7 @@ function scenarioMenuTexture(lines: string[]) {
   return texture;
 }
 
-function captionTexture(caption: string, status: string) {
+function captionTexture(caption: string, status: string, captionLines?: string[]) {
   const width = 1536;
   const height = 384;
   const canvas = document.createElement("canvas");
@@ -320,7 +324,7 @@ function captionTexture(caption: string, status: string) {
   context.letterSpacing = "0px";
   context.fillStyle = "#f8fafc";
   context.font = "600 54px system-ui, sans-serif";
-  clampCaptionText(caption, 48, 3).forEach((line, index) => {
+  (captionLines || clampCaptionText(caption, 48, 3)).forEach((line, index) => {
     context.fillText(line, 72, 146 + index * 70);
   });
 
@@ -389,18 +393,37 @@ function intentionBubbleTexture(label: string) {
   context.fillStyle = "#67e8f9";
   context.font = "750 30px system-ui, sans-serif";
   context.letterSpacing = "4px";
-  context.fillText("INTENT", 64, 72);
+  context.fillText("INTENT", 64, 58);
   context.letterSpacing = "0px";
 
   context.fillStyle = "#f8fafc";
-  context.font = "650 54px system-ui, sans-serif";
+  context.font = "650 42px system-ui, sans-serif";
   const maxTextWidth = canvas.width - 128;
-  let visibleLabel = label;
-  while (visibleLabel.length > 1 && context.measureText(`${visibleLabel}…`).width > maxTextWidth) {
-    visibleLabel = visibleLabel.slice(0, -1);
+  const wrappedLines: string[] = [];
+  let currentLine = "";
+  Array.from(label.trim()).forEach((character) => {
+    const candidate = `${currentLine}${character}`;
+    if (!currentLine || context.measureText(candidate).width <= maxTextWidth) {
+      currentLine = candidate;
+      return;
+    }
+    wrappedLines.push(currentLine.trimEnd());
+    currentLine = character.trimStart();
+  });
+  if (currentLine) wrappedLines.push(currentLine.trimEnd());
+  const visibleLines = wrappedLines.slice(0, 2);
+  if (wrappedLines.length > 2 && visibleLines.length === 2) {
+    while (
+      visibleLines[1].length > 1
+      && context.measureText(`${visibleLines[1]}…`).width > maxTextWidth
+    ) {
+      visibleLines[1] = visibleLines[1].slice(0, -1);
+    }
+    visibleLines[1] = `${visibleLines[1].trimEnd()}…`;
   }
-  if (visibleLabel !== label) visibleLabel = `${visibleLabel.trimEnd()}…`;
-  context.fillText(visibleLabel, 64, 172);
+  visibleLines.forEach((line, index) => {
+    context.fillText(line, 64, 128 + index * 58);
+  });
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -436,8 +459,15 @@ export default function VrStage() {
   const [vrWarning, setVrWarning] = useState<string | null>(null);
   const [audioWarning, setAudioWarning] = useState<string | null>(null);
   const [audioPlaying, setAudioPlaying] = useState(false);
+  const subtitleTextRef = useRef(subtitleText);
+  const showSubtitleRef = useRef(showSubtitle);
+  const micStatusRef = useRef(micStatus);
   const initialMicOnRef = useRef(micOn);
   const selectionHighlightEnabled = loadVrSelectionHighlight();
+
+  subtitleTextRef.current = subtitleText;
+  showSubtitleRef.current = showSubtitle;
+  micStatusRef.current = micStatus;
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { transientRef.current = transients; }, [transients]);
@@ -654,6 +684,7 @@ export default function VrStage() {
       scenarioIndex: 0,
       aPressed: false, renderScenarioMenu: () => undefined,
       panelViews: new Map(), scrollDirection: 0, scrollNextAt: 0,
+      captionGeneration: null, captionText: "", captionWindowKey: "",
     };
     runtimeRef.current = runtime;
 
@@ -1270,6 +1301,39 @@ export default function VrStage() {
       const currentStage = stageRef.current;
       const dt = Math.min(0.05, (time - runtime.lastFrame) / 1000);
       runtime.lastFrame = time;
+      const playbackProgress = audioManager.getPlaybackProgress();
+      if (!micStatusRef.current && !showSubtitleRef.current) {
+        runtime.hud.visible = false;
+        runtime.captionGeneration = null;
+        runtime.captionText = "";
+        runtime.captionWindowKey = "";
+      } else if (playbackProgress && !micStatusRef.current && showSubtitleRef.current) {
+        const latestText = subtitleTextRef.current.trim();
+        if (runtime.captionGeneration !== playbackProgress.generation) {
+          runtime.captionGeneration = playbackProgress.generation;
+          runtime.captionText = latestText;
+          runtime.captionWindowKey = "";
+        } else if (!runtime.captionText && latestText) {
+          runtime.captionText = latestText;
+        }
+        if (runtime.captionText) {
+          const lines = captionWindowAtProgress(
+            runtime.captionText, playbackProgress.ratio, 48, 3,
+          );
+          const windowKey = `${playbackProgress.generation}:${lines.join("\n")}`;
+          runtime.hud.visible = true;
+          if (windowKey !== runtime.captionWindowKey) {
+            const next = captionTexture(runtime.captionText, "Speaking", lines);
+            (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
+            (runtime.hud.material as THREE.MeshBasicMaterial).needsUpdate = true;
+            runtime.hudTexture.dispose();
+            runtime.hudTexture = next;
+            runtime.captionWindowKey = windowKey;
+          }
+        } else {
+          runtime.hud.visible = false;
+        }
+      }
       const inputSources = inputSourcesByHand(xrSession.inputSources);
       const left = inputSources.left?.gamepad;
       const right = inputSources.right?.gamepad;
@@ -1853,7 +1917,9 @@ export default function VrStage() {
         Math.abs(motionPlan.to.y - avatarNode.y) < 0.01
       ) {
         const fromScene = runtime.avatar.position.clone();
-        const walkQuaternion = facingQuaternion(fromScene, target);
+        const walkQuaternion = motionPlan.walkDurationMs > 0
+          ? facingQuaternion(fromScene, target)
+          : runtime.avatar.quaternion.clone();
         const finalFaceScene = motionPlan.finalFacePoint
           ? documentToScene(stage, motionPlan.finalFacePoint.x, motionPlan.finalFacePoint.y)
           : null;
@@ -2085,18 +2151,28 @@ export default function VrStage() {
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
-    const spokenCaption = audioPlaying && showSubtitle ? subtitleText.trim() : "";
-    const shouldShow = Boolean(micStatus || spokenCaption);
-    runtime.hud.visible = shouldShow;
-    if (!shouldShow) return;
-    const status = micStatus ? "Microphone" : "Speaking";
-    const caption = micStatus || spokenCaption;
-    const next = captionTexture(caption, status);
-    (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
-    (runtime.hud.material as THREE.MeshBasicMaterial).needsUpdate = true;
-    runtime.hudTexture.dispose();
-    runtime.hudTexture = next;
-  }, [subtitleText, showSubtitle, audioPlaying, micStatus, xrSession]);
+    if (micStatus) {
+      runtime.hud.visible = true;
+      const next = captionTexture(micStatus, "Microphone");
+      (runtime.hud.material as THREE.MeshBasicMaterial).map = next;
+      (runtime.hud.material as THREE.MeshBasicMaterial).needsUpdate = true;
+      runtime.hudTexture.dispose();
+      runtime.hudTexture = next;
+      runtime.captionWindowKey = "";
+      return;
+    }
+    if (!audioPlaying || !showSubtitle) {
+      runtime.hud.visible = false;
+      runtime.captionGeneration = null;
+      runtime.captionText = "";
+      runtime.captionWindowKey = "";
+      return;
+    }
+    // The animation loop renders the speaking window from actual media time.
+    // During the short inter-segment grace it deliberately keeps the previous
+    // texture instead of showing queued text before its audio starts.
+    runtime.hud.visible = true;
+  }, [showSubtitle, audioPlaying, micStatus, xrSession]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;

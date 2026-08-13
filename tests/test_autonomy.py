@@ -18,6 +18,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
         planner_timeout_seconds=1,
         intention_model_timeout_seconds=1,
         intention_max_turns=0,
+        successor_delay_seconds=-1,
         fallback_reconsideration_seconds=1,
         human_preemption_timeout_seconds=0,
     )
@@ -31,6 +32,7 @@ def test_agenda_settings_apply_safe_lower_bounds():
     assert settings.planner_timeout_seconds == 5.0
     assert settings.intention_model_timeout_seconds == 5.0
     assert settings.intention_max_turns == 1
+    assert settings.successor_delay_seconds == 0
     assert settings.fallback_reconsideration_seconds == 10
     assert settings.human_preemption_timeout_seconds == 0.05
 
@@ -46,11 +48,13 @@ def test_latency_settings_default_to_fast_hard_limits():
     assert config.intention_model_timeout_seconds == 30.0
     assert config.intention_max_turns == 12
     assert config.max_plausible_duration_seconds == 0.0
+    assert config.successor_delay_seconds == 10.0
     assert settings.step_timeout_seconds == 30
     assert settings.planner_timeout_seconds == 30.0
     assert settings.intention_model_timeout_seconds == 30.0
     assert settings.intention_max_turns == 12
     assert settings.max_plausible_duration_seconds == 0.0
+    assert settings.successor_delay_seconds == 10.0
     assert not hasattr(config, "default_pursuit_seconds")
     assert not hasattr(settings, "default_pursuit_seconds")
     assert config.idle_relocation_min_seconds == 10.0

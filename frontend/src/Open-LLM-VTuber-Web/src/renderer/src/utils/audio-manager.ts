@@ -10,6 +10,13 @@ export type AudioPlaybackState =
 
 type AudioPlaybackListener = (state: AudioPlaybackState) => void;
 
+export interface AudioPlaybackProgress {
+  generation: number;
+  currentTime: number;
+  duration: number | null;
+  ratio: number;
+}
+
 // 44-byte PCM WAV header followed by one silent 16-bit sample. It is small
 // enough to start synchronously from the Enter VR gesture without a fetch.
 const SILENT_WAV = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==";
@@ -163,6 +170,24 @@ export class AudioManager {
 
   hasCurrentAudio(): boolean {
     return this.state.state === "playing";
+  }
+
+  /** Read current media timing without exposing the mutable audio element. */
+  getPlaybackProgress(): AudioPlaybackProgress | null {
+    const audio = this.audio;
+    if (!audio || this.state.state !== "playing") return null;
+    const currentTime = Number.isFinite(audio.currentTime)
+      ? Math.max(0, audio.currentTime)
+      : 0;
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0
+      ? audio.duration
+      : null;
+    return {
+      generation: this.playbackGeneration,
+      currentTime,
+      duration,
+      ratio: duration ? Math.min(1, currentTime / duration) : 0,
+    };
   }
 }
 

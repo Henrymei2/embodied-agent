@@ -52,7 +52,7 @@ class AutonomyConfig(I18nMixin):
         True, alias="welcome_back_greeting_enabled"
     )
     welcome_back_min_absence_minutes: int = Field(
-        30, ge=1, le=10080, alias="welcome_back_min_absence_minutes"
+        30, ge=0, le=10080, alias="welcome_back_min_absence_minutes"
     )
     lease_ttl_seconds: float = Field(30.0, ge=5, le=300)
     lease_renew_seconds: float = Field(10.0, ge=1, le=150)
@@ -74,6 +74,7 @@ class AutonomyConfig(I18nMixin):
     step_timeout_seconds: int = Field(30, ge=5, le=3600)
     max_plausible_duration_seconds: float = Field(0.0, ge=0.0, le=60.0)
     human_preemption_timeout_seconds: float = Field(0.25, ge=0.05, le=5.0)
+    successor_delay_seconds: float = Field(10.0, ge=0.0, le=3600.0)
     fallback_reconsideration_seconds: int = Field(300, ge=10, le=7200)
     store_poll_seconds: float = Field(1.0, ge=0.1, le=10.0)
     restart_recovery_grace_seconds: int = Field(10, ge=0, le=600)
@@ -207,6 +208,9 @@ class AutonomyConfig(I18nMixin):
         ),
         "human_preemption_timeout_seconds": Description(
             en="Maximum delay before foreground user work proceeds"
+        ),
+        "successor_delay_seconds": Description(
+            en="Delay after one autonomous task ends before planning the next"
         ),
         "fallback_reconsideration_seconds": Description(
             en="Agenda fallback wake cadence"

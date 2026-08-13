@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import {
   clampCaptionText,
+  captionWindowAtProgress,
   floorToScene,
   furnitureInteractionReach,
   furnitureCenterSceneY,
@@ -32,6 +33,7 @@ import {
   viewerPoseCamera,
   viewerWorldPositionFromPose,
   withRendererMode,
+  wrapCaptionText,
   backPanel,
   createPanelViewState,
   navigatePanel,
@@ -77,6 +79,43 @@ describe("VR spatial helpers", () => {
       "…续显示后半",
       "部分的长字幕",
     ]);
+  });
+
+  it("starts long spoken captions at the beginning and advances with progress", () => {
+    const text = "one two three four five six seven eight nine ten eleven twelve";
+    const wrapped = wrapCaptionText(text, 10);
+    const start = captionWindowAtProgress(text, 0, 10, 3);
+    const middle = captionWindowAtProgress(text, 0.5, 10, 3);
+    const end = captionWindowAtProgress(text, 1, 10, 3);
+
+    expect(start).toEqual(wrapped.slice(0, 3));
+    expect(end).toEqual(wrapped.slice(-3));
+    expect(wrapped.indexOf(middle[0])).toBeGreaterThanOrEqual(wrapped.indexOf(start[0]));
+    expect(wrapped.indexOf(end[0])).toBeGreaterThanOrEqual(wrapped.indexOf(middle[0]));
+
+    const seen = new Set<string>();
+    let previousStart = -1;
+    for (let step = 0; step <= 100; step += 1) {
+      const window = captionWindowAtProgress(text, step / 100, 10, 3);
+      window.forEach((line) => seen.add(line));
+      const startIndex = wrapped.indexOf(window[0]);
+      expect(startIndex).toBeGreaterThanOrEqual(previousStart);
+      previousStart = startIndex;
+    }
+    expect([...seen]).toEqual(expect.arrayContaining(wrapped));
+  });
+
+  it("keeps short captions whole at every playback position", () => {
+    expect(captionWindowAtProgress("Short caption", 0, 20, 3)).toEqual(["Short caption"]);
+    expect(captionWindowAtProgress("Short caption", 1, 20, 3)).toEqual(["Short caption"]);
+  });
+
+  it("preserves both ends of progressive unspaced captions", () => {
+    const text = "这是一个没有空格而且需要从头推进到结尾的长字幕";
+    const wrapped = wrapCaptionText(text, 6);
+    expect(wrapped.join("")).toBe(text);
+    expect(captionWindowAtProgress(text, 0, 6, 2)[0]).toBe(wrapped[0]);
+    expect(captionWindowAtProgress(text, 1, 6, 2).at(-1)).toBe(wrapped.at(-1));
   });
 
   it("selects and labels the current agent activity", () => {

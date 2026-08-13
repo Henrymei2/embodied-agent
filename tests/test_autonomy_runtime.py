@@ -109,6 +109,7 @@ def _context():
 
 async def test_synthetic_companion_turn_persists_only_assistant_history(monkeypatch):
     stored = []
+    events = []
     context = _context()
     context.history_uid = "history"
     monkeypatch.setattr(
@@ -121,6 +122,7 @@ async def test_synthetic_companion_turn_persists_only_assistant_history(monkeypa
     )
 
     async def collect_output(**_kwargs):
+        events.append("speech")
         return "Welcome back—what would feel good to do next?"
 
     monkeypatch.setattr(
@@ -131,17 +133,22 @@ async def test_synthetic_companion_turn_persists_only_assistant_history(monkeypa
     async def send(_payload: str) -> None:
         return None
 
+    async def before_first_speech() -> None:
+        events.append("look")
+
     result = await process_single_conversation(
         context=context,
         websocket_send=send,
         client_uid="welcome-client",
         user_input="internal context that must not be stored",
         metadata={"synthetic_user": True},
+        before_first_speech=before_first_speech,
     )
 
     assert result.success is True
     assert [message["role"] for message in stored] == ["ai"]
     assert stored[0]["content"] == "Welcome back—what would feel good to do next?"
+    assert events == ["look", "speech"]
 
 
 async def test_higher_priority_user_work_preempts_background_work():
@@ -434,7 +441,7 @@ async def test_run_tool_calls_forwards_sanitized_updates_without_inputs():
                 "tool_id": "t1",
                 "tool_name": "search_emails",
                 "status": "running",
-                "content": "Input: {\"query\": \"secret-criteria\"}",
+                "content": 'Input: {"query": "secret-criteria"}',
             }
             yield {
                 "type": "final_tool_results",
@@ -667,7 +674,8 @@ def test_agenda_step_propagates_agent_turn_failure():
 
 
 async def test_autonomous_completion_reaches_live_and_persisted_conversation(
-    monkeypatch, tmp_path,
+    monkeypatch,
+    tmp_path,
 ):
     import json
 

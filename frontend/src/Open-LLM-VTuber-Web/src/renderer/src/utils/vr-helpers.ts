@@ -805,10 +805,10 @@ export function furnitureDecalLayouts(
   ] as const;
 }
 
-/** Keep the latest headset-safe lines so a long spoken response advances. */
-export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3) {
+/** Wrap complete caption text without dropping long words or unspaced scripts. */
+export function wrapCaptionText(value: string, maxCharacters = 42) {
   const words = value.trim().split(/\s+/).filter(Boolean);
-  if (!words.length || maxCharacters < 2 || maxLines < 1) return [];
+  if (!words.length || maxCharacters < 2) return [];
 
   const lines: string[] = [];
   let current = "";
@@ -827,6 +827,44 @@ export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3
     }
   }
   if (current) lines.push(current);
+  return lines;
+}
+
+/** Select the three-line window corresponding to actual audio progress. */
+export function captionWindowAtProgress(
+  value: string,
+  progress: number,
+  maxCharacters = 42,
+  maxLines = 3,
+) {
+  if (maxLines < 1) return [];
+  const lines = wrapCaptionText(value, maxCharacters);
+  if (lines.length <= maxLines) return lines;
+
+  const ratio = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
+  if (ratio === 0) return lines.slice(0, maxLines);
+  if (ratio === 1) return lines.slice(-maxLines);
+
+  const totalCharacters = lines.reduce((total, line) => total + Math.max(1, line.length), 0);
+  const target = totalCharacters * ratio;
+  let elapsed = 0;
+  let currentLine = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    elapsed += Math.max(1, lines[index].length);
+    if (elapsed >= target) {
+      currentLine = index;
+      break;
+    }
+  }
+  const maxStart = lines.length - maxLines;
+  const start = Math.min(maxStart, Math.max(0, currentLine - Math.floor(maxLines / 2)));
+  return lines.slice(start, start + maxLines);
+}
+
+/** Backward-compatible tail window for non-progressive callers. */
+export function clampCaptionText(value: string, maxCharacters = 42, maxLines = 3) {
+  const lines = wrapCaptionText(value, maxCharacters);
+  if (maxLines < 1) return [];
 
   const visible = lines.slice(-maxLines);
   if (lines.length > maxLines && visible.length) {

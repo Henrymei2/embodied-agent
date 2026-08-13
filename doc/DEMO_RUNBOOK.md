@@ -155,7 +155,11 @@ pre-action signal. The security boundary is the authorization kernel: one
 policy decision per side effect, with a terminal outcome for each.
 
 **"Is the LLM doing this or is it scripted?"**
-The model is doing it. There is a recorded fallback for when the model is
+The model forms the intention and chooses how to respond. Demo scenarios make
+the starting context reproducible, but their documented sequence is only an
+example of what useful behavior might look like; it is not placed in the model's
+prompt or used as a required action trace. A different grounded and helpful
+response is a valid result. There is a recorded fallback for when the model is
 unreachable, it announces itself in the reply, and
 `EMBODIED_AGENT_REQUIRE_LIVE_LLM=1` disables it entirely — which is how we
 rehearse.

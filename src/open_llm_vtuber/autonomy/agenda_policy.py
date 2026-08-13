@@ -30,6 +30,10 @@ class AgendaPolicy:
         object_names: set[str],
         comparison_entries: Iterable[AgendaEntry],
     ) -> PolicyVerdict:
+        # Evidence references are explanatory planner metadata, not an
+        # acceptance gate. A useful intention must not be discarded because
+        # the model chose a different citation label than the context builder.
+        del supplied_evidence_refs
         try:
             proposal.validate()
         except ValueError as exc:
@@ -40,10 +44,6 @@ class AgendaPolicy:
             return PolicyVerdict(False, "unknown reporting policy")
         if proposal.budget.time_budget_seconds > self.maximum_pursuit_seconds:
             return PolicyVerdict(False, "time budget exceeds configured maximum")
-        if not set(proposal.motivation.evidence_refs).issubset(supplied_evidence_refs):
-            return PolicyVerdict(
-                False, "motivation cites evidence outside planner context"
-            )
         missing = set(proposal.required_capabilities) - capabilities
         if missing:
             return PolicyVerdict(

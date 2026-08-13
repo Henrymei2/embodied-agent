@@ -183,11 +183,59 @@ async def test_successful_welcome_spends_ask_budget_and_marks_return(
     await welcome_back._run_welcome("client", context=SimpleNamespace(), send=send)
 
     assert captured["metadata"]["synthetic_user"] is True
+    assert callable(captured["before_first_speech"])
     assert ledger.receipts[-1].action == "ask"
     assert ledger.receipts[-1].status == "succeeded"
     assert ledger.budget_balance == pytest.approx(4.75)
     assert ledger.has_welcomed_user is True
     assert sent
+
+
+async def test_vr_welcome_slowly_looks_at_player_before_speech(monkeypatch, tmp_path):
+    settings = AutonomySettings()
+    ledger = PresenceLedger.load(tmp_path, settings)
+    events: list[object] = []
+    monkeypatch.setattr(welcome_back, "get_presence_ledger", lambda _uid: ledger)
+    monkeypatch.setattr(
+        welcome_back,
+        "build_observation",
+        lambda _uid: Observation(user_present=True, presence_fresh=True),
+    )
+    monkeypatch.setattr(
+        welcome_back,
+        "_agenda_context_for",
+        lambda _uid, _context: SimpleNamespace(payload={}),
+    )
+
+    async def frontend_action(action, args, **kwargs):
+        events.append((action, args, kwargs))
+        return True, {"duration_ms": 1200}, None
+
+    async def conversation(**kwargs):
+        await kwargs["before_first_speech"]()
+        events.append("speech")
+        return AgentTurnResult(True, "Welcome back!", None, True)
+
+    monkeypatch.setattr(
+        "src.open_llm_vtuber.frontend_bridge.request_frontend_action",
+        frontend_action,
+    )
+    monkeypatch.setattr(welcome_back, "process_single_conversation", conversation)
+    context = SimpleNamespace(
+        scene_mode="vr",
+        character_config=SimpleNamespace(conf_uid="character"),
+    )
+    welcome_back.register_welcome_session("client", settings)
+    welcome_back._sessions["client"].eligible_return = True
+
+    await welcome_back._run_welcome("client", context=context, send=_send)
+
+    action, args, kwargs = events[0]
+    assert action == "look_at_user"
+    assert args == {"duration_ms": 1200}
+    assert kwargs["client_uid"] == "client"
+    assert kwargs["conf_uid"] == "character"
+    assert events[1] == "speech"
 
 
 async def test_failed_welcome_retries_once_and_refunds(monkeypatch, tmp_path):

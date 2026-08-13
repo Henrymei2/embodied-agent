@@ -35,6 +35,7 @@ class AutonomySettings:
     step_timeout_seconds: int = 30
     max_plausible_duration_seconds: float = 0.0
     human_preemption_timeout_seconds: float = 0.25
+    successor_delay_seconds: float = 10.0
     fallback_reconsideration_seconds: int = 300
     store_poll_seconds: float = 1.0
     restart_recovery_grace_seconds: int = 10
@@ -68,7 +69,7 @@ class AutonomySettings:
         object.__setattr__(
             self,
             "welcome_back_min_absence_minutes",
-            max(1, min(10080, int(self.welcome_back_min_absence_minutes))),
+            max(0, min(10080, int(self.welcome_back_min_absence_minutes))),
         )
         lease_ttl_seconds = max(5.0, min(300.0, float(self.lease_ttl_seconds)))
         object.__setattr__(self, "lease_ttl_seconds", lease_ttl_seconds)
@@ -113,6 +114,11 @@ class AutonomySettings:
         )
         object.__setattr__(
             self, "planner_retry_limit", max(1, int(self.planner_retry_limit))
+        )
+        object.__setattr__(
+            self,
+            "successor_delay_seconds",
+            max(0.0, min(3600.0, float(self.successor_delay_seconds))),
         )
         object.__setattr__(
             self,
@@ -341,6 +347,9 @@ class AutonomySettings:
             ),
             human_preemption_timeout_seconds=float(
                 getattr(cfg, "human_preemption_timeout_seconds", 0.25)
+            ),
+            successor_delay_seconds=float(
+                getattr(cfg, "successor_delay_seconds", 10.0)
             ),
             fallback_reconsideration_seconds=int(
                 getattr(cfg, "fallback_reconsideration_seconds", 300)

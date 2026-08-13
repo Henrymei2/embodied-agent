@@ -81,6 +81,9 @@ system_config:
     # Artificial post-result pacing is disabled by default.
     max_plausible_duration_seconds: 0
     human_preemption_timeout_seconds: 0.25
+    # Wait after an autonomous task ends before planning the next one. Set to 0
+    # to restore immediate successor planning. Foreground events bypass this.
+    successor_delay_seconds: 10
     fallback_reconsideration_seconds: 300
     store_poll_seconds: 1
     restart_recovery_grace_seconds: 10

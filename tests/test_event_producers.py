@@ -48,7 +48,7 @@ def test_typed_trigger_is_content_free_and_idempotent(tmp_path):
     serialized = str(replay.event)
     assert "message-1" in serialized
     assert "subject" not in serialized.lower()
-    assert replay.event.summary == "A new unread Gmail message is available for inspection."
+    assert replay.event.summary == "The mailbox received a new unread Gmail message."
 
 
 @pytest.mark.parametrize(
@@ -66,9 +66,7 @@ def test_typed_trigger_rejects_invalid_references(reference):
 
 class GmailMessages:
     def get(self, **kwargs):
-        return Request(
-            {"id": kwargs["id"], "historyId": "102", "labelIds": ["UNREAD"]}
-        )
+        return Request({"id": kwargs["id"], "historyId": "102", "labelIds": ["UNREAD"]})
 
 
 class GmailHistory:
@@ -235,7 +233,9 @@ def test_workspace_rejects_escape_and_ignores_symlink(tmp_path):
     outside.write_text("outside")
     try:
         (watched / "link.txt").symlink_to(outside)
-        producer = WorkspaceEventProducer(tmp_path, "demo-inbox", 0.1, AgendaStore(tmp_path))
+        producer = WorkspaceEventProducer(
+            tmp_path, "demo-inbox", 0.1, AgendaStore(tmp_path)
+        )
         producer.poll_once()
         assert producer.known == {}
     finally:

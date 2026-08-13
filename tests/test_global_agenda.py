@@ -16,6 +16,7 @@ from src.open_llm_vtuber.autonomy.agenda_planner import (
     StructuredAgendaPlanner,
     _json_object,
     normalize_generated_kind,
+    normalize_intention_kind,
 )
 from src.open_llm_vtuber.autonomy.activity import (
     ActivityExecutor,
@@ -233,7 +234,7 @@ def test_due_schedule_is_claimed_once_and_recurrence_advances(tmp_path):
     assert template.schedule.run_count == 1
 
 
-def test_policy_rejects_unseen_grounding_and_duplicates():
+def test_policy_allows_unseen_evidence_labels_but_rejects_duplicates():
     policy = AgendaPolicy()
     proposal = pursuit()
     verdict = policy.validate(
@@ -243,8 +244,7 @@ def test_policy_rejects_unseen_grounding_and_duplicates():
         object_names=set(),
         comparison_entries=[],
     )
-    assert not verdict.accepted
-    assert "outside planner context" in verdict.reason
+    assert verdict.accepted
 
     verdict = policy.validate(
         proposal,
@@ -321,6 +321,62 @@ def test_pruning_keeps_recent_terminal_entries(tmp_path):
 )
 def test_generated_kind_aliases_are_normalized(generated, expected):
     assert normalize_generated_kind(generated) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"kind": "idle", "required_capabilities": ["write_file"]},
+        {"kind": "idle", "preferred_object": "computer"},
+        {"kind": "idle", "report_policy": "on_completion"},
+        {"kind": "idle", "requires_approval": True},
+    ],
+)
+def test_intention_kind_defaults_actionable_work_to_pursuit(raw):
+    assert normalize_intention_kind(raw) == "pursuit"
+
+
+def test_intention_kind_preserves_action_free_explicit_idle():
+    assert (
+        normalize_intention_kind(
+            {
+                "kind": "idle",
+                "preferred_object": None,
+                "required_capabilities": [],
+                "report_policy": "silent",
+                "requires_approval": False,
+            }
+        )
+        == "idle"
+    )
+
+
+@pytest.mark.asyncio
+async def test_intention_planner_promotes_actionable_idle_and_declares_default():
+    async def complete(prompt):
+        assert "Pursuit is the default" in prompt
+        return """{
+            "kind": "idle",
+            "title": "Prepare a useful note",
+            "description": "Write a grounded note for the user.",
+            "evidence_refs": ["memory:today.md"],
+            "completion_condition": "The note is prepared.",
+            "required_capabilities": ["write_file"],
+            "report_policy": "on_completion",
+            "requires_approval": false
+        }"""
+
+    context = AgendaContext(
+        payload={},
+        evidence_refs={"memory:today.md"},
+        capabilities={"write_file"},
+        object_names=set(),
+    )
+
+    entry = await StructuredAgendaPlanner(complete).propose_intention(context)
+
+    assert entry.kind == "pursuit"
 
 
 @pytest.mark.asyncio
